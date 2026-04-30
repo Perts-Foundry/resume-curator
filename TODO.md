@@ -413,3 +413,49 @@ republishing.
 - [ ] Browser automation via Playwright.
 - [ ] Human-in-the-loop approval workflow.
 - [ ] Application tracking.
+
+---
+
+# Review TODO
+
+> Deferred findings from pre-PR reviews. Check off items as resolved.
+
+## Important
+
+- [ ] **[AR-2]** Structural cover-letter page-fit handling. The cover letter
+  has no trim cascade (`renderer.py:_render_cover_letter` is single-pass
+  with a logger.warning on overflow); first page-overflow incident on a
+  real submission ships an unusable two-page artifact. Disabling
+  hyphenation narrows the safety margin slightly. Either (a) add a
+  minimal cover-letter trimmer mirroring the resume cascade on a smaller
+  surface area (drop closing pleasantries, then tighten body paragraph
+  toward its 40-word floor, then fail loud) or (b) tighten
+  `COVER_LETTER_*_WORD_MAX` so the geometry is provably fitting at all
+  input shapes. (architecture-reviewer, 2026-04-30)
+- [ ] **[AR-7]** Surface cover-letter `pages` in the `cover_letter`
+  sub-object of `curation_log.json` so bulk-automation runs are
+  auditable (currently logger-only). (architecture-reviewer, 2026-04-30)
+
+## Suggestions
+
+- [ ] **[CR-7]** Make the verification snippet's `<date>-verify-no-shy/`
+  path resolve via glob in docs / runbooks so operators don't have to
+  substitute the date manually. (code-reviewer, 2026-04-30)
+- [ ] **[CR-8]** Document a known-hyphenation-triggering verification
+  fixture (or a one-off `verify-shy.py`) so static-render smoke checks
+  don't pass vacuously when `cover-letter.yaml` happens to contain no
+  long compound words. (code-reviewer, 2026-04-30)
+- [ ] **[DS-2]** Mirror the curated.typ file-header design comment update
+  on cover_letter.typ if/when that file grows a similar enumerated
+  design list. (doc-sync-checker, 2026-04-30)
+- [ ] **[AR-4]** Revisit the per-break ActualText control alternative if
+  a future Typst release exposes a knob to "draw hyphen but skip
+  ActualText" (not available in 0.13.x/0.14.x). (architecture-reviewer,
+  2026-04-30)
+- [ ] **[AR-6]** Class-level grouping for any further regression tests
+  added to `test_renderer.py` (file is 2850+ lines; free-floating
+  module-level tests get lost). (architecture-reviewer, 2026-04-30)
+- [ ] **[TE-8]** Ensure the soft-hyphen regression-test docstrings link
+  back to the originating issue / commit so future contributors
+  scanning a "weird" assertion can find the rationale.
+  (test-engineer, 2026-04-30)
