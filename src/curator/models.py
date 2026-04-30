@@ -393,7 +393,13 @@ class PortfolioData:
 # Structured output models (API response boundary)
 # ---------------------------------------------------------------------------
 
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+# C0 controls + DEL plus invisible formatting characters that web fonts
+# render as .notdef boxes when pasted into application forms: U+00AD
+# (SOFT HYPHEN), U+200B-U+200F (zero-width space, ZWNJ, ZWJ, LRM, RLM),
+# U+FEFF (BOM / zero-width no-break space). Disabling Typst auto-
+# hyphenation removes one source; this regex catches the rest if a
+# contributor pastes them into YAML directly.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f­​-‏﻿]")
 
 
 class WorkHighlightRanking(BaseModel):

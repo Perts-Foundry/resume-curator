@@ -615,6 +615,30 @@ class TestResumeCuration:
                 _make_curation_dict(suggested_label="Bad\x1flabel")
             )
 
+    @pytest.mark.parametrize(
+        ("char", "name"),
+        [
+            ("­", "SOFT HYPHEN"),
+            ("​", "ZERO WIDTH SPACE"),
+            ("‌", "ZWNJ"),
+            ("‍", "ZWJ"),
+            ("‎", "LRM"),
+            ("‏", "RLM"),
+            ("﻿", "BOM / ZWNBSP"),
+        ],
+    )
+    def test_invisible_chars_in_summary_rejected(
+        self, char: str, name: str
+    ) -> None:
+        # Defense in depth for the soft-hyphen fix: Typst auto-hyphenation is
+        # disabled, but if a contributor pastes a SHY (or any zero-width
+        # formatting char) into the LLM output or a portfolio YAML field,
+        # the validator must catch it before it reaches the rendered PDF.
+        with pytest.raises(ValidationError, match="control characters"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(summary=f"Has a {name}{char}character")
+            )
+
     def test_priority_field_on_education(self) -> None:
         edu = EducationEntry.model_validate(
             {"id": "umw-bs-cs", "institution": "UMW", "priority": 1}
