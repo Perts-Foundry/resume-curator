@@ -13,8 +13,14 @@
 // ---------------------------------------------------------------------------
 
 #set page(paper: "us-letter", margin: 0.75in)
+// hyphenate: false  Typst's auto-hyphenation wraps line-break hyphens in
+// /ActualText <FEFF00AD>, so clipboard copy emits U+00AD (SOFT HYPHEN).
+// Web-form fonts that lack a U+00AD glyph render those as .notdef boxes.
+// Keeping it off means the rendered text, accessibility tags, and clipboard
+// text all match. Keep aligned with curated.typ. Guarded by
+// TestTemplateTypography (unit) and the integration positive control.
 #set text(font: ("Inter", "Ubuntu Sans", "DejaVu Sans"), size: 11pt,
-          hyphenate: true, lang: "en")
+          hyphenate: false, lang: "en")
 #set par(justify: false, leading: 0.65em, first-line-indent: 0pt)
 
 #show link: set text(fill: rgb("#003366"))
