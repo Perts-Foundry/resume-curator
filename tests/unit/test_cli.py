@@ -1,0 +1,937 @@
+"""Tests for CLI logging infrastructure."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import patch
+
+import pytest
+from loguru import logger
+
+from curator.cli import (
+    _log_dir,
+    _redacting_filter,
+    configure_logging,
+)
+
+if TYPE_CHECKING:
+    from loguru import Record
+
+
+class TestRedactingFilter:
+    """Tests for _redacting_filter."""
+
+    @staticmethod
+    def _make_record(message: str) -> Record:
+        """Build a minimal record stub for filter testing.
+
+        Only ``message`` is populated — sufficient because
+        ``_redacting_filter`` only reads/writes that field.
+        """
+        return cast("Record", {"message": message})
+
+    def test_redacts_anthropic_api_key(self) -> None:
+        record = self._make_record("key: sk-ant-api03-abc123XYZ_def456")
+        _redacting_filter(record)
+        assert "sk-ant" not in record["message"]
+        assert "[REDACTED_API_KEY]" in record["message"]
+
+    def test_redacts_quoted_api_key(self) -> None:
+        record = self._make_record("key: 'sk-ant-api03-abc123'")
+        _redacting_filter(record)
+        assert "sk-ant" not in record["message"]
+
+    def test_redacts_double_quoted_api_key(self) -> None:
+        record = self._make_record('"sk-ant-api03-abc123"')
+        _redacting_filter(record)
+        assert "sk-ant" not in record["message"]
+
+    def test_redacts_api_key_assignment(self) -> None:
+        record = self._make_record("api_key=super_secret_value")
+        _redacting_filter(record)
+        assert "super_secret_value" not in record["message"]
+        assert "api_key=[REDACTED]" in record["message"]
+
+    def test_redacts_password_assignment(self) -> None:
+        record = self._make_record("password: hunter2")
+        _redacting_filter(record)
+        assert "hunter2" not in record["message"]
+
+    def test_redacts_secret_assignment(self) -> None:
+        record = self._make_record("secret=mysecretvalue")
+        _redacting_filter(record)
+        assert "mysecretvalue" not in record["message"]
+
+    def test_redacts_token_assignment(self) -> None:
+        record = self._make_record("token=ghp_abc123")
+        _redacting_filter(record)
+        assert "ghp_abc123" not in record["message"]
+
+    def test_redacts_prefixed_env_var_names(self) -> None:
+        """ANTHROPIC_API_KEY, GITHUB_TOKEN etc. are caught."""
+        record = self._make_record("ANTHROPIC_API_KEY=sk-ant-abc123")
+        _redacting_filter(record)
+        assert "sk-ant" not in record["message"]
+
+    def test_preserves_non_secret_messages(self) -> None:
+        msg = "Portfolio loaded: 14 sections, 47 entries"
+        record = self._make_record(msg)
+        _redacting_filter(record)
+        assert record["message"] == msg
+
+    def test_preserves_token_count_fields(self) -> None:
+        """Token usage like input_tokens=1500 is NOT redacted."""
+        msg = "Tokens — input_tokens=1500, output_tokens=950"
+        record = self._make_record(msg)
+        _redacting_filter(record)
+        assert "input_tokens=1500" in record["message"]
+        assert "output_tokens=950" in record["message"]
+
+    def test_preserves_cache_token_fields(self) -> None:
+        msg = "cache_creation_input_tokens=0, cache_read_input_tokens=10000"
+        record = self._make_record(msg)
+        _redacting_filter(record)
+        assert "cache_creation_input_tokens=0" in record["message"]
+        assert "cache_read_input_tokens=10000" in record["message"]
+
+    def test_always_returns_true(self) -> None:
+        record = self._make_record("anything")
+        result = _redacting_filter(record)
+        assert result is True
+
+
+class TestLogDir:
+    """Tests for _log_dir."""
+
+    def test_default_xdg_path(self) -> None:
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("XDG_STATE_HOME", None)
+            result = _log_dir()
+        expected = Path.home() / ".local" / "state" / "curator" / "log"
+        assert result == expected
+
+    def test_respects_xdg_state_home(self) -> None:
+        env = {"XDG_STATE_HOME": "/custom/state"}
+        with patch.dict("os.environ", env):
+            result = _log_dir()
+        assert result == Path("/custom/state/curator/log")
+
+    def test_empty_xdg_state_home_falls_back(self) -> None:
+        with patch.dict("os.environ", {"XDG_STATE_HOME": ""}):
+            result = _log_dir()
+        expected = Path.home() / ".local" / "state" / "curator" / "log"
+        assert result == expected
+
+
+class TestConfigureLogging:
+    """Tests for configure_logging."""
+
+    def setup_method(self) -> None:
+        """Reset Loguru state before each test."""
+        logger.remove()
+
+    def teardown_method(self) -> None:
+        """Remove sinks added during test."""
+        logger.remove()
+
+    def test_testing_mode_no_file_sink(self) -> None:
+        configure_logging(_testing=True)
+
+    def test_verbose_false_sets_info_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure_logging(verbose=False, _testing=True)
+        logger.debug("debug message")
+        logger.info("info message")
+        captured = capsys.readouterr()
+        assert "debug message" not in captured.err
+        assert "info message" in captured.err
+
+    def test_verbose_true_sets_debug_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure_logging(verbose=True, _testing=True)
+        logger.debug("debug message")
+        captured = capsys.readouterr()
+        assert "debug message" in captured.err
+
+    def test_verbose_format_includes_source_location(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        configure_logging(verbose=True, _testing=True)
+        logger.info("test message")
+        captured = capsys.readouterr()
+        assert "test_cli" in captured.err
+
+    def test_non_verbose_format_excludes_source_location(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        configure_logging(verbose=False, _testing=True)
+        logger.info("test message")
+        captured = capsys.readouterr()
+        assert "test_cli" not in captured.err
+
+    def test_redaction_applied_to_global_logger(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Redaction works through the global logger."""
+        configure_logging(_testing=True)
+        logger.info("key: sk-ant-api03-secret123")
+        captured = capsys.readouterr()
+        assert "sk-ant" not in captured.err
+        assert "[REDACTED_API_KEY]" in captured.err
+
+    def test_redaction_with_lazy_format_args(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        configure_logging(_testing=True)
+        logger.info("API key: {}", "sk-ant-api03-secret123")
+        captured = capsys.readouterr()
+        assert "sk-ant" not in captured.err
+
+    def test_stdlib_logging_routed_through_loguru(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        configure_logging(_testing=True)
+        stdlib_logger = logging.getLogger("test.stdlib.bridge")
+        stdlib_logger.setLevel(logging.INFO)
+        stdlib_logger.info("stdlib message")
+        captured = capsys.readouterr()
+        assert "stdlib message" in captured.err
+
+    def test_noisy_loggers_suppressed(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        configure_logging(_testing=True)
+        httpx_logger = logging.getLogger("httpx")
+        httpx_logger.debug("noisy debug")
+        captured = capsys.readouterr()
+        assert "noisy debug" not in captured.err
+
+    def test_mkdir_failure_degrades_gracefully(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """CLI should not crash if log dir can't be created."""
+        bad_path = Path("/nonexistent/readonly/path")
+        with patch("curator.cli._log_dir", return_value=bad_path):
+            configure_logging(verbose=False, _testing=False)
+        captured = capsys.readouterr()
+        assert "file logging disabled" in captured.err
+
+    def test_verbose_sets_sdk_loggers_to_info(self) -> None:
+        """When verbose=True, SDK loggers (anthropic, httpx) are set to INFO."""
+        configure_logging(verbose=True, _testing=True)
+        for name in ("httpx", "httpcore", "anthropic"):
+            assert logging.getLogger(name).level == logging.INFO
+
+    def test_non_verbose_sets_sdk_loggers_to_warning(self) -> None:
+        """When verbose=False, SDK loggers are set to WARNING."""
+        configure_logging(verbose=False, _testing=True)
+        for name in ("httpx", "httpcore", "anthropic"):
+            assert logging.getLogger(name).level == logging.WARNING
+
+    def test_verbose_sdk_info_messages_visible(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """SDK loggers at INFO level are visible when verbose=True."""
+        configure_logging(verbose=True, _testing=True)
+        sdk_logger = logging.getLogger("anthropic")
+        sdk_logger.info("SDK info message")
+        captured = capsys.readouterr()
+        assert "SDK info message" in captured.err
+
+    def test_non_verbose_sdk_info_messages_suppressed(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """SDK loggers at INFO level are suppressed when verbose=False."""
+        configure_logging(verbose=False, _testing=True)
+        sdk_logger = logging.getLogger("anthropic")
+        sdk_logger.info("SDK info message")
+        captured = capsys.readouterr()
+        assert "SDK info message" not in captured.err
+
+
+class TestCurateCommandLogging:
+    """Tests for config and pipeline timing logs in the curate command.
+
+    Uses a custom Loguru list-sink because CliRunner captures stdout/stderr
+    internally, preventing capsys from seeing Loguru output.
+    """
+
+    def setup_method(self) -> None:
+        """Reset Loguru state before each test."""
+        logger.remove()
+
+    def teardown_method(self) -> None:
+        """Remove sinks added during test."""
+        logger.remove()
+
+    @staticmethod
+    def _make_mock_settings(tmp_path: Path) -> Any:
+        """Build a mock CuratorSettings for CLI tests."""
+        from unittest.mock import MagicMock
+
+        mock_settings = MagicMock()
+        mock_settings.model = "claude-sonnet-4-6-20260217"
+        mock_settings.max_tokens = 4096
+        mock_settings.effort = None
+        mock_settings.max_pages = 1
+        mock_settings.max_trim_iterations = 15
+        mock_settings.api_max_retries = 5
+        mock_settings.portfolio_data_path = tmp_path / "data"
+        mock_settings.output_dir = tmp_path / "output"
+        mock_settings.template_path = tmp_path / "curated.typ"
+        mock_settings.require_api_key.return_value = (
+            "sk-ant-test"  # pragma: allowlist secret
+        )
+        return mock_settings
+
+    @staticmethod
+    def _make_mock_pipeline(tmp_path: Path) -> tuple[Any, Any, Any]:
+        """Build mock curation result and render output for CLI tests."""
+        from unittest.mock import MagicMock
+
+        mock_curation = MagicMock()
+        mock_curation.company_slug = "acme-corp"
+        mock_curation.work_highlights = [
+            MagicMock(work_id="acme-eng", highlight_ids=["h-1"])
+        ]
+        mock_curation.skills = [MagicMock(skill_id="cloud-aws", keywords=["EKS"])]
+        mock_curation.projects = []
+
+        mock_result = MagicMock()
+        mock_result.curation = mock_curation
+
+        mock_output = MagicMock()
+        mock_output.profile_dir = tmp_path / "output" / "acme-corp"
+        mock_output.pdf_path = tmp_path / "output" / "acme-corp" / "resume.pdf"
+        mock_output.trim_log = []
+        mock_output.page_count = 1
+
+        return mock_result, mock_output, MagicMock()
+
+    def _invoke_curate_with_log_capture(self, tmp_path: Path) -> list[str]:
+        """Run the curate command and return captured log messages."""
+        from unittest.mock import MagicMock
+
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        runner = CliRunner()
+        jd_file = tmp_path / "jd.txt"
+        jd_file.write_text("Senior SRE role at Acme Corp.", encoding="utf-8")
+
+        mock_settings = self._make_mock_settings(tmp_path)
+        mock_result, mock_output, mock_portfolio = self._make_mock_pipeline(tmp_path)
+
+        log_messages: list[str] = []
+
+        def _capture_configure_logging(
+            *, verbose: bool = False, _testing: bool = False
+        ) -> None:
+            """Replacement that captures log messages into a list."""
+            logger.remove()
+            logger.add(lambda msg: log_messages.append(msg), level="INFO")
+
+        with (
+            patch("curator.cli.configure_logging", _capture_configure_logging),
+            patch("curator.config.CuratorSettings", return_value=mock_settings),
+            patch("curator.pipeline.load_portfolio", return_value=mock_portfolio),
+            patch("curator.pipeline.CuratorClient") as mock_client_cls,
+            patch("curator.pipeline.render", return_value=mock_output),
+        ):
+            mock_client = MagicMock()
+            mock_client.curate.return_value = mock_result
+            mock_client_cls.return_value.__enter__.return_value = mock_client
+            runner.invoke(app, ["curate", str(jd_file)])
+
+        return log_messages
+
+    def test_config_logged_at_info_level(self, tmp_path: Path) -> None:
+        """Settings are logged after CuratorSettings loads."""
+        messages = self._invoke_curate_with_log_capture(tmp_path)
+        combined = " ".join(messages)
+        assert "Config: model=claude-sonnet-4-6-20260217" in combined
+        assert "max_tokens=4096" in combined
+
+    def test_pipeline_timing_logs_appear(self, tmp_path: Path) -> None:
+        """Pipeline timing logs appear for portfolio, API, rendering, and total."""
+        messages = self._invoke_curate_with_log_capture(tmp_path)
+        combined = " ".join(messages)
+        assert "Portfolio loaded in" in combined
+        assert "API call completed in" in combined
+        assert "Rendering completed in" in combined
+        assert "Total pipeline:" in combined
+
+    def test_portfolio_path_logged(self, tmp_path: Path) -> None:
+        """Portfolio path is logged after settings load."""
+        messages = self._invoke_curate_with_log_capture(tmp_path)
+        combined = " ".join(messages)
+        assert "Portfolio:" in combined
+
+    def test_output_dir_logged(self, tmp_path: Path) -> None:
+        """Output directory is logged after settings load."""
+        messages = self._invoke_curate_with_log_capture(tmp_path)
+        combined = " ".join(messages)
+        assert "Output dir:" in combined
+
+
+# ---------------------------------------------------------------------------
+# _read_jd_text
+# ---------------------------------------------------------------------------
+
+
+class TestReadJdText:
+    """Tests for _read_jd_text helper."""
+
+    def test_read_from_file(self, tmp_path: Path) -> None:
+        jd = tmp_path / "jd.txt"
+        jd.write_text("Senior SRE at Acme Corp", encoding="utf-8")
+        from curator.cli import _read_jd_text
+
+        result = _read_jd_text(jd, clipboard=False)
+        assert result == "Senior SRE at Acme Corp"
+
+    def test_read_from_file_not_found(self, tmp_path: Path) -> None:
+        from curator.cli import _read_jd_text
+        from curator.exceptions import JobDescriptionError
+
+        with pytest.raises(JobDescriptionError, match="Not a file"):
+            _read_jd_text(tmp_path / "missing.txt", clipboard=False)
+
+    def test_read_from_stdin(self) -> None:
+        from curator.cli import _read_jd_text
+
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            mock_stdin.read.return_value = "JD from stdin"
+            result = _read_jd_text(None, clipboard=False)
+        assert result == "JD from stdin"
+
+    def test_read_from_stdin_dash(self) -> None:
+        from curator.cli import _read_jd_text
+
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            mock_stdin.read.return_value = "JD via dash"
+            result = _read_jd_text(Path("-"), clipboard=False)
+        assert result == "JD via dash"
+
+    def test_read_from_clipboard(self) -> None:
+        from unittest.mock import MagicMock
+
+        from curator.cli import _read_jd_text
+
+        mock_pyperclip = MagicMock()
+        mock_pyperclip.paste.return_value = "JD from clipboard"
+        with patch.dict("sys.modules", {"pyperclip": mock_pyperclip}):
+            result = _read_jd_text(None, clipboard=True)
+        assert result == "JD from clipboard"
+
+    def test_read_clipboard_not_installed(self) -> None:
+        from curator.cli import _read_jd_text
+        from curator.exceptions import JobDescriptionError
+
+        with (
+            patch.dict("sys.modules", {"pyperclip": None}),
+            pytest.raises(JobDescriptionError, match="pyperclip"),
+        ):
+            _read_jd_text(None, clipboard=True)
+
+    def test_read_no_input_on_tty_raises(self) -> None:
+        from curator.cli import _read_jd_text
+        from curator.exceptions import JobDescriptionError
+
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = True
+            with pytest.raises(JobDescriptionError, match="No input specified"):
+                _read_jd_text(None, clipboard=False)
+
+    def test_read_from_clipboard_paste_failure(self) -> None:
+        from unittest.mock import MagicMock
+
+        from curator.cli import _read_jd_text
+        from curator.exceptions import JobDescriptionError
+
+        mock_pyperclip = MagicMock()
+        mock_pyperclip.paste.side_effect = RuntimeError("No clipboard backend")
+        with (
+            patch.dict("sys.modules", {"pyperclip": mock_pyperclip}),
+            pytest.raises(JobDescriptionError, match="clipboard"),
+        ):
+            _read_jd_text(None, clipboard=True)
+
+    def test_read_stdin_uses_bounded_read(self) -> None:
+        from curator.cli import _read_jd_text
+        from curator.rules import MAX_JD_LENGTH
+
+        with patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            mock_stdin.read.return_value = "JD text"
+            _read_jd_text(None, clipboard=False)
+            # Bound is MAX_JD_LENGTH + 1 so downstream length check in
+            # build_user_message can reliably detect overflow.
+            mock_stdin.read.assert_called_once_with(MAX_JD_LENGTH + 1)
+
+    def test_read_from_file_returns_raw_text_unstripped(self, tmp_path: Path) -> None:
+        """After #5 consolidation, _read_jd_text returns raw text without
+        stripping. Content validation (strip/empty/length) happens in
+        build_user_message."""
+        from curator.cli import _read_jd_text
+
+        jd = tmp_path / "jd.txt"
+        jd.write_text("  Senior SRE at Acme Corp\n\n", encoding="utf-8")
+        result = _read_jd_text(jd, clipboard=False)
+        assert result == "  Senior SRE at Acme Corp\n\n"
+
+    def test_read_from_whitespace_file_succeeds_at_io_layer(
+        self, tmp_path: Path
+    ) -> None:
+        """After #5 consolidation, whitespace-only content passes the
+        I/O layer; empty/whitespace validation is deferred to
+        build_user_message."""
+        from curator.cli import _read_jd_text
+
+        jd = tmp_path / "empty.txt"
+        jd.write_text("   ", encoding="utf-8")
+        result = _read_jd_text(jd, clipboard=False)
+        assert result == "   "
+
+    def test_read_mutual_exclusivity(self, tmp_path: Path) -> None:
+        jd = tmp_path / "jd.txt"
+        jd.write_text("some JD", encoding="utf-8")
+        from curator.cli import _read_jd_text
+        from curator.exceptions import JobDescriptionError
+
+        with pytest.raises(JobDescriptionError, match="mutually exclusive"):
+            _read_jd_text(jd, clipboard=True)
+
+
+class TestStaticCommand:
+    """Tests for the `curator static` Typer command."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        # Prevent user env from affecting CuratorSettings construction.
+        for key in (
+            "CURATOR_ANTHROPIC_API_KEY",
+            "CURATOR_MAX_PAGES",
+            "CURATOR_OUTPUT_DIR",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.chdir(tmp_path)
+
+    def _runner(self) -> Any:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        return CliRunner(), app
+
+    def test_defaults_invoke_pipeline(self, tmp_path: Path, mocker: Any) -> None:
+        runner, app = self._runner()
+
+        fake_result = mocker.MagicMock()
+        fake_result.curation.curation.company_slug = "general"
+        fake_result.curation.curation.work_highlights = []
+        fake_result.curation.curation.skills = []
+        fake_result.curation.curation.projects = []
+        fake_result.render_output.profile_dir = tmp_path / "out"
+        fake_result.render_output.pdf_path = tmp_path / "out" / "resume.pdf"
+        fake_result.render_output.skipped_ids = 0
+        fake_result.render_output.safety_net_additions = 0
+        fake_result.trim_log = []
+        fake_result.page_count = 1
+        fake_result.converged = True
+        fake_result.skip_pdf = False
+
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake_result
+        )
+
+        result = runner.invoke(app, ["static"])
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_count == 1
+
+    def test_flags_pass_through(self, tmp_path: Path, mocker: Any) -> None:
+        runner, app = self._runner()
+
+        fake_result = mocker.MagicMock()
+        fake_result.curation.curation.company_slug = "acme-corp"
+        fake_result.curation.curation.work_highlights = []
+        fake_result.curation.curation.skills = []
+        fake_result.curation.curation.projects = []
+        fake_result.render_output.profile_dir = tmp_path / "out"
+        fake_result.render_output.pdf_path = tmp_path / "out" / "resume.pdf"
+        fake_result.render_output.skipped_ids = 0
+        fake_result.render_output.safety_net_additions = 0
+        fake_result.trim_log = []
+        fake_result.page_count = 1
+        fake_result.converged = True
+        fake_result.skip_pdf = False
+
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake_result
+        )
+
+        result = runner.invoke(
+            app,
+            ["static", "--name", "Acme Corp", "--pages", "2", "--max-highlights", "3"],
+        )
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_run.call_args
+        assert kwargs["name"] == "Acme Corp"
+        assert kwargs["max_highlights"] == 3
+        # settings.max_pages reflects --pages.
+        settings_arg = mock_run.call_args[0][0]
+        assert settings_arg.max_pages == 2
+
+    def test_pages_out_of_range_rejected(self) -> None:
+        runner, app = self._runner()
+
+        result = runner.invoke(app, ["static", "--pages", "6"])
+        assert result.exit_code != 0
+        assert "is not in the range" in result.output.lower() or "6" in result.output
+
+    def test_max_highlights_zero_rejected(self) -> None:
+        runner, app = self._runner()
+
+        result = runner.invoke(app, ["static", "--max-highlights", "0"])
+        assert result.exit_code != 0
+
+    def test_max_highlights_over_cap_rejected(self) -> None:
+        runner, app = self._runner()
+
+        result = runner.invoke(app, ["static", "--max-highlights", "51"])
+        assert result.exit_code != 0
+
+    def test_json_and_no_pdf_mutually_exclusive(self) -> None:
+        runner, app = self._runner()
+
+        result = runner.invoke(app, ["static", "--json", "--no-pdf"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output.lower()
+
+    def test_no_pdf_forwards_skip(self, tmp_path: Path, mocker: Any) -> None:
+        runner, app = self._runner()
+
+        fake_result = mocker.MagicMock()
+        fake_result.curation.curation.company_slug = "general"
+        fake_result.curation.curation.work_highlights = []
+        fake_result.curation.curation.skills = []
+        fake_result.curation.curation.projects = []
+        fake_result.render_output.profile_dir = tmp_path / "out"
+        fake_result.render_output.pdf_path = None
+        fake_result.render_output.skipped_ids = 0
+        fake_result.render_output.safety_net_additions = 0
+        fake_result.trim_log = []
+        fake_result.page_count = None
+        fake_result.converged = True
+        fake_result.skip_pdf = True
+
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake_result
+        )
+
+        result = runner.invoke(app, ["static", "--no-pdf"])
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_run.call_args
+        assert kwargs["skip_pdf"] is True
+
+    def test_json_prints_envelope_with_provenance(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        import json as _json
+
+        runner, app = self._runner()
+
+        fake_curation = mocker.MagicMock()
+        fake_curation.model_dump.return_value = {
+            "summary": "x",
+            "suggested_label": "X",
+            "company_slug": "general",
+            "work_highlights": [],
+            "skills": [],
+            "projects": [],
+        }
+        mocker.patch("curator.loader.load_portfolio", return_value=mocker.MagicMock())
+        mocker.patch(
+            "curator.static_mode.synthesize_curation", return_value=fake_curation
+        )
+        mock_run = mocker.patch("curator.pipeline.run_static_pipeline")
+
+        result = runner.invoke(app, ["static", "--json"])
+        assert result.exit_code == 0, result.output
+        # stdout-only by default in typer CliRunner; loguru writes to stderr.
+        payload = _json.loads(result.stdout)
+        assert payload["source"] == "static"
+        assert payload["schema_version"] == "static-1.0"
+        assert payload["curation"]["company_slug"] == "general"
+        assert mock_run.call_count == 0
+
+    def test_json_with_flags_combined(self, tmp_path: Path, mocker: Any) -> None:
+        """--json + --pages + --max-highlights flows options into synthesis."""
+        import json as _json
+
+        runner, app = self._runner()
+
+        fake_curation = mocker.MagicMock()
+        fake_curation.model_dump.return_value = {
+            "summary": "x",
+            "suggested_label": "X",
+            "company_slug": "general",
+            "work_highlights": [],
+            "skills": [],
+            "projects": [],
+        }
+        mocker.patch("curator.loader.load_portfolio", return_value=mocker.MagicMock())
+        synth = mocker.patch(
+            "curator.static_mode.synthesize_curation", return_value=fake_curation
+        )
+
+        result = runner.invoke(
+            app,
+            ["static", "--json", "--pages", "3", "--max-highlights", "2"],
+        )
+        assert result.exit_code == 0, result.output
+        # Confirm the JSON parses cleanly despite any log interleaving paths.
+        payload = _json.loads(result.stdout)
+        assert payload["source"] == "static"
+        _, kwargs = synth.call_args
+        assert kwargs["name"] == "general"
+        assert kwargs["max_highlights_per_work"] == 2
+
+    @pytest.mark.parametrize(
+        "raw_name",
+        [
+            "x" * 500,  # exercises the pre-slugify 256-char cap
+            "!!!",  # all-punctuation falls back to "general"
+            "Acme/Corp\\Inc",  # path-separator characters
+        ],
+    )
+    def test_name_edge_inputs_pass_through(
+        self, raw_name: str, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+
+        fake_result = mocker.MagicMock()
+        fake_result.curation.curation.company_slug = "whatever"
+        fake_result.curation.curation.work_highlights = []
+        fake_result.curation.curation.skills = []
+        fake_result.curation.curation.projects = []
+        fake_result.render_output.profile_dir = tmp_path / "out"
+        fake_result.render_output.pdf_path = tmp_path / "out" / "resume.pdf"
+        fake_result.render_output.skipped_ids = 0
+        fake_result.render_output.safety_net_additions = 0
+        fake_result.trim_log = []
+        fake_result.page_count = 1
+        fake_result.converged = True
+        fake_result.skip_pdf = False
+
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake_result
+        )
+
+        result = runner.invoke(app, ["static", "--name", raw_name])
+        assert result.exit_code == 0, result.output
+        _, kwargs = mock_run.call_args
+        assert kwargs["name"] == raw_name
+
+
+# ---------------------------------------------------------------------------
+# Cover letter flag wiring
+# ---------------------------------------------------------------------------
+
+
+class TestCoverLetterCLI:
+    def _runner(self) -> tuple[Any, Any]:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        return CliRunner(), app
+
+    def _make_fake_result(self, tmp_path: Path) -> Any:
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        fake.curation.curation.company_slug = "acme"
+        fake.curation.curation.work_highlights = []
+        fake.curation.curation.skills = []
+        fake.curation.curation.projects = []
+        fake.curation.source = "static"
+        fake.render_output.profile_dir = tmp_path / "out"
+        fake.render_output.pdf_path = tmp_path / "out" / "resume.pdf"
+        fake.render_output.cover_letter_pdf_path = tmp_path / "out" / "cover_letter.pdf"
+        fake.render_output.cover_letter_yaml_path = (
+            tmp_path / "out" / "data" / "cover_letter.yaml"
+        )
+        fake.render_output.skipped_ids = 0
+        fake.render_output.safety_net_additions = 0
+        fake.trim_log = []
+        fake.page_count = 1
+        fake.converged = True
+        fake.skip_pdf = False
+        return fake
+
+    def test_static_threads_cover_letter_flag(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake
+        )
+        result = runner.invoke(app, ["static", "--cover-letter", "--name", "acme"])
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["with_cover_letter"] is True
+
+    def test_static_no_cover_letter_by_default(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.render_output.cover_letter_pdf_path = None
+        fake.render_output.cover_letter_yaml_path = None
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake
+        )
+        result = runner.invoke(app, ["static", "--name", "acme"])
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["with_cover_letter"] is False
+
+    def test_static_json_includes_cover_letter_when_on(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        import json as _json
+
+        from curator.models import (
+            Basics,
+            PortfolioData,
+            SkillEntry,
+            WorkEntry,
+        )
+        from tests.helpers import valid_cover_letter
+
+        portfolio = PortfolioData(
+            basics=Basics(name="Test User"),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "w1",
+                        "name": "Acme",
+                        "position": "Engineer",
+                        "startDate": "2020-01",
+                        "endDate": "",
+                        "highlights": [
+                            {"id": "h1", "text": "Did thing one."},
+                            {"id": "h2", "text": "Did thing two."},
+                        ],
+                    }
+                )
+            ],
+            education=[],
+            skills=[SkillEntry(id="lang", name="Languages", keywords=["Python"])],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=None,
+            services=[],
+            cover_letter=valid_cover_letter(),
+        )
+        mocker.patch("curator.loader.load_portfolio", return_value=portfolio)
+        result = runner.invoke(app, ["static", "--cover-letter", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = _json.loads(result.stdout)
+        assert "cover_letter" in payload
+        assert "is_template" not in payload["cover_letter"]
+        assert payload["cover_letter"]["salutation"] == "Dear Hiring Manager,"
+
+    def test_static_json_omits_cover_letter_when_off(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        import json as _json
+
+        from curator.models import Basics, PortfolioData, SkillEntry, WorkEntry
+
+        portfolio = PortfolioData(
+            basics=Basics(name="Test User"),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "w1",
+                        "name": "Acme",
+                        "position": "Engineer",
+                        "startDate": "2020-01",
+                        "endDate": "",
+                        "highlights": [{"id": "h1", "text": "Did thing."}],
+                    }
+                )
+            ],
+            education=[],
+            skills=[SkillEntry(id="lang", name="Languages", keywords=["Python"])],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=None,
+            services=[],
+        )
+        mocker.patch("curator.loader.load_portfolio", return_value=portfolio)
+        result = runner.invoke(app, ["static", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = _json.loads(result.stdout)
+        assert "cover_letter" not in payload
+
+    def test_static_display_does_not_include_template_warning(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        """The TEMPLATE / placeholder notice was retired with the banner."""
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        mocker.patch("curator.pipeline.run_static_pipeline", return_value=fake)
+        result = runner.invoke(app, ["static", "--cover-letter", "--name", "acme"])
+        assert result.exit_code == 0, result.output
+        assert "TEMPLATE" not in result.output
+        assert "[COMPANY]" not in result.output
+        assert "[TAILOR:" not in result.output
+
+    def test_curate_threads_cover_letter_flag(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        jd_file = tmp_path / "jd.txt"
+        jd_file.write_text("Senior Engineer role at Acme.")
+        fake = self._make_fake_result(tmp_path)
+        fake.curation.source = "api"
+        mock_run = mocker.patch("curator.pipeline.run_pipeline", return_value=fake)
+        env = {
+            "CURATOR_ANTHROPIC_API_KEY": "sk-ant-test",  # pragma: allowlist secret
+            "CURATOR_ALLOW_API_SPEND": "true",
+        }
+        result = runner.invoke(
+            app,
+            ["curate", str(jd_file), "--cover-letter"],
+            env=env,
+        )
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["with_cover_letter"] is True

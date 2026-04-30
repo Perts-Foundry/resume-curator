@@ -1,0 +1,228 @@
+meta:
+  id: moderate-compliance
+  name: Compliance Engineer at AuditShield
+  eval_schema_version: 4
+  tier: moderate
+job_description: 'Compliance Engineer — AuditShield (Washington, DC)
+
+  AuditShield provides automated compliance and audit management software
+
+  for government contractors and financial institutions. We are hiring a
+
+  Compliance Engineer to implement and maintain regulatory frameworks
+
+  across our cloud infrastructure and development processes.
+
+  Responsibilities:
+
+  - Implement and maintain SOC 2 Type II, FedRAMP, and ISO 27001 controls
+
+  - Build automated compliance evidence collection pipelines
+
+  - Conduct internal audits and prepare documentation for external auditors
+
+  - Design and enforce GRC (Governance, Risk, and Compliance) policies
+
+  - Manage vulnerability scanning and remediation tracking workflows
+
+  - Author security policies, procedures, and compliance runbooks
+
+  - Coordinate with legal and regulatory teams on framework interpretation
+
+  Requirements:
+
+  - 4+ years in compliance engineering, GRC, or security auditing
+
+  - Deep expertise with SOC 2, FedRAMP, ISO 27001, or NIST 800-53 frameworks
+
+  - Experience building automated compliance evidence collection
+
+  - Proficiency with GRC platforms (Vanta, Drata, ServiceNow GRC)
+
+  - Understanding of cloud security controls (AWS, Azure, or GCP)
+
+  - Experience with vulnerability management tools (Qualys, Rapid7, Tenable)
+
+  - Strong technical writing skills for policies and audit documentation
+
+  Nice to have:
+
+  - CISSP, CISA, or CCSK certification
+
+  - Experience with CMMC or ITAR compliance
+
+  - Background in government or defense contracting environments
+
+  - Familiarity with policy-as-code tools (OPA, Sentinel)
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-security
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 63
+human_scores:
+  relevance: 1
+  keyword_strategy: 1
+  section_selection: 3
+  experience_adaptation: 1
+  summary_quality: 2
+  highlight_quality: 2
+  narrative_coherence: 2
+  overall_impression: 1
+curation:
+  summary: Infrastructure Security Engineer with 8+ years of experience implementing
+    security hardening across production environments. Achieved full CIS benchmark
+    compliance for 150 servers and automated compliance-related configuration management
+    across multi-team infrastructure.
+  suggested_label: Compliance Engineer
+  company_slug: auditshield
+  work_highlights:
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-security-hardening
+    - devops-monitoring-stack
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-iac-adoption
+    - plat-monitoring
+  skills:
+  - skill_id: skill-security
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+  - skill_id: skill-devops
+    keywords:
+    - Terraform
+    - Ansible
+    - Infrastructure as Code
+  - skill_id: skill-aws
+    keywords:
+    - IAM
+    - CloudWatch
+    - VPC
+  - skill_id: skill-monitoring
+    keywords:
+    - ELK Stack
+    - Prometheus
+  projects: []
+section_data:
+  work:
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-security-hardening
+      text: Executed security hardening initiative across production infrastructure,
+        implementing CIS benchmarks for 150 servers that resolved 340 audit findings
+        and achieved full compliance within 90 days
+      tags:
+      - security
+      - compliance
+      technologies:
+      - CIS Benchmarks
+      - Ansible
+    - id: devops-monitoring-stack
+      text: Implemented centralized logging and monitoring stack using ELK and Prometheus
+        that consolidated alerts from 8 disparate systems into a single dashboard,
+        cutting mean time to resolution by 55%
+      tags:
+      - monitoring
+      - elk
+      technologies:
+      - Elasticsearch
+      - Logstash
+      - Kibana
+      - Prometheus
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+  skills:
+  - id: skill-security
+    name: Security & Compliance
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Terraform
+    - Ansible
+    - Infrastructure as Code
+    - GitHub Actions
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - IAM
+    - CloudWatch
+    - VPC
+    - S3
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - ELK Stack
+    - Prometheus
+    - Grafana
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Compliance Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Infrastructure Security Engineer with 8+ years of experience implementing
+    security hardening across production environments. Achieved full CIS benchmark
+    compliance for 150 servers and automated compliance-related configuration management
+    across multi-team infrastructure.
+  location:
+    city: Washington
+    region: DC
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

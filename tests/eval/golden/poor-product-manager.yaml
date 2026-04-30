@@ -1,0 +1,161 @@
+meta:
+  id: poor-product-manager
+  name: Product Manager at LaunchPad Products
+  eval_schema_version: 4
+  tier: poor
+job_description: 'Product Manager — LaunchPad Products (New York, NY)
+
+  LaunchPad Products is a consumer technology company building subscription
+
+  commerce platforms for the direct-to-consumer market. We are hiring a
+
+  Product Manager to own our core checkout and retention product lines.
+
+  Responsibilities:
+
+  - Define product roadmaps and quarterly OKRs aligned with company strategy
+
+  - Conduct user research interviews and synthesize findings into actionable insights
+
+  - Write detailed PRDs with user stories, acceptance criteria, and wireframes
+
+  - Prioritize feature backlog using RICE scoring and stakeholder alignment
+
+  - Run sprint planning, backlog grooming, and retrospective ceremonies
+
+  - Analyze product metrics (conversion funnels, retention cohorts, NPS) to drive
+  decisions
+
+  - Present product strategy to executive leadership and board of directors
+
+  Requirements:
+
+  - 4+ years of product management experience in consumer technology
+
+  - Experience with product analytics tools (Amplitude, Mixpanel, Heap)
+
+  - Proficiency with design collaboration tools (Figma, Miro, FigJam)
+
+  - Strong understanding of A/B testing frameworks and statistical significance
+
+  - Experience writing SQL queries for ad-hoc product analysis
+
+  - Familiarity with agile frameworks (Scrum, Kanban, SAFe)
+
+  - Excellent stakeholder communication and presentation skills
+
+  Nice to have:
+
+  - MBA or equivalent business background
+
+  - Experience with subscription/recurring revenue business models
+
+  - Background in e-commerce or payments (Stripe, Braintree)
+
+  - Certified Scrum Product Owner (CSPO) designation
+
+  '
+expected:
+  must_include: {}
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 59
+human_scores:
+  relevance: 1
+  keyword_strategy: 1
+  section_selection: 2
+  experience_adaptation: 1
+  summary_quality: 1
+  highlight_quality: 2
+  narrative_coherence: 1
+  overall_impression: 1
+curation:
+  summary: Technical Lead with 8+ years of experience coordinating engineering teams
+    and driving cross-functional technical initiatives. Lead platform engineering
+    efforts across 4 teams delivering 50+ microservices.
+  suggested_label: Technical Lead
+  company_slug: launchpad-products
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - pel-team-coordination
+    - pel-cost-program
+  skills:
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - YAML
+  - skill_id: skill-monitoring
+    keywords:
+    - Grafana
+    - PagerDuty
+  projects: []
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: pel-team-coordination
+      text: Coordinate CI/CD pipeline strategy across 4 engineering teams delivering
+        50+ microservices, establishing shared standards that reduce average deployment
+        time from 45 minutes to 12 minutes
+      tags:
+      - leadership
+      - coordination
+      technologies:
+      - GitHub Actions
+      - Docker
+    - id: pel-cost-program
+      text: Implement cloud cost optimization program using reserved instances and
+        resource tagging that reduce monthly AWS spend by $42,000 (28% reduction)
+        while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - program-management
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+  skills:
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - YAML
+    - HCL
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Grafana
+    - PagerDuty
+    - Alerting
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Technical Lead
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Technical Lead with 8+ years of experience coordinating engineering teams
+    and driving cross-functional technical initiatives. Lead platform engineering
+    efforts across 4 teams delivering 50+ microservices.
+  location:
+    city: Austin
+    region: Texas
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

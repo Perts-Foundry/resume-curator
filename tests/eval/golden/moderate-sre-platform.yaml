@@ -1,0 +1,299 @@
+meta:
+  id: moderate-sre-platform
+  name: Senior SRE / Platform Engineer at Uptime Labs
+  eval_schema_version: 4
+  tier: moderate
+job_description: 'Senior Site Reliability Engineer — Uptime Labs (Denver, CO)
+
+  Uptime Labs builds high-availability payment processing infrastructure for
+
+  financial services companies. We are hiring a Senior SRE to own service
+
+  reliability, define SLOs, and lead incident response for our distributed
+
+  platform serving 50 million transactions daily.
+
+  Responsibilities:
+
+  - Define and maintain SLOs and error budgets for 30+ production services
+
+  - Lead incident response and blameless post-mortems for P1/P2 events
+
+  - Build and maintain Prometheus-based monitoring with custom exporters
+
+  - Manage on-call rotations and escalation policies across 4 engineering teams
+
+  - Implement chaos engineering practices to validate resilience
+
+  - Automate toil reduction through SRE tooling in Go and Python
+
+  - Capacity planning and performance modeling for payment processing workloads
+
+  Requirements:
+
+  - 5+ years in SRE, platform engineering, or production systems
+
+  - Deep expertise with SLO frameworks, error budgets, and reliability metrics
+
+  - Hands-on Prometheus, Thanos, and Grafana at scale
+
+  - Strong incident command and post-mortem facilitation skills
+
+  - Experience with chaos engineering tools (Chaos Monkey, Litmus, Gremlin)
+
+  - Proficiency in Go for custom tooling and exporters
+
+  - Kubernetes experience in high-throughput production environments
+
+  - On-call experience with PagerDuty or Opsgenie
+
+  Nice to have:
+
+  - Experience in financial services or payment processing
+
+  - Google SRE certification or equivalent
+
+  - Familiarity with distributed tracing (Jaeger, OpenTelemetry)
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-monitoring
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 74
+human_scores:
+  relevance: 2
+  keyword_strategy: 2
+  section_selection: 4
+  experience_adaptation: 3
+  summary_quality: 2
+  highlight_quality: 4
+  narrative_coherence: 3
+  overall_impression: 2
+curation:
+  summary: Platform Engineer with 8+ years of experience building observability systems,
+    orchestrating Kubernetes workloads, and reducing incident detection times. Brings
+    monitoring expertise with Prometheus and Grafana across production environments,
+    though transitioning into a dedicated SRE discipline.
+  suggested_label: Site Reliability Engineer
+  company_slug: uptime-labs
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-monitoring
+    - plat-k8s-migration
+    - plat-cicd-pipeline
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-eks-cluster
+    - infra-disaster-recovery
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-monitoring-stack
+    - devops-security-hardening
+  skills:
+  - skill_id: skill-monitoring
+    keywords:
+    - Prometheus
+    - Grafana
+    - PagerDuty
+    - ELK Stack
+    - CloudWatch
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+  - skill_id: skill-networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+  - skill_id: skill-aws
+    keywords:
+    - EKS
+    - CloudWatch
+    - Route 53
+  projects: []
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+    - id: plat-k8s-migration
+      text: Lead migration of 30 production services from ECS to EKS, achieving 99.95%
+        uptime during the 6-month transition while eliminating $18,000/month in compute
+        overhead through right-sized pod autoscaling
+      tags:
+      - kubernetes
+      - migration
+      technologies:
+      - Kubernetes
+      - EKS
+      - Helm
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-eks-cluster
+      text: Deployed production EKS clusters across 3 environments with automated
+        node group scaling, pod security policies, and Istio service mesh, serving
+        120 pods with zero unplanned downtime over 14 months
+      tags:
+      - kubernetes
+      - eks
+      technologies:
+      - EKS
+      - Istio
+      - Kubernetes
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-monitoring-stack
+      text: Implemented centralized logging and monitoring stack using ELK and Prometheus
+        that consolidated alerts from 8 disparate systems into a single dashboard,
+        cutting mean time to resolution by 55%
+      tags:
+      - monitoring
+      - elk
+      technologies:
+      - Elasticsearch
+      - Logstash
+      - Kibana
+      - Prometheus
+    - id: devops-security-hardening
+      text: Executed security hardening initiative across production infrastructure,
+        implementing CIS benchmarks for 150 servers that resolved 340 audit findings
+        and achieved full compliance within 90 days
+      tags:
+      - security
+      - compliance
+      technologies:
+      - CIS Benchmarks
+      - Ansible
+  skills:
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Prometheus
+    - Grafana
+    - PagerDuty
+    - ELK Stack
+    - CloudWatch
+    - Alerting
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+    - Pod Autoscaling
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+    - Load Balancing
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EKS
+    - CloudWatch
+    - Route 53
+    - EC2
+    - S3
+  certificates:
+  - id: cert-cka
+    name: Certified Kubernetes Administrator
+    date: 2022-09
+    type: professional
+    issuer: Cloud Native Computing Foundation
+    tags:
+    - kubernetes
+    - containers
+    technologies:
+    - Kubernetes
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Site Reliability Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Platform Engineer with 8+ years of experience building observability systems,
+    orchestrating Kubernetes workloads, and reducing incident detection times. Brings
+    monitoring expertise with Prometheus and Grafana across production environments,
+    though transitioning into a dedicated SRE discipline.
+  location:
+    city: Denver
+    region: Colorado
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

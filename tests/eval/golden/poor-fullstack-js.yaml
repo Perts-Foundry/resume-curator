@@ -1,0 +1,190 @@
+meta:
+  id: poor-fullstack-js
+  name: Full-stack Engineer (JS) at StackBridge
+  eval_schema_version: 4
+  tier: poor
+job_description: 'Full-stack Engineer (JavaScript) — StackBridge (Denver, CO)
+
+  StackBridge is a B2B SaaS company building collaborative project
+
+  management tools for distributed engineering teams. We are seeking a
+
+  Full-stack Engineer to build features end-to-end using our modern
+
+  JavaScript stack.
+
+  Responsibilities:
+
+  - Build RESTful and GraphQL APIs using Node.js and Express
+
+  - Develop interactive frontend components with React and TypeScript
+
+  - Design and optimize MongoDB schemas and aggregation pipelines
+
+  - Implement real-time collaboration features using WebSockets and Socket.io
+
+  - Write comprehensive test suites with Jest, Mocha, and Playwright
+
+  - Deploy and monitor services on Vercel and AWS Lambda
+
+  - Participate in architecture reviews and technical design documents
+
+  Requirements:
+
+  - 4+ years of full-stack JavaScript/TypeScript development
+
+  - Strong experience with Node.js backend development (Express, Fastify, Nest.js)
+
+  - Proficiency with React, Next.js, and modern frontend tooling
+
+  - Experience with MongoDB, Mongoose, and NoSQL data modeling
+
+  - Familiarity with message queues (RabbitMQ, SQS, Redis Pub/Sub)
+
+  - Experience with OAuth 2.0, JWT, and session management
+
+  - Understanding of serverless architectures and edge computing
+
+  Nice to have:
+
+  - Experience with Prisma or Drizzle ORM
+
+  - Contributions to npm packages with significant download counts
+
+  - Background in real-time collaboration (CRDTs, operational transforms)
+
+  - Experience with monorepo tooling (Turborepo, Nx)
+
+  '
+expected:
+  must_include: {}
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 53
+human_scores:
+  relevance: 1
+  keyword_strategy: 1
+  section_selection: 3
+  experience_adaptation: 1
+  summary_quality: 1
+  highlight_quality: 2
+  narrative_coherence: 2
+  overall_impression: 1
+curation:
+  summary: Software Engineer with 8+ years of experience designing API architectures
+    and database systems at scale. Built multi-region infrastructure supporting 10
+    million daily API requests with 99.99% availability.
+  suggested_label: Software Engineer
+  company_slug: stackbridge
+  work_highlights:
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - cis-api-architecture
+    - cis-database-design
+    - cis-disaster-recovery
+  skills:
+  - skill_id: skill-databases
+    keywords:
+    - PostgreSQL
+    - DynamoDB
+    - Redis
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - YAML
+  - skill_id: skill-networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+  projects: []
+section_data:
+  work:
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: cis-api-architecture
+      text: Designed multi-region API architecture supporting 10 million daily requests
+        with automatic failover, achieving 99.99% availability across 3 regions using
+        Route 53 health checks and Aurora Global Database
+      tags:
+      - api
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+    - id: cis-database-design
+      text: Configured Aurora Global Database with read replicas across 3 regions,
+        reducing cross-region query latency by 60% and supporting 15 terabytes of
+        production data with automated backup retention
+      tags:
+      - database
+      - aws
+      technologies:
+      - Aurora
+      - AWS Backup
+      - PostgreSQL
+    - id: cis-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  skills:
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - PostgreSQL
+    - DynamoDB
+    - Redis
+    - Aurora
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - YAML
+    - HCL
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+    - Load Balancing
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Software Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Software Engineer with 8+ years of experience designing API architectures
+    and database systems at scale. Built multi-region infrastructure supporting 10
+    million daily API requests with 99.99% availability.
+  location:
+    city: Austin
+    region: Texas
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

@@ -1,0 +1,362 @@
+meta:
+  id: good-finops
+  name: FinOps Engineer at CloudLedger
+  eval_schema_version: 4
+  tier: good
+job_description: 'FinOps Engineer — CloudLedger (Chicago, IL)
+
+  CloudLedger provides cloud financial management software for enterprise IT
+
+  organizations. We are seeking a FinOps Engineer to build cost optimization
+
+  tooling, implement chargeback models, and drive cloud spending accountability
+
+  across engineering teams.
+
+  Responsibilities:
+
+  - Build dashboards and reports for cloud cost visibility across AWS accounts
+
+  - Implement chargeback and showback models using tagging strategies and billing
+  APIs
+
+  - Optimize reserved instance and savings plan coverage to maximize discounts
+
+  - Develop automation for rightsizing recommendations and idle resource cleanup
+
+  - Analyze cost anomalies and create alerting for budget threshold breaches
+
+  - Partner with engineering teams to embed cost-awareness into CI/CD workflows
+
+  - Present monthly cost reviews and forecasting reports to leadership
+
+  Requirements:
+
+  - 4+ years in FinOps, cloud cost engineering, or infrastructure finance
+
+  - Deep expertise with AWS Cost Explorer, Cost and Usage Reports, and billing APIs
+
+  - Experience implementing reserved instance and savings plan strategies
+
+  - Proficiency with tagging governance and multi-account cost allocation
+
+  - Strong data analysis skills (Python, SQL, or BI tools)
+
+  - Understanding of cloud pricing models (on-demand, spot, reserved, savings plans)
+
+  - Experience building cost dashboards (Grafana, QuickSight, Tableau)
+
+  Nice to have:
+
+  - FinOps Certified Practitioner certification
+
+  - Experience with Kubecost or cloud-native cost tools
+
+  - Background in infrastructure engineering or DevOps
+
+  - Familiarity with Terraform cost estimation (Infracost)
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-aws
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 75
+human_scores:
+  relevance: 3
+  keyword_strategy: 3
+  section_selection: 4
+  experience_adaptation: 4
+  summary_quality: 4
+  highlight_quality: 3
+  narrative_coherence: 4
+  overall_impression: 3
+curation:
+  summary: FinOps Engineer with 8+ years of cloud infrastructure experience and a
+    demonstrated success reducing AWS spend by $42,000/month (28%) through reserved
+    instance planning, spot fleet optimization, and resource tagging governance. Delivered
+    $4.2 million in projected annual savings across 5 enterprise cloud migration assessments.
+  suggested_label: FinOps Engineer
+  company_slug: cloudledger
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-cost-optimization
+    - plat-iac-adoption
+    - plat-monitoring
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-aws-architecture
+    - infra-terraform-modules
+    - infra-disaster-recovery
+  - work_id: consulting-founder
+    highlight_ids:
+    - consult-cost-analysis
+    - consult-architecture-review
+    - consult-migration-plan
+  skills:
+  - skill_id: skill-aws
+    keywords:
+    - EC2
+    - S3
+    - RDS
+    - Lambda
+    - CloudWatch
+    - IAM
+    - Route 53
+  - skill_id: skill-finops
+    keywords:
+    - AWS Cost Explorer
+    - Savings Plans
+    - Reserved Instances
+    - Spot Instances
+    - Resource Tagging
+  - skill_id: skill-devops
+    keywords:
+    - Terraform
+    - Infrastructure as Code
+    - GitHub Actions
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+    - SQL
+  - skill_id: skill-monitoring
+    keywords:
+    - Grafana
+    - CloudWatch
+    - Prometheus
+  - skill_id: skill-databases
+    keywords:
+    - PostgreSQL
+    - Aurora
+    - DynamoDB
+  projects:
+  - proj-iac-framework
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-cost-optimization
+      text: Implement cloud cost optimization program using reserved instances, spot
+        fleets, and resource tagging that reduced monthly AWS spend by $42,000 (28%
+        reduction) while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - aws
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+    - id: infra-terraform-modules
+      text: Built reusable Terraform module library of 40+ modules adopted by 6 product
+        teams, standardizing VPC layouts, security groups, and IAM policies while
+        cutting new environment provisioning from 2 days to 35 minutes
+      tags:
+      - terraform
+      - iac
+      technologies:
+      - Terraform
+      - AWS
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  - id: consulting-founder
+    name: Apex Consulting
+    position: Founder & Principal Consultant
+    start_date: 2023-06
+    end_date: null
+    highlights:
+    - id: consult-cost-analysis
+      text: Deliver TCO analyses for 5 cloud migration proposals totaling $4.2 million
+        in projected annual savings through rightsizing, reserved instance planning,
+        and workload consolidation
+      tags:
+      - cost-optimization
+      - consulting
+      technologies:
+      - AWS Cost Explorer
+      - Savings Plans
+    - id: consult-architecture-review
+      text: Conduct Well-Architected Framework reviews for 8 enterprise clients, identifying
+        120+ remediation items that improved reliability pillar scores by an average
+        of 35%
+      tags:
+      - architecture
+      - consulting
+      technologies:
+      - AWS
+      - Well-Architected Tool
+    - id: consult-migration-plan
+      text: Architect landing zone designs for 3 Fortune 500 clients, deploying multi-account
+        structures with AWS Organizations and Service Control Policies that passed
+        SOC 2 audit on first review
+      tags:
+      - migration
+      - architecture
+      technologies:
+      - AWS Organizations
+      - Control Tower
+  skills:
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EC2
+    - S3
+    - RDS
+    - Lambda
+    - CloudWatch
+    - IAM
+    - Route 53
+    - VPC
+  - id: skill-finops
+    name: Cloud Financial Management
+    keywords:
+    - AWS Cost Explorer
+    - Savings Plans
+    - Reserved Instances
+    - Spot Instances
+    - Resource Tagging
+    - Cost Allocation
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Terraform
+    - Infrastructure as Code
+    - GitHub Actions
+    - CloudFormation
+  - id: skill-programming
+    name: Programming & Data Analysis
+    keywords:
+    - Python
+    - Bash
+    - SQL
+    - YAML
+  - id: skill-monitoring
+    name: Observability & Dashboards
+    keywords:
+    - Grafana
+    - CloudWatch
+    - Prometheus
+    - Datadog
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - PostgreSQL
+    - Aurora
+    - DynamoDB
+    - Redis
+  projects:
+  - id: proj-iac-framework
+    name: Terraform Module Framework
+    description: Open source Terraform module framework for standardized AWS infrastructure
+      provisioning with built-in security policies and cost estimation
+    start_date: 2021-01
+    end_date: 2023-06
+    keywords:
+    - Terraform
+    - AWS
+    - Open Source
+    highlights:
+    - id: proj-iac-adoption
+      text: Created modular Terraform framework adopted by 12 organizations on GitHub
+        with 500+ stars, providing pre-built modules for VPC, EKS, and RDS deployment
+        patterns
+      tags:
+      - open-source
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+      - GitHub
+  certificates:
+  - id: cert-aws-solutions-architect
+    name: AWS Certified Solutions Architect - Professional
+    date: 2023-04
+    type: professional
+    issuer: Amazon Web Services
+    tags:
+    - aws
+    - cloud
+    technologies:
+    - AWS
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: FinOps Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: FinOps Engineer with 8+ years of cloud infrastructure experience and a
+    demonstrated success reducing AWS spend by $42,000/month (28%) through reserved
+    instance planning, spot fleet optimization, and resource tagging governance. Delivered
+    $4.2 million in projected annual savings across 5 enterprise cloud migration assessments.
+  location:
+    city: Chicago
+    region: Illinois
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

@@ -1,0 +1,379 @@
+meta:
+  id: good-security-engineer
+  name: Security Engineer at Ironguard Security
+  eval_schema_version: 4
+  tier: good
+job_description: 'Security Engineer (InfraSec) — Ironguard Security (Denver, CO)
+
+  Ironguard Security provides managed security services for mid-market SaaS
+
+  companies. We are looking for a Security Engineer to strengthen our
+
+  infrastructure security posture, conduct penetration testing, and implement
+
+  zero trust architectures.
+
+  Responsibilities:
+
+  - Perform penetration testing and vulnerability assessments on cloud infrastructure
+
+  - Develop threat models for new product features and infrastructure changes
+
+  - Implement zero trust network architecture across hybrid cloud environments
+
+  - Build and maintain SIEM pipelines for security event correlation
+
+  - Conduct OWASP Top 10 assessments for web applications and APIs
+
+  - Automate security compliance checks using policy-as-code frameworks
+
+  - Collaborate with DevOps teams on container security and image scanning
+
+  Requirements:
+
+  - 4+ years in security engineering, penetration testing, or infrastructure security
+
+  - Hands-on experience with vulnerability scanners (Nessus, Qualys, Burp Suite)
+
+  - Strong knowledge of OWASP Top 10 and common attack vectors
+
+  - Experience implementing zero trust architectures (BeyondCorp, ZTNA)
+
+  - Proficiency with SIEM tools (Splunk, Elastic Security, Sentinel)
+
+  - Understanding of container security (Trivy, Falco, runtime scanning)
+
+  - Experience with policy-as-code (OPA, Sentinel, AWS Config Rules)
+
+  Nice to have:
+
+  - OSCP, CEH, or equivalent offensive security certification
+
+  - Experience with threat modeling frameworks (STRIDE, MITRE ATT&CK)
+
+  - Background in compliance (SOC 2, ISO 27001, NIST 800-53)
+
+  - Familiarity with cloud-native security tools (GuardDuty, Security Hub)
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-security
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 76
+human_scores:
+  relevance: 2
+  keyword_strategy: 2
+  section_selection: 3
+  experience_adaptation: 3
+  summary_quality: 2
+  highlight_quality: 4
+  narrative_coherence: 3
+  overall_impression: 2
+curation:
+  summary: Infrastructure Security Engineer with 7+ years of experience hardening
+    cloud platforms, implementing compliance frameworks, and automating security controls
+    at scale. Track record of resolving 340 audit findings within 90 days and achieving
+    zero configuration drift across 150+ production servers.
+  suggested_label: Infrastructure Security Engineer
+  company_slug: ironguard-security
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-k8s-migration
+    - plat-monitoring
+    - plat-iac-adoption
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-security-hardening
+    - devops-monitoring-stack
+    - devops-ansible-automation
+    - devops-jenkins-pipeline
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-eks-cluster
+    - infra-aws-architecture
+    - infra-disaster-recovery
+  skills:
+  - skill_id: skill-security
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - Container Registry
+  - skill_id: skill-monitoring
+    keywords:
+    - ELK Stack
+    - Prometheus
+    - Grafana
+    - PagerDuty
+  - skill_id: skill-aws
+    keywords:
+    - IAM
+    - VPC
+    - CloudWatch
+    - Lambda
+    - S3
+  - skill_id: skill-devops
+    keywords:
+    - Ansible
+    - Terraform
+    - GitHub Actions
+  - skill_id: skill-networking
+    keywords:
+    - TLS
+    - VPN
+    - TCP/IP
+    - DNS
+  projects:
+  - proj-k8s-operator
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-k8s-migration
+      text: Lead migration of 30 production services from ECS to EKS, achieving 99.95%
+        uptime during the 6-month transition while eliminating $18,000/month in compute
+        overhead through right-sized pod autoscaling
+      tags:
+      - kubernetes
+      - migration
+      technologies:
+      - Kubernetes
+      - EKS
+      - Helm
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-security-hardening
+      text: Executed security hardening initiative across production infrastructure,
+        implementing CIS benchmarks for 150 servers that resolved 340 audit findings
+        and achieved full compliance within 90 days
+      tags:
+      - security
+      - compliance
+      technologies:
+      - CIS Benchmarks
+      - Ansible
+    - id: devops-monitoring-stack
+      text: Implemented centralized logging and monitoring stack using ELK and Prometheus
+        that consolidated alerts from 8 disparate systems into a single dashboard,
+        cutting mean time to resolution by 55%
+      tags:
+      - monitoring
+      - elk
+      technologies:
+      - Elasticsearch
+      - Logstash
+      - Kibana
+      - Prometheus
+    - id: devops-ansible-automation
+      text: Automated server provisioning and configuration for 150+ instances using
+        Ansible playbooks and roles, eliminating 20 hours of weekly manual configuration
+        work and reducing environment drift to zero
+      tags:
+      - automation
+      - ansible
+      technologies:
+      - Ansible
+      - Linux
+    - id: devops-jenkins-pipeline
+      text: Developed Jenkins-based CI/CD pipeline for 25 application repositories
+        with automated testing gates, reducing production defect rate by 60% through
+        enforced code quality checks and security scanning
+      tags:
+      - ci-cd
+      - jenkins
+      technologies:
+      - Jenkins
+      - SonarQube
+      - Docker
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-eks-cluster
+      text: Deployed production EKS clusters across 3 environments with automated
+        node group scaling, pod security policies, and Istio service mesh, serving
+        120 pods with zero unplanned downtime over 14 months
+      tags:
+      - kubernetes
+      - eks
+      technologies:
+      - EKS
+      - Istio
+      - Kubernetes
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  skills:
+  - id: skill-security
+    name: Security & Compliance
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+    - Container Security
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - Container Registry
+    - Pod Security Policies
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - ELK Stack
+    - Prometheus
+    - Grafana
+    - PagerDuty
+    - Alerting
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - IAM
+    - VPC
+    - CloudWatch
+    - Lambda
+    - S3
+    - GuardDuty
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Ansible
+    - Terraform
+    - GitHub Actions
+    - Jenkins
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - TLS
+    - VPN
+    - TCP/IP
+    - DNS
+    - VPC Peering
+  projects:
+  - id: proj-k8s-operator
+    name: Kubernetes Auto-Remediation Operator
+    description: Custom Kubernetes operator written in Go that detects anomalous pod
+      behavior and executes automated remediation workflows
+    start_date: 2022-06
+    end_date: 2023-12
+    keywords:
+    - Kubernetes
+    - Go
+    - Operator Pattern
+    highlights:
+    - id: proj-k8s-operator-impact
+      text: Built custom Kubernetes operator in Go that monitors pod health metrics
+        and triggers automated remediation, reducing unplanned restarts by 70% across
+        3 production clusters
+      tags:
+      - kubernetes
+      - go
+      technologies:
+      - Go
+      - Kubernetes
+      - Prometheus
+  certificates:
+  - id: cert-cka
+    name: Certified Kubernetes Administrator
+    date: 2022-09
+    type: professional
+    issuer: Cloud Native Computing Foundation
+    tags:
+    - kubernetes
+    - containers
+    technologies:
+    - Kubernetes
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Infrastructure Security Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Infrastructure Security Engineer with 7+ years of experience hardening
+    cloud platforms, implementing compliance frameworks, and automating security controls
+    at scale. Track record of resolving 340 audit findings within 90 days and achieving
+    zero configuration drift across 150+ production servers.
+  location:
+    city: Denver
+    region: Colorado
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

@@ -1,0 +1,164 @@
+meta:
+  id: poor-mobile-dev
+  name: Mobile Developer at AppForge
+  eval_schema_version: 4
+  tier: poor
+job_description: 'Mobile Developer — AppForge (Seattle, WA)
+
+  AppForge is a venture-backed startup building the next generation of
+
+  field service management tools for iOS and Android. We are looking for
+
+  a Mobile Developer to build native mobile experiences that work
+
+  offline-first in low-connectivity environments.
+
+  Responsibilities:
+
+  - Build native iOS applications using Swift and SwiftUI
+
+  - Develop Android applications using Kotlin and Jetpack Compose
+
+  - Implement offline-first data sync with Core Data and Room
+
+  - Design responsive mobile UI following Human Interface Guidelines and Material
+  Design
+
+  - Integrate push notifications, geofencing, and background task scheduling
+
+  - Optimize app performance for low-memory devices and slow networks
+
+  - Publish and maintain apps on App Store and Google Play
+
+  Requirements:
+
+  - 3+ years of native mobile development (iOS or Android)
+
+  - Proficiency in Swift and Kotlin
+
+  - Experience with mobile CI/CD pipelines (Fastlane, Bitrise, App Center)
+
+  - Understanding of mobile security (certificate pinning, secure storage)
+
+  - Familiarity with RESTful API consumption and GraphQL clients
+
+  - Experience with mobile testing frameworks (XCTest, Espresso, Detox)
+
+  - Knowledge of mobile analytics (Firebase, Amplitude)
+
+  Nice to have:
+
+  - Published apps with 10,000+ downloads
+
+  - Experience with Flutter or React Native for cross-platform development
+
+  - Background in BLE (Bluetooth Low Energy) integration
+
+  - Experience with ARKit or ARCore
+
+  '
+expected:
+  must_include: {}
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 58
+human_scores:
+  relevance: 1
+  keyword_strategy: 1
+  section_selection: 2
+  experience_adaptation: 1
+  summary_quality: 1
+  highlight_quality: 1
+  narrative_coherence: 1
+  overall_impression: 1
+curation:
+  summary: Software Engineer with 8+ years of experience building CI/CD pipelines
+    and automating software delivery processes. Developed testing gates and security
+    scanning workflows across 25 application repositories.
+  suggested_label: Software Engineer
+  company_slug: appforge
+  work_highlights:
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - dod-ci-pipeline
+    - dod-security-scanning
+  skills:
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+  - skill_id: skill-security
+    keywords:
+    - Secrets Management
+    - Compliance Automation
+  projects: []
+section_data:
+  work:
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: dod-ci-pipeline
+      text: Developed CI/CD pipeline for 25 application repositories with automated
+        testing gates and artifact signing, reducing production defect rate by 60%
+        through enforced quality checks
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - Jenkins
+      - Docker
+      - SonarQube
+    - id: dod-security-scanning
+      text: Executed security hardening initiative across 150 production servers,
+        implementing CIS benchmarks that resolved 340 audit findings and achieved
+        full compliance within 90 days
+      tags:
+      - security
+      - compliance
+      technologies:
+      - Ansible
+      - CIS Benchmarks
+  skills:
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+  - id: skill-security
+    name: Security & Compliance
+    keywords:
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Software Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Software Engineer with 8+ years of experience building CI/CD pipelines
+    and automating software delivery processes. Developed testing gates and security
+    scanning workflows across 25 application repositories.
+  location:
+    city: Austin
+    region: Texas
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

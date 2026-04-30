@@ -1,0 +1,164 @@
+meta:
+  id: poor-frontend-react
+  name: Frontend Engineer (React) at PixelCraft UI
+  eval_schema_version: 4
+  tier: poor
+job_description: 'Frontend Engineer (React) — PixelCraft UI (San Francisco, CA)
+
+  PixelCraft UI is a design-first product studio building accessible,
+
+  high-performance web applications for the creative industry. We are
+
+  looking for a Frontend Engineer to own our React component library
+
+  and deliver pixel-perfect, responsive user interfaces.
+
+  Responsibilities:
+
+  - Build and maintain a shared React component library with TypeScript
+
+  - Implement responsive layouts using CSS Grid, Flexbox, and Tailwind CSS
+
+  - Ensure WCAG 2.1 AA accessibility compliance across all user-facing surfaces
+
+  - Optimize rendering performance with React.memo, useMemo, and code splitting
+
+  - Collaborate with designers to translate Figma mockups into production code
+
+  - Write unit and integration tests with React Testing Library and Cypress
+
+  - Manage global state using Redux Toolkit and React Query
+
+  Requirements:
+
+  - 3+ years of professional React development experience
+
+  - Expert-level TypeScript in a React codebase
+
+  - Deep understanding of CSS-in-JS, responsive design, and design systems
+
+  - Experience with Redux, Context API, or Zustand for state management
+
+  - Proficiency with accessibility tools (axe, Lighthouse, screen readers)
+
+  - Experience with Storybook for component documentation
+
+  - Familiarity with CI/CD for frontend builds (Vite, Webpack, esbuild)
+
+  Nice to have:
+
+  - Experience with Next.js or Remix for server-side rendering
+
+  - Contributions to open source React component libraries
+
+  - Background in motion design with Framer Motion or CSS animations
+
+  - Experience with micro-frontend architectures
+
+  '
+expected:
+  must_include: {}
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 58
+human_scores:
+  relevance: 1
+  keyword_strategy: 1
+  section_selection: 2
+  experience_adaptation: 1
+  summary_quality: 1
+  highlight_quality: 2
+  narrative_coherence: 1
+  overall_impression: 1
+curation:
+  summary: Software Developer with 8+ years of experience building production systems
+    and automating infrastructure workflows. Background in Python scripting and code
+    quality enforcement across 25 application repositories.
+  suggested_label: Software Developer
+  company_slug: pixelcraft-ui
+  work_highlights:
+  - work_id: software-dev-defense
+    highlight_ids:
+    - swd-code-quality
+    - swd-python-tooling
+  skills:
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+    - YAML
+  - skill_id: skill-devops
+    keywords:
+    - GitHub Actions
+    - Jenkins
+  projects: []
+section_data:
+  work:
+  - id: software-dev-defense
+    name: Sentinel Defense Group
+    position: Software Developer
+    start_date: 2016-01
+    end_date: 2018-06
+    highlights:
+    - id: swd-code-quality
+      text: Standardized code quality practices across 25 application repositories
+        using automated linting and static analysis, reducing production defect rate
+        by 35% over 8 months
+      tags:
+      - code-quality
+      - automation
+      technologies:
+      - Python
+      - SonarQube
+    - id: swd-python-tooling
+      text: Developed 12 internal Python CLI tools for build artifact management and
+        release coordination, cutting average release preparation time from 3 hours
+        to 40 minutes
+      tags:
+      - tooling
+      - python
+      technologies:
+      - Python
+      - Bash
+  skills:
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+    - HCL
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - GitHub Actions
+    - Jenkins
+    - GitLab CI
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Software Developer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Software Developer with 8+ years of experience building production systems
+    and automating infrastructure workflows. Background in Python scripting and code
+    quality enforcement across 25 application repositories.
+  location:
+    city: Austin
+    region: Texas
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

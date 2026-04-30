@@ -1,0 +1,443 @@
+meta:
+  id: strong-devsecops
+  name: DevSecOps Engineer at Sentinel Security
+  eval_schema_version: 4
+  tier: strong
+job_description: 'DevSecOps Engineer — Sentinel Security (Washington, DC)
+
+  Sentinel Security is a cybersecurity consulting firm serving federal agencies
+
+  and Fortune 500 companies. We are seeking a DevSecOps Engineer to embed
+
+  security practices into CI/CD pipelines, cloud infrastructure, and
+
+  container workloads across our client engagements.
+
+  Responsibilities:
+
+  - Integrate security scanning (SAST, DAST, SCA) into CI/CD pipelines
+
+  - Design and enforce IAM policies, RBAC controls, and least-privilege access
+
+  - Implement secrets management solutions using Vault, AWS Secrets Manager, or similar
+
+  - Build vulnerability scanning and remediation workflows for container images
+
+  - Develop compliance-as-code frameworks for FedRAMP, SOC 2, and NIST 800-53
+
+  - Configure SIEM integrations and automated incident response playbooks
+
+  Requirements:
+
+  - 5+ years of experience in DevSecOps, security engineering, or DevOps with security
+  focus
+
+  - Deep expertise with AWS security services (IAM, GuardDuty, Security Hub, Config)
+
+  - Experience implementing secrets management at scale (HashiCorp Vault, AWS Secrets
+  Manager)
+
+  - Proficiency with vulnerability scanning tools (Trivy, Snyk, Aqua, Qualys)
+
+  - Hands-on experience with SIEM platforms (Splunk, Elastic Security, Sentinel)
+
+  - Strong understanding of compliance frameworks (FedRAMP, SOC 2, NIST, CIS)
+
+  Nice to have:
+
+  - Security certifications (CISSP, CEH, AWS Security Specialty)
+
+  - Experience with OPA/Gatekeeper for policy enforcement
+
+  - Background in federal/defense security clearance environments
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-security
+    - skill-aws
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 69
+human_scores:
+  relevance: 2
+  keyword_strategy: 2
+  section_selection: 4
+  experience_adaptation: 3
+  summary_quality: 3
+  highlight_quality: 4
+  narrative_coherence: 2
+  overall_impression: 2
+curation:
+  summary: DevSecOps Engineer with 8+ years of experience embedding security into
+    CI/CD pipelines, cloud infrastructure, and container platforms. Proven track record
+    of resolving 340 audit findings within 90 days, implementing CIS benchmarks across
+    150 servers, and enforcing IAM policies that reduced configuration incidents by
+    85%.
+  suggested_label: DevSecOps Engineer
+  company_slug: sentinel-security
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-iac-adoption
+    - plat-cicd-pipeline
+    - plat-monitoring
+    - plat-cost-optimization
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-terraform-modules
+    - infra-eks-cluster
+    - infra-disaster-recovery
+    - infra-aws-architecture
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-security-hardening
+    - devops-jenkins-pipeline
+    - devops-ansible-automation
+    - devops-monitoring-stack
+  skills:
+  - skill_id: skill-security
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+  - skill_id: skill-aws
+    keywords:
+    - IAM
+    - CloudFormation
+    - S3
+    - Lambda
+    - EC2
+    - VPC
+  - skill_id: skill-devops
+    keywords:
+    - Terraform
+    - Ansible
+    - GitHub Actions
+    - Jenkins
+    - Infrastructure as Code
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - Container Registry
+  - skill_id: skill-monitoring
+    keywords:
+    - Prometheus
+    - Grafana
+    - ELK Stack
+    - PagerDuty
+    - CloudWatch
+  - skill_id: skill-networking
+    keywords:
+    - VPC Peering
+    - TLS
+    - DNS
+    - VPN
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+    - YAML
+    - HCL
+  - skill_id: skill-databases
+    keywords:
+    - PostgreSQL
+    - DynamoDB
+  projects:
+  - proj-iac-framework
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+    - id: plat-cost-optimization
+      text: Implement cloud cost optimization program using reserved instances, spot
+        fleets, and resource tagging that reduced monthly AWS spend by $42,000 (28%
+        reduction) while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - aws
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-terraform-modules
+      text: Built reusable Terraform module library of 40+ modules adopted by 6 product
+        teams, standardizing VPC layouts, security groups, and IAM policies while
+        cutting new environment provisioning from 2 days to 35 minutes
+      tags:
+      - terraform
+      - iac
+      technologies:
+      - Terraform
+      - AWS
+    - id: infra-eks-cluster
+      text: Deployed production EKS clusters across 3 environments with automated
+        node group scaling, pod security policies, and Istio service mesh, serving
+        120 pods with zero unplanned downtime over 14 months
+      tags:
+      - kubernetes
+      - eks
+      technologies:
+      - EKS
+      - Istio
+      - Kubernetes
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-security-hardening
+      text: Executed security hardening initiative across production infrastructure,
+        implementing CIS benchmarks for 150 servers that resolved 340 audit findings
+        and achieved full compliance within 90 days
+      tags:
+      - security
+      - compliance
+      technologies:
+      - CIS Benchmarks
+      - Ansible
+    - id: devops-jenkins-pipeline
+      text: Developed Jenkins-based CI/CD pipeline for 25 application repositories
+        with automated testing gates, reducing production defect rate by 60% through
+        enforced code quality checks and security scanning
+      tags:
+      - ci-cd
+      - jenkins
+      technologies:
+      - Jenkins
+      - SonarQube
+      - Docker
+    - id: devops-ansible-automation
+      text: Automated server provisioning and configuration for 150+ instances using
+        Ansible playbooks and roles, eliminating 20 hours of weekly manual configuration
+        work and reducing environment drift to zero
+      tags:
+      - automation
+      - ansible
+      technologies:
+      - Ansible
+      - Linux
+    - id: devops-monitoring-stack
+      text: Implemented centralized logging and monitoring stack using ELK and Prometheus
+        that consolidated alerts from 8 disparate systems into a single dashboard,
+        cutting mean time to resolution by 55%
+      tags:
+      - monitoring
+      - elk
+      technologies:
+      - Elasticsearch
+      - Logstash
+      - Kibana
+      - Prometheus
+  skills:
+  - id: skill-security
+    name: Security & Compliance
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+    - Pod Security Policies
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - IAM
+    - CloudFormation
+    - S3
+    - Lambda
+    - EC2
+    - VPC
+    - Route 53
+    - CloudWatch
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Terraform
+    - Ansible
+    - GitHub Actions
+    - Jenkins
+    - Infrastructure as Code
+    - ArgoCD
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - Container Registry
+    - EKS
+    - Istio
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Prometheus
+    - Grafana
+    - ELK Stack
+    - PagerDuty
+    - CloudWatch
+    - Alerting
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - VPC Peering
+    - TLS
+    - DNS
+    - VPN
+    - TCP/IP
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+    - HCL
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - PostgreSQL
+    - DynamoDB
+    - Redis
+  projects:
+  - id: proj-iac-framework
+    name: Terraform Module Framework
+    description: Open source Terraform module framework for standardized AWS infrastructure
+      provisioning with built-in security policies and cost estimation
+    start_date: 2021-01
+    end_date: 2023-06
+    keywords:
+    - Terraform
+    - AWS
+    - Open Source
+    highlights:
+    - id: proj-iac-adoption
+      text: Created modular Terraform framework adopted by 12 organizations on GitHub
+        with 500+ stars, providing pre-built modules for VPC, EKS, and RDS deployment
+        patterns
+      tags:
+      - open-source
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+      - GitHub
+  certificates:
+  - id: cert-aws-solutions-architect
+    name: AWS Certified Solutions Architect - Professional
+    date: 2023-04
+    type: professional
+    issuer: Amazon Web Services
+    tags:
+    - aws
+    - cloud
+    technologies:
+    - AWS
+  - id: cert-cka
+    name: Certified Kubernetes Administrator
+    date: 2022-09
+    type: professional
+    issuer: Cloud Native Computing Foundation
+    tags:
+    - kubernetes
+    - containers
+    technologies:
+    - Kubernetes
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: DevSecOps Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: DevSecOps Engineer with 8+ years of experience embedding security into
+    CI/CD pipelines, cloud infrastructure, and container platforms. Proven track record
+    of resolving 340 audit findings within 90 days, implementing CIS benchmarks across
+    150 servers, and enforcing IAM policies that reduced configuration incidents by
+    85%.
+  location:
+    city: Washington
+    region: DC
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

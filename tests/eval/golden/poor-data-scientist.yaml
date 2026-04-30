@@ -1,0 +1,174 @@
+meta:
+  id: poor-data-scientist
+  name: Data Scientist / ML Engineer at Neuralytix
+  eval_schema_version: 4
+  tier: poor
+job_description: 'Data Scientist / ML Engineer — Neuralytix (Boston, MA)
+
+  Neuralytix is an AI-native analytics company building predictive models
+
+  for the healthcare industry. We are hiring a Data Scientist / ML Engineer
+
+  to design, train, and deploy machine learning models that power clinical
+
+  decision support tools.
+
+  Responsibilities:
+
+  - Design and train supervised and unsupervised ML models using TensorFlow and PyTorch
+
+  - Build feature engineering pipelines with Apache Spark and Pandas
+
+  - Conduct A/B experiments and apply Bayesian statistics to validate model performance
+
+  - Deploy models to production via MLflow, SageMaker, or Vertex AI
+
+  - Create data visualizations and dashboards using Matplotlib and Plotly
+
+  - Collaborate with domain experts to define model objectives and success metrics
+
+  - Write technical papers documenting methodology and experimental results
+
+  Requirements:
+
+  - MS or PhD in Statistics, Machine Learning, or a quantitative field
+
+  - 4+ years of hands-on experience with TensorFlow, PyTorch, or scikit-learn
+
+  - Strong foundation in probability, linear algebra, and statistical inference
+
+  - Experience with feature stores and ML model registries
+
+  - Proficiency in Python for data science (NumPy, Pandas, SciPy)
+
+  - Experience with distributed computing (Spark, Dask, Ray)
+
+  - Familiarity with experiment tracking (Weights & Biases, MLflow)
+
+  Nice to have:
+
+  - Publications in peer-reviewed ML conferences (NeurIPS, ICML, AAAI)
+
+  - Experience with LLM fine-tuning and prompt engineering
+
+  - Kaggle competition rankings
+
+  - Healthcare domain knowledge (HIPAA, HL7 FHIR)
+
+  '
+expected:
+  must_include: {}
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 60
+human_scores:
+  relevance: 1
+  keyword_strategy: 1
+  section_selection: 2
+  experience_adaptation: 1
+  summary_quality: 1
+  highlight_quality: 2
+  narrative_coherence: 2
+  overall_impression: 1
+curation:
+  summary: Software Engineer with 8+ years of experience in cloud infrastructure and
+    Python-based automation. Built diagnostic tooling and automated operational workflows
+    serving production environments.
+  suggested_label: Software Engineer
+  company_slug: neuralytix
+  work_highlights:
+  - work_id: cloud-support-eng
+    highlight_ids:
+    - cse-diagnostic-tooling
+    - cse-runbook-scripts
+    - cse-data-analysis
+  skills:
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+  - skill_id: skill-databases
+    keywords:
+    - PostgreSQL
+    - DynamoDB
+  projects: []
+section_data:
+  work:
+  - id: cloud-support-eng
+    name: Cirrus Technologies
+    position: Cloud Support Engineer
+    start_date: 2015-08
+    end_date: 2016-12
+    highlights:
+    - id: cse-diagnostic-tooling
+      text: Built diagnostic tooling in Python that analyzed 500+ daily log entries
+        to identify recurring failure patterns, decreasing average escalation resolution
+        time from 4 hours to 90 minutes
+      tags:
+      - tooling
+      - python
+      technologies:
+      - Python
+      - CloudWatch
+    - id: cse-runbook-scripts
+      text: Automated 35 operational runbooks using Python and Bash scripts, converting
+        manual recovery procedures into self-healing workflows that reduced after-hours
+        pages by 65%
+      tags:
+      - automation
+      - scripting
+      technologies:
+      - Python
+      - Bash
+      - AWS Lambda
+    - id: cse-data-analysis
+      text: Analyzed incident response data across 200+ production events to identify
+        12 recurring failure categories, informing infrastructure investments that
+        reduced repeat incidents by 40% over 12 months
+      tags:
+      - analysis
+      - incident-response
+      technologies:
+      - Python
+      - Jira
+  skills:
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - PostgreSQL
+    - DynamoDB
+    - Redis
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Software Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Software Engineer with 8+ years of experience in cloud infrastructure and
+    Python-based automation. Built diagnostic tooling and automated operational workflows
+    serving production environments.
+  location:
+    city: Austin
+    region: Texas
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

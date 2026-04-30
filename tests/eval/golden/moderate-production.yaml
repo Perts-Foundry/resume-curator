@@ -1,0 +1,250 @@
+meta:
+  id: moderate-production
+  name: Production Engineer at ScaleCore
+  eval_schema_version: 4
+  tier: moderate
+job_description: 'Production Engineer — ScaleCore (New York, NY)
+
+  ScaleCore operates a high-throughput event streaming platform processing
+
+  2 billion events daily for media and advertising clients. We need a
+
+  Production Engineer to ensure system reliability through code-level
+
+  debugging, capacity planning, and performance optimization.
+
+  Responsibilities:
+
+  - Debug and resolve complex production issues in distributed Java/Scala services
+
+  - Perform capacity planning and load modeling for event streaming workloads
+
+  - Optimize JVM performance, garbage collection, and memory allocation
+
+  - Build internal tools for automated canary analysis and traffic shifting
+
+  - Conduct performance profiling using async-profiler, perf, and flamegraphs
+
+  - Collaborate with application teams to improve service resilience patterns
+
+  - Manage Kafka clusters handling 2 million messages per second
+
+  Requirements:
+
+  - 4+ years in production engineering, SRE, or systems engineering
+
+  - Strong debugging skills in JVM-based languages (Java, Scala, Kotlin)
+
+  - Deep understanding of distributed systems (consensus, partitioning, CAP theorem)
+
+  - Experience with event streaming platforms (Kafka, Kinesis, Pulsar)
+
+  - Proficiency in capacity planning and performance modeling
+
+  - Linux systems internals (memory, networking, I/O subsystems)
+
+  - Experience with performance profiling tools and methodologies
+
+  Nice to have:
+
+  - Experience with eBPF for production observability
+
+  - Contributions to Kafka or similar open source streaming platforms
+
+  - Background in high-frequency or real-time data processing
+
+  '
+expected:
+  must_include: {}
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 66
+human_scores:
+  relevance: 1
+  keyword_strategy: 1
+  section_selection: 3
+  experience_adaptation: 2
+  summary_quality: 1
+  highlight_quality: 2
+  narrative_coherence: 3
+  overall_impression: 1
+curation:
+  summary: Infrastructure Engineer with 8+ years of experience managing production
+    systems at scale, achieving 99.95% uptime across distributed environments. Skilled
+    in container orchestration, automated recovery workflows, and infrastructure performance
+    optimization.
+  suggested_label: Production Engineer
+  company_slug: scalecore
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-monitoring
+    - plat-k8s-migration
+    - plat-cost-optimization
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-aws-architecture
+    - infra-disaster-recovery
+  skills:
+  - skill_id: skill-monitoring
+    keywords:
+    - Prometheus
+    - Grafana
+    - CloudWatch
+    - Alerting
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Pod Autoscaling
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Go
+    - Bash
+  - skill_id: skill-networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - Load Balancing
+  - skill_id: skill-aws
+    keywords:
+    - EC2
+    - EKS
+    - CloudWatch
+  projects: []
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+    - id: plat-k8s-migration
+      text: Lead migration of 30 production services from ECS to EKS, achieving 99.95%
+        uptime during the 6-month transition while eliminating $18,000/month in compute
+        overhead through right-sized pod autoscaling
+      tags:
+      - kubernetes
+      - migration
+      technologies:
+      - Kubernetes
+      - EKS
+      - Helm
+    - id: plat-cost-optimization
+      text: Implement cloud cost optimization program using reserved instances, spot
+        fleets, and resource tagging that reduced monthly AWS spend by $42,000 (28%
+        reduction) while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - aws
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  skills:
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Prometheus
+    - Grafana
+    - CloudWatch
+    - Alerting
+    - ELK Stack
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Pod Autoscaling
+    - ECS
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Go
+    - Bash
+    - YAML
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - Load Balancing
+    - VPC Peering
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EC2
+    - EKS
+    - CloudWatch
+    - Route 53
+    - S3
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Production Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Infrastructure Engineer with 8+ years of experience managing production
+    systems at scale, achieving 99.95% uptime across distributed environments. Skilled
+    in container orchestration, automated recovery workflows, and infrastructure performance
+    optimization.
+  location:
+    city: New York
+    region: New York
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

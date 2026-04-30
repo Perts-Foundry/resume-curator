@@ -1,0 +1,350 @@
+meta:
+  id: good-automation
+  name: Automation Engineer at FlowWorks
+  eval_schema_version: 4
+  tier: good
+job_description: 'Automation Engineer — FlowWorks (Portland, OR)
+
+  FlowWorks builds workflow orchestration software for manufacturing and
+
+  logistics companies. We are looking for an Automation Engineer to design
+
+  scripting frameworks, build test automation suites, and optimize CI/CD
+
+  pipelines for our platform.
+
+  Responsibilities:
+
+  - Design and maintain Python and Bash scripting frameworks for build automation
+
+  - Build end-to-end test automation suites covering API and UI workflows
+
+  - Optimize CI/CD pipelines to reduce build times and improve release cadence
+
+  - Develop workflow orchestration scripts for data processing pipelines
+
+  - Create self-healing automation for infrastructure provisioning and teardown
+
+  - Integrate third-party tools and APIs into unified automation workflows
+
+  - Document automation standards and train engineering teams on best practices
+
+  Requirements:
+
+  - 4+ years in automation engineering, DevOps, or test automation
+
+  - Expert-level Python and Bash scripting for infrastructure and build automation
+
+  - Experience with CI/CD platforms (GitHub Actions, Jenkins, GitLab CI)
+
+  - Proficiency with configuration management (Ansible, Puppet, Chef)
+
+  - Hands-on experience with containerized build environments (Docker)
+
+  - Knowledge of REST API integration and webhook-driven workflows
+
+  - Strong debugging and root cause analysis skills
+
+  Nice to have:
+
+  - Experience with workflow orchestration tools (Airflow, Prefect, Temporal)
+
+  - Background in test frameworks (pytest, Selenium, Playwright)
+
+  - Familiarity with infrastructure-as-code (Terraform, CloudFormation)
+
+  - Knowledge of event-driven architectures and message queues
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-scripting
+    - skill-devops
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 76
+human_scores:
+  relevance: 4
+  keyword_strategy: 4
+  section_selection: 5
+  experience_adaptation: 5
+  summary_quality: 4
+  highlight_quality: 5
+  narrative_coherence: 5
+  overall_impression: 4
+curation:
+  summary: Automation Engineer with 7+ years of experience building CI/CD pipelines,
+    scripting infrastructure workflows, and automating server provisioning at scale.
+    Reduced deployment times by 73% and eliminated 20 hours of weekly manual work
+    through Python and Ansible automation frameworks.
+  suggested_label: Automation Engineer
+  company_slug: flowworks
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-cicd-pipeline
+    - plat-iac-adoption
+    - plat-monitoring
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-jenkins-pipeline
+    - devops-ansible-automation
+    - devops-monitoring-stack
+  - work_id: cloud-support-eng
+    highlight_ids:
+    - support-runbook-automation
+    - support-customer-escalations
+    - support-incident-response
+  skills:
+  - skill_id: skill-scripting
+    keywords:
+    - Python
+    - Bash
+    - Go
+    - YAML
+  - skill_id: skill-devops
+    keywords:
+    - GitHub Actions
+    - Jenkins
+    - Ansible
+    - Terraform
+    - GitLab CI
+    - ArgoCD
+  - skill_id: skill-containers
+    keywords:
+    - Docker
+    - Kubernetes
+    - Helm
+  - skill_id: skill-monitoring
+    keywords:
+    - Prometheus
+    - Grafana
+    - ELK Stack
+    - PagerDuty
+  - skill_id: skill-aws
+    keywords:
+    - Lambda
+    - S3
+    - CloudWatch
+    - EC2
+  - skill_id: skill-databases
+    keywords:
+    - PostgreSQL
+    - Redis
+  projects:
+  - proj-iac-framework
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-jenkins-pipeline
+      text: Developed Jenkins-based CI/CD pipeline for 25 application repositories
+        with automated testing gates, reducing production defect rate by 60% through
+        enforced code quality checks and security scanning
+      tags:
+      - ci-cd
+      - jenkins
+      technologies:
+      - Jenkins
+      - SonarQube
+      - Docker
+    - id: devops-ansible-automation
+      text: Automated server provisioning and configuration for 150+ instances using
+        Ansible playbooks and roles, eliminating 20 hours of weekly manual configuration
+        work and reducing environment drift to zero
+      tags:
+      - automation
+      - ansible
+      technologies:
+      - Ansible
+      - Linux
+    - id: devops-monitoring-stack
+      text: Implemented centralized logging and monitoring stack using ELK and Prometheus
+        that consolidated alerts from 8 disparate systems into a single dashboard,
+        cutting mean time to resolution by 55%
+      tags:
+      - monitoring
+      - elk
+      technologies:
+      - Elasticsearch
+      - Logstash
+      - Kibana
+      - Prometheus
+  - id: cloud-support-eng
+    name: Cirrus Technologies
+    position: Cloud Support Engineer
+    start_date: 2015-08
+    end_date: 2016-12
+    highlights:
+    - id: support-runbook-automation
+      text: Automated 35 operational runbooks using Python and Bash scripts, converting
+        manual recovery procedures into self-healing workflows that reduced after-hours
+        pages by 65%
+      tags:
+      - automation
+      - scripting
+      technologies:
+      - Python
+      - Bash
+      - AWS Lambda
+    - id: support-customer-escalations
+      text: Resolved 95% of Tier 3 customer escalations within SLA targets, building
+        diagnostic tooling in Python that decreased average resolution time from 4
+        hours to 90 minutes
+      tags:
+      - customer-support
+      - tooling
+      technologies:
+      - Python
+      - CloudWatch
+    - id: support-incident-response
+      text: Coordinated incident response for 200+ production events, establishing
+        post-mortem process that identified recurring failures and reduced repeat
+        incidents by 40% over 12 months
+      tags:
+      - incident-response
+      technologies:
+      - PagerDuty
+      - Jira
+  skills:
+  - id: skill-scripting
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - Go
+    - YAML
+    - HCL
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - GitHub Actions
+    - Jenkins
+    - Ansible
+    - Terraform
+    - GitLab CI
+    - ArgoCD
+    - Infrastructure as Code
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Docker
+    - Kubernetes
+    - Helm
+    - Container Registry
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Prometheus
+    - Grafana
+    - ELK Stack
+    - PagerDuty
+    - Alerting
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - Lambda
+    - S3
+    - CloudWatch
+    - EC2
+    - IAM
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - PostgreSQL
+    - Redis
+  projects:
+  - id: proj-iac-framework
+    name: Terraform Module Framework
+    description: Open source Terraform module framework for standardized AWS infrastructure
+      provisioning with built-in security policies and cost estimation
+    start_date: 2021-01
+    end_date: 2023-06
+    keywords:
+    - Terraform
+    - AWS
+    - Open Source
+    highlights:
+    - id: proj-iac-adoption
+      text: Created modular Terraform framework adopted by 12 organizations on GitHub
+        with 500+ stars, providing pre-built modules for VPC, EKS, and RDS deployment
+        patterns
+      tags:
+      - open-source
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+      - GitHub
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Automation Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Automation Engineer with 7+ years of experience building CI/CD pipelines,
+    scripting infrastructure workflows, and automating server provisioning at scale.
+    Reduced deployment times by 73% and eliminated 20 hours of weekly manual work
+    through Python and Ansible automation frameworks.
+  location:
+    city: Portland
+    region: Oregon
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

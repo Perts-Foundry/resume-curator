@@ -1,0 +1,483 @@
+meta:
+  id: strong-cloud-engineer
+  name: Cloud Engineer at Vantage Cloud
+  eval_schema_version: 4
+  tier: strong
+job_description: 'Cloud Engineer — Vantage Cloud (Denver, CO)
+
+  Vantage Cloud is a mid-stage startup building a multi-cloud data analytics
+
+  platform for the healthcare industry. We are hiring a Cloud Engineer to
+
+  design, automate, and optimize our AWS and GCP infrastructure powering
+
+  real-time patient data pipelines.
+
+  Responsibilities:
+
+  - Design and implement multi-cloud infrastructure across AWS and GCP
+
+  - Architect VPC topologies, IAM policies, and network security controls
+
+  - Build cloud migration runbooks and execute workload transitions
+
+  - Automate infrastructure provisioning using Terraform and CloudFormation
+
+  - Optimize cloud spend through rightsizing, reserved capacity, and tagging strategies
+
+  - Collaborate with compliance teams on HIPAA-aligned cloud architecture
+
+  Requirements:
+
+  - 4+ years of experience in cloud engineering or infrastructure roles
+
+  - Strong expertise with AWS (VPC, IAM, EC2, RDS, S3, Lambda, CloudFormation)
+
+  - Hands-on experience with GCP (Compute Engine, Cloud SQL, GKE, IAM)
+
+  - Proficiency with Terraform for multi-cloud infrastructure management
+
+  - Experience designing VPC peering, Transit Gateway, and hybrid connectivity
+
+  - Understanding of cloud security best practices and compliance frameworks
+
+  Nice to have:
+
+  - AWS Solutions Architect or GCP Professional Cloud Architect certification
+
+  - Experience with healthcare compliance (HIPAA, HITRUST)
+
+  - Familiarity with FinOps practices and cloud cost optimization tools
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-aws
+    - skill-gcp
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 76
+human_scores:
+  relevance: 5
+  keyword_strategy: 5
+  section_selection: 5
+  experience_adaptation: 5
+  summary_quality: 5
+  highlight_quality: 5
+  narrative_coherence: 5
+  overall_impression: 5
+curation:
+  summary: Cloud Engineer with 8+ years of experience designing multi-cloud infrastructure
+    across AWS and GCP. Proven track record of architecting multi-region environments
+    supporting 10 million daily API requests with 99.99% availability, and reducing
+    cloud spend by $42,000/month through systematic optimization.
+  suggested_label: Cloud Engineer
+  company_slug: vantage-cloud
+  work_highlights:
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-aws-architecture
+    - infra-terraform-modules
+    - infra-eks-cluster
+    - infra-disaster-recovery
+  - work_id: cloud-support-eng
+    highlight_ids:
+    - support-networking
+    - support-incident-response
+    - support-runbook-automation
+    - support-customer-escalations
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-iac-adoption
+    - plat-cost-optimization
+    - plat-cicd-pipeline
+    - plat-monitoring
+  - work_id: consulting-founder
+    highlight_ids:
+    - consult-cloud-strategy
+    - consult-migration-plan
+    - consult-cost-audit
+    - consult-iac-assessment
+  skills:
+  - skill_id: skill-aws
+    keywords:
+    - EC2
+    - VPC
+    - IAM
+    - RDS
+    - S3
+    - Lambda
+    - CloudFormation
+    - Route 53
+  - skill_id: skill-gcp
+    keywords:
+    - Compute Engine
+    - Cloud SQL
+    - GKE
+    - IAM
+    - Cloud Storage
+  - skill_id: skill-devops
+    keywords:
+    - Terraform
+    - GitHub Actions
+    - Infrastructure as Code
+    - Ansible
+  - skill_id: skill-networking
+    keywords:
+    - VPC Peering
+    - DNS
+    - TLS
+    - Load Balancing
+    - TCP/IP
+  - skill_id: skill-security
+    keywords:
+    - IAM Policies
+    - Compliance Automation
+    - RBAC
+    - Secrets Management
+  - skill_id: skill-monitoring
+    keywords:
+    - CloudWatch
+    - Prometheus
+    - Grafana
+    - Datadog
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+    - YAML
+    - HCL
+  - skill_id: skill-databases
+    keywords:
+    - PostgreSQL
+    - Aurora
+    - DynamoDB
+    - Redis
+  projects:
+  - proj-iac-framework
+section_data:
+  work:
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+    - id: infra-terraform-modules
+      text: Built reusable Terraform module library of 40+ modules adopted by 6 product
+        teams, standardizing VPC layouts, security groups, and IAM policies while
+        cutting new environment provisioning from 2 days to 35 minutes
+      tags:
+      - terraform
+      - iac
+      technologies:
+      - Terraform
+      - AWS
+    - id: infra-eks-cluster
+      text: Deployed production EKS clusters across 3 environments with automated
+        node group scaling, pod security policies, and Istio service mesh, serving
+        120 pods with zero unplanned downtime over 14 months
+      tags:
+      - kubernetes
+      - eks
+      technologies:
+      - EKS
+      - Istio
+      - Kubernetes
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  - id: cloud-support-eng
+    name: Cirrus Technologies
+    position: Cloud Support Engineer
+    start_date: 2015-08
+    end_date: 2016-12
+    highlights:
+    - id: support-networking
+      text: Diagnosed and resolved complex networking issues across VPC peering, DNS
+        resolution, and TLS certificate chains, maintaining 99.9% network availability
+        for 50 production services
+      tags:
+      - networking
+      technologies:
+      - AWS VPC
+      - Route 53
+      - ACM
+    - id: support-incident-response
+      text: Coordinated incident response for 200+ production events, establishing
+        post-mortem process that identified recurring failures and reduced repeat
+        incidents by 40% over 12 months
+      tags:
+      - incident-response
+      technologies:
+      - PagerDuty
+      - Jira
+    - id: support-runbook-automation
+      text: Automated 35 operational runbooks using Python and Bash scripts, converting
+        manual recovery procedures into self-healing workflows that reduced after-hours
+        pages by 65%
+      tags:
+      - automation
+      - scripting
+      technologies:
+      - Python
+      - Bash
+      - AWS Lambda
+    - id: support-customer-escalations
+      text: Resolved 95% of Tier 3 customer escalations within SLA targets, building
+        diagnostic tooling in Python that decreased average resolution time from 4
+        hours to 90 minutes
+      tags:
+      - customer-support
+      - tooling
+      technologies:
+      - Python
+      - CloudWatch
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-cost-optimization
+      text: Implement cloud cost optimization program using reserved instances, spot
+        fleets, and resource tagging that reduced monthly AWS spend by $42,000 (28%
+        reduction) while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - aws
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+  - id: consulting-founder
+    name: Apex Consulting
+    position: Founder & Principal Consultant
+    start_date: 2023-06
+    end_date: null
+    highlights:
+    - id: consult-cloud-strategy
+      text: Advise 5 mid-market clients on multi-cloud architecture strategy, delivering
+        migration roadmaps that reduce projected infrastructure costs by an average
+        of 32% across AWS and GCP environments
+      tags:
+      - consulting
+      - cloud-strategy
+      technologies:
+      - AWS
+      - GCP
+    - id: consult-migration-plan
+      text: Design cloud migration plans for 3 enterprise clients transitioning 120+
+        workloads from on-premises data centers to AWS, completing 2 migrations ahead
+        of schedule with zero data loss
+      tags:
+      - migration
+      - cloud
+      technologies:
+      - AWS
+      - Terraform
+    - id: consult-cost-audit
+      text: Conduct cloud cost audits identifying $180,000 in annual savings across
+        4 client accounts through rightsizing, reserved instance optimization, and
+        unused resource cleanup
+      tags:
+      - cost-optimization
+      - finops
+      technologies:
+      - AWS Cost Explorer
+      - GCP Billing
+    - id: consult-iac-assessment
+      text: Assess and remediate infrastructure-as-code maturity for 6 client organizations,
+        establishing Terraform module standards that reduce provisioning errors by
+        75% within 90 days of adoption
+      tags:
+      - iac
+      - consulting
+      technologies:
+      - Terraform
+      - CloudFormation
+  skills:
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EC2
+    - VPC
+    - IAM
+    - RDS
+    - S3
+    - Lambda
+    - CloudFormation
+    - Route 53
+    - Aurora
+    - CloudWatch
+    - DynamoDB
+  - id: skill-gcp
+    name: Google Cloud Platform
+    keywords:
+    - Compute Engine
+    - Cloud SQL
+    - GKE
+    - IAM
+    - Cloud Storage
+    - Cloud Functions
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Terraform
+    - GitHub Actions
+    - Infrastructure as Code
+    - Ansible
+    - Jenkins
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - VPC Peering
+    - DNS
+    - TLS
+    - Load Balancing
+    - TCP/IP
+    - Transit Gateway
+  - id: skill-security
+    name: Security & Compliance
+    keywords:
+    - IAM Policies
+    - Compliance Automation
+    - RBAC
+    - Secrets Management
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - CloudWatch
+    - Prometheus
+    - Grafana
+    - Datadog
+    - PagerDuty
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+    - HCL
+    - Go
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - PostgreSQL
+    - Aurora
+    - DynamoDB
+    - Redis
+  projects:
+  - id: proj-iac-framework
+    name: Terraform Module Framework
+    description: Open source Terraform module framework for standardized AWS infrastructure
+      provisioning with built-in security policies and cost estimation
+    start_date: 2021-01
+    end_date: 2023-06
+    keywords:
+    - Terraform
+    - AWS
+    - Open Source
+    highlights:
+    - id: proj-iac-adoption
+      text: Created modular Terraform framework adopted by 12 organizations on GitHub
+        with 500+ stars, providing pre-built modules for VPC, EKS, and RDS deployment
+        patterns
+      tags:
+      - open-source
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+      - GitHub
+  certificates:
+  - id: cert-aws-solutions-architect
+    name: AWS Certified Solutions Architect - Professional
+    date: 2023-04
+    type: professional
+    issuer: Amazon Web Services
+    tags:
+    - aws
+    - cloud
+    technologies:
+    - AWS
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Cloud Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Cloud Engineer with 8+ years of experience designing multi-cloud infrastructure
+    across AWS and GCP. Proven track record of architecting multi-region environments
+    supporting 10 million daily API requests with 99.99% availability, and reducing
+    cloud spend by $42,000/month through systematic optimization.
+  location:
+    city: Denver
+    region: Colorado
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

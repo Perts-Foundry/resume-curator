@@ -1,0 +1,39 @@
+---
+version: 2
+
+multi-ecosystem-groups:
+  weekly-updates:
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+updates:
+  # Python dependencies (pyproject.toml + uv.lock)
+  - package-ecosystem: "uv"
+    directory: "/"
+    multi-ecosystem-group: "weekly-updates"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "automated"
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps"
+
+  # GitHub Actions (pinned by SHA in workflows)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    multi-ecosystem-group: "weekly-updates"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "automated"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

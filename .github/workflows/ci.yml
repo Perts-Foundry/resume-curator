@@ -1,0 +1,478 @@
+name: CI
+
+on:
+  pull_request:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+env:
+  NO_COLOR: "1"
+
+jobs:
+  validate:
+    permissions:
+      contents: read
+      pull-requests: write
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       github.event.comment.body == 'validate')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: React with eyes
+        if: github.event_name == 'issue_comment'
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+      - name: Validate commenter permissions
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
+        with:
+          script: |
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.payload.comment.user.login,
+            });
+            if (!['admin', 'write'].includes(data.permission)) {
+              core.setFailed(
+                `@${context.payload.comment.user.login} does not have write access.`
+              );
+            }
+
+      - name: Get PR details for comment trigger
+        if: github.event_name == 'issue_comment'
+        id: comment-pr
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            if (pr.state !== 'open') {
+              core.setFailed('This PR is not open.');
+              return;
+            }
+            core.setOutput('ref', pr.head.ref);
+            core.setOutput('sha', pr.head.sha);
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && steps.comment-pr.outputs.ref || '' }}
+          fetch-depth: 1
+
+      - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82  # v7.5.0
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - uses: typst-community/setup-typst@f3792ba4fd5a663366a44b5a6559de6ecc91a520  # v5.0.0
+        with:
+          typst-version: "0.14.2"
+
+      # ── Ruff check ──────────────────────────────────────────────
+      - name: Ruff check
+        id: ruff-check
+        run: |
+          set +e
+          OUTPUT=$(uv run ruff check . 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── Ruff format ─────────────────────────────────────────────
+      - name: Ruff format
+        id: ruff-format
+        run: |
+          set +e
+          OUTPUT=$(uv run ruff format --check . 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── Mypy ────────────────────────────────────────────────────
+      - name: Mypy
+        id: mypy
+        run: |
+          set +e
+          OUTPUT=$(uv run mypy src/ 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── Pytest ──────────────────────────────────────────────────
+      - name: Pytest
+        id: pytest
+        run: |
+          set +e
+          OUTPUT=$(uv run pytest --override-ini='addopts=--import-mode=importlib --strict-markers -ra -m "not golden and not llm"' --cov --cov-report=term-missing 2>&1)
+          EXIT_CODE=$?
+          # Exit code 5 = no tests collected (not a failure)
+          [ "$EXIT_CODE" -eq 5 ] && EXIT_CODE=0
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── Golden eval ─────────────────────────────────────────────
+      - name: Golden eval
+        id: golden-eval
+        run: |
+          set +e
+          OUTPUT=$(uv run pytest tests/eval/test_golden_regression.py -m golden --no-cov -q 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── pip-audit ───────────────────────────────────────────────
+      - name: pip-audit
+        id: pip-audit
+        run: |
+          set +e
+          # CVE-2026-3219 (pip 26.0.1): tar/ZIP confusion handling. Fix
+          # merged on pypa/pip main but not yet released to PyPI (pip 26.1
+          # ships the fix). Local-only CWE-434 (CVSS 4.6) — not exploitable
+          # in CI's package install path. Remove this ignore once pip 26.1
+          # lands and uv.lock can be bumped.
+          OUTPUT=$(uv run pip-audit --ignore-vuln CVE-2026-3219 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── Gitleaks ───────────────────────────────────────────────
+      - name: Gitleaks
+        id: gitleaks
+        run: |
+          set +e
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar xz -C /tmp
+          OUTPUT=$(/tmp/gitleaks git --log-opts="--all" --no-banner 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── TruffleHog ─────────────────────────────────────────────
+      - name: TruffleHog
+        id: trufflehog
+        run: |
+          set +e
+          docker run --rm -v "$(pwd):/src" trufflesecurity/trufflehog:latest git file:///src --only-verified --no-update 2>&1 | tee /tmp/trufflehog.out
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            tail -30 /tmp/trufflehog.out
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── Aggregate & Comment ─────────────────────────────────────
+      - name: Collect results
+        id: results
+        if: always()
+        run: |
+          PASS=0
+          FAIL=0
+          SKIP=0
+
+          checks=(
+            "ruff-check:Lint:${{ steps.ruff-check.outputs.exit_code }}"
+            "ruff-format:Format:${{ steps.ruff-format.outputs.exit_code }}"
+            "mypy:Types:${{ steps.mypy.outputs.exit_code }}"
+            "pytest:Tests:${{ steps.pytest.outputs.exit_code }}"
+            "golden-eval:Golden Eval:${{ steps.golden-eval.outputs.exit_code }}"
+            "pip-audit:Security:${{ steps.pip-audit.outputs.exit_code }}"
+            "gitleaks:Secrets:${{ steps.gitleaks.outputs.exit_code }}"
+            "trufflehog:Verified Secrets:${{ steps.trufflehog.outputs.exit_code }}"
+          )
+
+          for check in "${checks[@]}"; do
+            code="${check##*:}"
+            if [ -z "$code" ]; then
+              SKIP=$((SKIP + 1))
+            elif [ "$code" = "0" ]; then
+              PASS=$((PASS + 1))
+            else
+              FAIL=$((FAIL + 1))
+            fi
+          done
+
+          TOTAL=$((PASS + FAIL + SKIP))
+          {
+            echo "pass=$PASS"
+            echo "fail=$FAIL"
+            echo "skip=$SKIP"
+            echo "total=$TOTAL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        if: always()
+        continue-on-error: true  # Dependabot PRs get a read-only token; comment posting may 403
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
+        env:
+          PASS_COUNT: ${{ steps.results.outputs.pass }}
+          FAIL_COUNT: ${{ steps.results.outputs.fail }}
+          SKIP_COUNT: ${{ steps.results.outputs.skip }}
+          TOTAL_COUNT: ${{ steps.results.outputs.total }}
+          PR_SHA: ${{ github.event.pull_request.head.sha || steps.comment-pr.outputs.sha }}
+          RUFF_CHECK_EXIT: ${{ steps.ruff-check.outputs.exit_code }}
+          RUFF_FORMAT_EXIT: ${{ steps.ruff-format.outputs.exit_code }}
+          MYPY_EXIT: ${{ steps.mypy.outputs.exit_code }}
+          PYTEST_EXIT: ${{ steps.pytest.outputs.exit_code }}
+          GOLDEN_EVAL_EXIT: ${{ steps.golden-eval.outputs.exit_code }}
+          PIP_AUDIT_EXIT: ${{ steps.pip-audit.outputs.exit_code }}
+          RUFF_CHECK_OUTPUT: ${{ steps.ruff-check.outputs.output }}
+          RUFF_FORMAT_OUTPUT: ${{ steps.ruff-format.outputs.output }}
+          MYPY_OUTPUT: ${{ steps.mypy.outputs.output }}
+          PYTEST_OUTPUT: ${{ steps.pytest.outputs.output }}
+          GOLDEN_EVAL_OUTPUT: ${{ steps.golden-eval.outputs.output }}
+          PIP_AUDIT_OUTPUT: ${{ steps.pip-audit.outputs.output }}
+          GITLEAKS_EXIT: ${{ steps.gitleaks.outputs.exit_code }}
+          TRUFFLEHOG_EXIT: ${{ steps.trufflehog.outputs.exit_code }}
+          GITLEAKS_OUTPUT: ${{ steps.gitleaks.outputs.output }}
+          TRUFFLEHOG_OUTPUT: ${{ steps.trufflehog.outputs.output }}
+        with:
+          script: |
+            const marker = '<!-- ci-results -->';
+            const sha = (process.env.PR_SHA || '').substring(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const pass = process.env.PASS_COUNT;
+            const fail = process.env.FAIL_COUNT;
+            const skip = process.env.SKIP_COUNT;
+            const allPassed = fail === '0' && skip === '0';
+
+            const banner = allPassed
+              ? '✅ **All checks passed** — this PR is ready to merge.'
+              : `❌ **${fail} Failure(s)** — please review the details below.`;
+
+            const status = (code) => {
+              if (!code || code === '') return '⏭️';
+              return code === '0' ? '✅' : '❌';
+            };
+
+            const sanitize = (s) => (s || '').replace(/`{3,}/g, '``').replace(/<\/?details>/gi, '');
+
+            const ruffCheck = process.env.RUFF_CHECK_EXIT;
+            const ruffFormat = process.env.RUFF_FORMAT_EXIT;
+            const mypy = process.env.MYPY_EXIT;
+            const pytest = process.env.PYTEST_EXIT;
+            const goldenEval = process.env.GOLDEN_EVAL_EXIT;
+            const pipAudit = process.env.PIP_AUDIT_EXIT;
+            const gitleaks = process.env.GITLEAKS_EXIT;
+            const trufflehog = process.env.TRUFFLEHOG_EXIT;
+
+            const ruffCheckOutput = sanitize(process.env.RUFF_CHECK_OUTPUT) || 'No issues found';
+            const ruffFormatOutput = sanitize(process.env.RUFF_FORMAT_OUTPUT) || 'No issues found';
+            const mypyOutput = sanitize(process.env.MYPY_OUTPUT) || 'No issues found';
+            const pytestOutput = sanitize(process.env.PYTEST_OUTPUT) || 'No output';
+            const goldenEvalOutput = sanitize(process.env.GOLDEN_EVAL_OUTPUT) || 'No output';
+            const pipAuditOutput = sanitize(process.env.PIP_AUDIT_OUTPUT) || 'No issues found';
+            const gitleaksOutput = sanitize(process.env.GITLEAKS_OUTPUT) || 'No issues found';
+            const trufflehogOutput = sanitize(process.env.TRUFFLEHOG_OUTPUT) || 'No issues found';
+
+            const body = [
+              marker,
+              `# CI Report`,
+              '',
+              banner,
+              '',
+              `**Commit:** \`${sha}\` | **Run:** [#${context.runNumber}](${runUrl}) | **Results:** ${pass} passed, ${fail} failed, ${skip} skipped`,
+              '',
+              '---',
+              '',
+              '### Code Quality',
+              '',
+              `| Check | Tool | Result |`,
+              `|:------|:-----|:------:|`,
+              `| **Lint** | \`ruff check\` | ${status(ruffCheck)} |`,
+              `| **Format** | \`ruff format\` | ${status(ruffFormat)} |`,
+              `| **Type Check** | \`mypy\` | ${status(mypy)} |`,
+              '',
+              '### Testing',
+              '',
+              `| Check | Tool | Result |`,
+              `|:------|:-----|:------:|`,
+              `| **Tests & Coverage** | \`pytest\` | ${status(pytest)} |`,
+              `| **Golden Eval** | \`pytest -m golden\` | ${status(goldenEval)} |`,
+              '',
+              '### Security',
+              '',
+              `| Check | Tool | Result |`,
+              `|:------|:-----|:------:|`,
+              `| **Dependency Audit** | \`pip-audit\` | ${status(pipAudit)} |`,
+              `| **Secret Scan** | \`gitleaks\` | ${status(gitleaks)} |`,
+              `| **Verified Secrets** | \`trufflehog\` | ${status(trufflehog)} |`,
+              '',
+              '---',
+              '',
+              '<details><summary><strong>Lint</strong> (<code>ruff check</code>)</summary>',
+              '',
+              '```',
+              ruffCheckOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Format</strong> (<code>ruff format</code>)</summary>',
+              '',
+              '```',
+              ruffFormatOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Type Check</strong> (<code>mypy</code>)</summary>',
+              '',
+              '```',
+              mypyOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Tests & Coverage</strong> (<code>pytest</code>)</summary>',
+              '',
+              '```',
+              pytestOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Golden Eval</strong> (<code>pytest -m golden</code>)</summary>',
+              '',
+              '```',
+              goldenEvalOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Dependency Audit</strong> (<code>pip-audit</code>)</summary>',
+              '',
+              '```',
+              pipAuditOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Secret Scan</strong> (<code>gitleaks</code>)</summary>',
+              '',
+              '```',
+              gitleaksOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Verified Secrets</strong> (<code>trufflehog</code>)</summary>',
+              '',
+              '```',
+              trufflehogOutput,
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      # ── Final status gate ───────────────────────────────────────
+      - name: Check for failures
+        if: always()
+        env:
+          RUFF_CHECK_EXIT: ${{ steps.ruff-check.outputs.exit_code }}
+          RUFF_FORMAT_EXIT: ${{ steps.ruff-format.outputs.exit_code }}
+          MYPY_EXIT: ${{ steps.mypy.outputs.exit_code }}
+          PYTEST_EXIT: ${{ steps.pytest.outputs.exit_code }}
+          GOLDEN_EVAL_EXIT: ${{ steps.golden-eval.outputs.exit_code }}
+          PIP_AUDIT_EXIT: ${{ steps.pip-audit.outputs.exit_code }}
+          GITLEAKS_EXIT: ${{ steps.gitleaks.outputs.exit_code }}
+          TRUFFLEHOG_EXIT: ${{ steps.trufflehog.outputs.exit_code }}
+        run: |
+          check_exit() {
+            local name="$1" code="$2"
+            if [ -z "$code" ]; then
+              echo "::warning::${name} was skipped"
+            elif [ "$code" != "0" ]; then
+              echo "::error::${name} failed"
+              FAILED=1
+            fi
+          }
+
+          FAILED=0
+          check_exit "ruff check" "$RUFF_CHECK_EXIT"
+          check_exit "ruff format" "$RUFF_FORMAT_EXIT"
+          check_exit "mypy" "$MYPY_EXIT"
+          check_exit "pytest" "$PYTEST_EXIT"
+          check_exit "golden-eval" "$GOLDEN_EVAL_EXIT"
+          check_exit "pip-audit" "$PIP_AUDIT_EXIT"
+          check_exit "gitleaks" "$GITLEAKS_EXIT"
+          check_exit "trufflehog" "$TRUFFLEHOG_EXIT"
+          if [ "$FAILED" -eq 1 ]; then
+            exit 1
+          fi

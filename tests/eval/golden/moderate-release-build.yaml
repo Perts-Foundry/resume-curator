@@ -1,0 +1,225 @@
+meta:
+  id: moderate-release-build
+  name: Release / Build Engineer at ShipFast
+  eval_schema_version: 4
+  tier: moderate
+job_description: 'Release / Build Engineer — ShipFast (San Francisco, CA)
+
+  ShipFast provides developer productivity tooling for enterprise software teams.
+
+  We are looking for a Release Engineer to own our build systems, artifact
+
+  management, and release pipelines across 80+ repositories.
+
+  Responsibilities:
+
+  - Design and maintain reproducible build systems using Bazel and Buck2
+
+  - Manage artifact repositories (Artifactory, Nexus) for versioned releases
+
+  - Implement semantic versioning and automated changelog generation
+
+  - Build release pipelines with progressive rollout and rollback capabilities
+
+  - Optimize build times through caching, parallelization, and dependency analysis
+
+  - Maintain package registries for internal libraries (PyPI, npm, Maven)
+
+  - Integrate code signing and provenance attestation into release workflows
+
+  Requirements:
+
+  - 4+ years in release engineering, build engineering, or CI/CD
+
+  - Deep expertise with build systems (Bazel, Gradle, Make, CMake)
+
+  - Experience with artifact management (Artifactory, Nexus, GitHub Packages)
+
+  - Strong understanding of semantic versioning and release branching strategies
+
+  - Proficiency with CI/CD platforms (GitHub Actions, Jenkins, CircleCI)
+
+  - Experience with container image builds and multi-arch support
+
+  - Python or Go scripting for build automation tooling
+
+  Nice to have:
+
+  - Experience with monorepo build optimization
+
+  - Familiarity with supply chain security (SLSA, Sigstore)
+
+  - Contributions to build system tooling or plugins
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-devops
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 72
+human_scores:
+  relevance: 2
+  keyword_strategy: 2
+  section_selection: 3
+  experience_adaptation: 3
+  summary_quality: 2
+  highlight_quality: 3
+  narrative_coherence: 3
+  overall_impression: 2
+curation:
+  summary: DevOps Engineer with 8+ years of experience building CI/CD pipelines and
+    automating deployment workflows across multi-team environments. Experienced in
+    reducing deployment cycle times by 73% and managing containerized build processes
+    for 50+ services.
+  suggested_label: Release Engineer
+  company_slug: shipfast
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-cicd-pipeline
+    - plat-k8s-migration
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-jenkins-pipeline
+    - devops-ansible-automation
+  skills:
+  - skill_id: skill-devops
+    keywords:
+    - GitHub Actions
+    - Jenkins
+    - GitLab CI
+    - ArgoCD
+  - skill_id: skill-containers
+    keywords:
+    - Docker
+    - Container Registry
+    - Helm
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+    - YAML
+  - skill_id: skill-aws
+    keywords:
+    - ECR
+    - S3
+    - Lambda
+  projects: []
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+    - id: plat-k8s-migration
+      text: Lead migration of 30 production services from ECS to EKS, achieving 99.95%
+        uptime during the 6-month transition while eliminating $18,000/month in compute
+        overhead through right-sized pod autoscaling
+      tags:
+      - kubernetes
+      - migration
+      technologies:
+      - Kubernetes
+      - EKS
+      - Helm
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-jenkins-pipeline
+      text: Developed Jenkins-based CI/CD pipeline for 25 application repositories
+        with automated testing gates, reducing production defect rate by 60% through
+        enforced code quality checks and security scanning
+      tags:
+      - ci-cd
+      - jenkins
+      technologies:
+      - Jenkins
+      - SonarQube
+      - Docker
+    - id: devops-ansible-automation
+      text: Automated server provisioning and configuration for 150+ instances using
+        Ansible playbooks and roles, eliminating 20 hours of weekly manual configuration
+        work and reducing environment drift to zero
+      tags:
+      - automation
+      - ansible
+      technologies:
+      - Ansible
+      - Linux
+  skills:
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - GitHub Actions
+    - Jenkins
+    - GitLab CI
+    - ArgoCD
+    - Infrastructure as Code
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Docker
+    - Container Registry
+    - Helm
+    - ECS
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+    - HCL
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - ECR
+    - S3
+    - Lambda
+    - IAM
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Release Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: DevOps Engineer with 8+ years of experience building CI/CD pipelines and
+    automating deployment workflows across multi-team environments. Experienced in
+    reducing deployment cycle times by 73% and managing containerized build processes
+    for 50+ services.
+  location:
+    city: San Francisco
+    region: California
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

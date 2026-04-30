@@ -1,0 +1,305 @@
+meta:
+  id: moderate-devops-manager
+  name: DevOps Manager at TeamOps
+  eval_schema_version: 4
+  tier: moderate
+job_description: 'DevOps Manager — TeamOps (Chicago, IL)
+
+  TeamOps is a workforce management SaaS company serving 2,000+ enterprise
+
+  clients. We are hiring a DevOps Manager to lead a team of 8 engineers,
+
+  own our infrastructure budget, and drive platform reliability initiatives.
+
+  Responsibilities:
+
+  - Manage and mentor a team of 8 DevOps and SRE engineers
+
+  - Own $2.5M annual cloud infrastructure budget with quarterly forecasting
+
+  - Conduct hiring, performance reviews, and career development planning
+
+  - Define team OKRs aligned with engineering and business objectives
+
+  - Partner with VP of Engineering on infrastructure strategy and roadmap
+
+  - Establish team processes for incident management and change control
+
+  - Drive vendor evaluations and contract negotiations for infrastructure tooling
+
+  Requirements:
+
+  - 3+ years of engineering management experience leading DevOps/SRE teams
+
+  - 5+ years hands-on DevOps or infrastructure experience
+
+  - Experience with budget ownership and cloud cost management
+
+  - Track record of hiring and growing engineering talent
+
+  - Strong understanding of CI/CD, IaC, and container orchestration
+
+  - Experience with agile methodologies and engineering metrics (DORA)
+
+  - Excellent communication skills for cross-functional stakeholder management
+
+  Nice to have:
+
+  - MBA or engineering management certification
+
+  - Experience managing distributed/remote teams
+
+  - Background in SaaS or enterprise software platforms
+
+  - Familiarity with FinOps practices and frameworks
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-devops
+  must_exclude: {}
+baselines:
+  aggregate_score:
+    min: 75
+human_scores:
+  relevance: 2
+  keyword_strategy: 2
+  section_selection: 3
+  experience_adaptation: 1
+  summary_quality: 2
+  highlight_quality: 4
+  narrative_coherence: 3
+  overall_impression: 2
+curation:
+  summary: Platform Engineering Lead with 8+ years of experience driving infrastructure
+    initiatives across multi-team environments. Achieved $42,000/month in cloud cost
+    reductions and led cross-team adoption of IaC standards, transitioning toward
+    engineering management.
+  suggested_label: DevOps Manager
+  company_slug: teamops
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-cost-optimization
+    - plat-iac-adoption
+    - plat-cicd-pipeline
+    - plat-monitoring
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-terraform-modules
+    - infra-aws-architecture
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-jenkins-pipeline
+    - devops-ansible-automation
+  skills:
+  - skill_id: skill-devops
+    keywords:
+    - Terraform
+    - GitHub Actions
+    - Jenkins
+    - Infrastructure as Code
+  - skill_id: skill-aws
+    keywords:
+    - EC2
+    - EKS
+    - S3
+    - IAM
+    - CloudWatch
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+  - skill_id: skill-monitoring
+    keywords:
+    - Prometheus
+    - Grafana
+    - PagerDuty
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Bash
+  projects: []
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-cost-optimization
+      text: Implement cloud cost optimization program using reserved instances, spot
+        fleets, and resource tagging that reduced monthly AWS spend by $42,000 (28%
+        reduction) while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - aws
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-terraform-modules
+      text: Built reusable Terraform module library of 40+ modules adopted by 6 product
+        teams, standardizing VPC layouts, security groups, and IAM policies while
+        cutting new environment provisioning from 2 days to 35 minutes
+      tags:
+      - terraform
+      - iac
+      technologies:
+      - Terraform
+      - AWS
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-jenkins-pipeline
+      text: Developed Jenkins-based CI/CD pipeline for 25 application repositories
+        with automated testing gates, reducing production defect rate by 60% through
+        enforced code quality checks and security scanning
+      tags:
+      - ci-cd
+      - jenkins
+      technologies:
+      - Jenkins
+      - SonarQube
+      - Docker
+    - id: devops-ansible-automation
+      text: Automated server provisioning and configuration for 150+ instances using
+        Ansible playbooks and roles, eliminating 20 hours of weekly manual configuration
+        work and reducing environment drift to zero
+      tags:
+      - automation
+      - ansible
+      technologies:
+      - Ansible
+      - Linux
+  skills:
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Terraform
+    - GitHub Actions
+    - Jenkins
+    - Infrastructure as Code
+    - Ansible
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EC2
+    - EKS
+    - S3
+    - IAM
+    - CloudWatch
+    - VPC
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Prometheus
+    - Grafana
+    - PagerDuty
+    - Alerting
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Bash
+    - YAML
+  certificates:
+  - id: cert-aws-solutions-architect
+    name: AWS Certified Solutions Architect - Professional
+    date: 2023-04
+    type: professional
+    issuer: Amazon Web Services
+    tags:
+    - aws
+    - cloud
+    technologies:
+    - AWS
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: DevOps Manager
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Platform Engineering Lead with 8+ years of experience driving infrastructure
+    initiatives across multi-team environments. Achieved $42,000/month in cloud cost
+    reductions and led cross-team adoption of IaC standards, transitioning toward
+    engineering management.
+  location:
+    city: Chicago
+    region: Illinois
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan
