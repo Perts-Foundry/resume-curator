@@ -255,6 +255,7 @@ Settings are resolved in priority order: **CLI arguments > environment variables
 | `CURATOR_MAX_TRIM_ITERATIONS` | `150` | Maximum renderer trim iterations (1-200); WARNING logged at 15 as convergence signal |
 | `CURATOR_JUDGE_MODEL` | `claude-sonnet-4-6` | Model for Tier 2 judge evaluation |
 | `CURATOR_SUMMARY_MANDATORY_MENTION` | *(author's identity by default)* | Phrase the AI must include verbatim in every generated resume summary. Forks should set this to their own mandatory mention (e.g. `"founder of YourCo"`) or to an empty string to disable. |
+| `CURATOR_PORTFOLIO_PATH` | `../professional-portfolio-source` | Path to your portfolio source directory (see [Portfolio Schema](docs/portfolio-schema.md)). |
 
 > [!WARNING]
 > The Anthropic API is billed separately from Claude Pro/Max/Team subscriptions.
