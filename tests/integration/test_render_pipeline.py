@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pypdf
 import pytest
 import yaml
 
@@ -25,7 +26,8 @@ from curator.models import (
     SkillEntry,
     WorkEntry,
 )
-from curator.renderer import render
+from curator.renderer import _render_cover_letter, render
+from tests.conftest import TYPST_AVAILABLE
 
 
 def _fake_typst_run(cmd: list[str], **kwargs: Any) -> Any:
@@ -295,3 +297,145 @@ class TestRenderPipeline:
         )
 
         assert "gamma-inc" in result.profile_dir.name
+
+
+# ---------------------------------------------------------------------------
+# Soft-hyphen ActualText regression (cover letter PDF)
+#
+# Background: Typst auto-hyphenation wraps each line-break hyphen in a
+# /ActualText <FEFF00AD> marked-content section, so PDF copy operations
+# emit U+00AD (SOFT HYPHEN). Web fonts that lack a U+00AD glyph render
+# the codepoint as boxes when text is pasted into job-application forms.
+# This test pair pins both directions: with hyphenate disabled (default
+# template) markers must be absent; with hyphenate forced back on (patched
+# template) markers must be present, proving the assertion harness works.
+# ---------------------------------------------------------------------------
+
+
+def _content_streams_have_soft_hyphen_actualtext(pdf_path: Path) -> bool:
+    """Return True if any page's content stream contains the marker.
+
+    Uses pypdf's filter-aware stream walking so the assertion is robust
+    against PDF encoding variations (FlateDecode chains, ObjStm, CRLF
+    differences) that a manual regex would miss.
+    """
+    reader = pypdf.PdfReader(str(pdf_path))
+    for page in reader.pages:
+        content = page.get_contents()
+        if content is None:
+            continue
+        # PDF /Contents may be an array of streams; pypdf concatenates via
+        # ContentStream / EncodedStreamObject. get_data() returns decoded
+        # bytes for the page's combined content.
+        try:
+            raw = content.get_data()
+        except AttributeError:
+            raw = bytes(content)
+        if b"/ActualText" in raw and b"00AD" in raw.upper():
+            return True
+    return False
+
+
+def _write_minimal_basics(output_dir: Path) -> None:
+    """Write a minimal data/basics.yaml so the cover letter template loads.
+
+    The template reads basics.name plus optional email/phone/location/url
+    fields for the letterhead. Only ``name`` is mandatory; everything else
+    is gated on default-aware lookups.
+    """
+    data_dir = output_dir / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "basics.yaml").write_text(
+        yaml.safe_dump({"name": "Test Candidate"}),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not TYPST_AVAILABLE, reason="Typst not installed")
+class TestCoverLetterSoftHyphenRegression:
+    """Negative + positive control around hyphenate: false in cover_letter.typ.
+
+    The negative test compiles with the packaged template (hyphenate: false)
+    and asserts no soft-hyphen ActualText markers and a single page on the
+    high-water-mark fixture (~293/300 words). The positive test patches the
+    template back to hyphenate: true and asserts the marker IS present,
+    proving the assertion mechanism actually fires on the bad input.
+    """
+
+    def test_default_template_emits_no_soft_hyphen_markers(
+        self, typst_safe_dir: Path
+    ) -> None:
+        from curator import default_cover_letter_template_path
+        from tests.helpers import valid_cover_letter
+
+        _write_minimal_basics(typst_safe_dir)
+        letter = valid_cover_letter()
+        _, pdf_path, pages = _render_cover_letter(
+            typst_safe_dir,
+            letter,
+            default_cover_letter_template_path(),
+            skip_pdf=False,
+        )
+        assert pdf_path is not None and pdf_path.exists()
+        assert pages == 1, (
+            f"Cover letter rendered to {pages} pages on the high-water-mark "
+            "fixture (~293/300 words). The cover letter has no trim cascade; "
+            "either tighten word caps in rules.py or shrink template "
+            "leading/size."
+        )
+        assert not _content_streams_have_soft_hyphen_actualtext(pdf_path), (
+            "Cover letter PDF contains /ActualText soft-hyphen markers. "
+            "Verify hyphenate: false is set in src/curator/templates/"
+            "cover_letter.typ; web-form fonts render U+00AD as boxes."
+        )
+
+    def test_hyphenation_enabled_emits_soft_hyphen_markers(
+        self, typst_safe_dir: Path
+    ) -> None:
+        """Positive control: prove the negative test isn't passing vacuously.
+
+        Patches a copy of the packaged template to flip hyphenate back to
+        true, renders with the patched copy, and asserts the marker IS
+        present. If this test fails (no marker on a known-bad input), the
+        assertion harness is broken and the negative test is meaningless.
+        """
+        from curator import default_cover_letter_template_path
+        from tests.helpers import valid_cover_letter
+
+        # Render to a sibling dir so the patched-template copy in
+        # _render_cover_letter doesn't collide with the negative test's run.
+        render_dir = typst_safe_dir / "positive_control"
+        render_dir.mkdir()
+        _write_minimal_basics(render_dir)
+
+        # Place the patched template OUTSIDE render_dir; _render_cover_letter
+        # copies the template into output_dir (under its basename), which
+        # would be a same-file copy if we put it directly in render_dir.
+        template_dir = typst_safe_dir / "patched_templates"
+        template_dir.mkdir()
+        patched_template = template_dir / "cover_letter_hyphenate_true.typ"
+        original = default_cover_letter_template_path().read_text(encoding="utf-8")
+        patched = original.replace("hyphenate: false", "hyphenate: true")
+        assert patched != original, (
+            "Failed to patch hyphenate flag; template format changed?"
+        )
+        patched_template.write_text(patched, encoding="utf-8")
+
+        letter = valid_cover_letter()
+        _, pdf_path, _ = _render_cover_letter(
+            render_dir,
+            letter,
+            patched_template,
+            skip_pdf=False,
+        )
+        assert pdf_path is not None and pdf_path.exists()
+        assert _content_streams_have_soft_hyphen_actualtext(pdf_path), (
+            "Positive control failed: hyphenate: true should produce "
+            "/ActualText <FEFF00AD> markers on the high-water-mark fixture. "
+            "If this fails the negative-direction assertion above is also "
+            "meaningless. Likely causes: Typst version dropped ActualText "
+            "tagging, fixture no longer triggers hyphenation at this "
+            "font/geometry, or pypdf stream walking changed."
+        )
+
