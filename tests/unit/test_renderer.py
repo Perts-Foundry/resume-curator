@@ -2861,10 +2861,10 @@ class TestTemplateTypography:
     """
 
     @pytest.mark.parametrize(
-        ("template_attr",),
+        "template_attr",
         [
-            ("default_template_path",),
-            ("default_cover_letter_template_path",),
+            "default_template_path",
+            "default_cover_letter_template_path",
         ],
     )
     def test_hyphenation_disabled(self, template_attr: str) -> None:

@@ -377,7 +377,8 @@ class TestCoverLetterSoftHyphenRegression:
             default_cover_letter_template_path(),
             skip_pdf=False,
         )
-        assert pdf_path is not None and pdf_path.exists()
+        assert pdf_path is not None
+        assert pdf_path.exists()
         assert pages == 1, (
             f"Cover letter rendered to {pages} pages on the high-water-mark "
             "fixture (~293/300 words). The cover letter has no trim cascade; "
@@ -429,7 +430,8 @@ class TestCoverLetterSoftHyphenRegression:
             patched_template,
             skip_pdf=False,
         )
-        assert pdf_path is not None and pdf_path.exists()
+        assert pdf_path is not None
+        assert pdf_path.exists()
         assert _content_streams_have_soft_hyphen_actualtext(pdf_path), (
             "Positive control failed: hyphenate: true should produce "
             "/ActualText <FEFF00AD> markers on the high-water-mark fixture. "
