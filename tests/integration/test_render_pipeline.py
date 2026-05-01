@@ -367,19 +367,52 @@ class TestCoverLetterSoftHyphenRegression:
 
     The negative test compiles with the packaged template (hyphenate: false)
     and asserts no soft-hyphen ActualText markers and a single page on the
-    high-water-mark fixture (~293/300 words). The positive test patches the
-    template back to hyphenate: true and asserts the marker IS present,
-    proving the assertion mechanism actually fires on the bad input.
+    high-water-mark fixture (close to the 300-word total cap; verified
+    in-test). The positive test patches the template back to
+    hyphenate: true and asserts the marker IS present, proving the
+    assertion mechanism actually fires on the bad input.
     """
+
+    # Minimum word count below which valid_cover_letter() no longer
+    # exercises a meaningful page-fit assertion. If the shared helper
+    # is shrunk for an unrelated test, this floor fires before the
+    # geometry assertion does, pointing the failure at the fixture
+    # edit rather than the template.
+    HIGH_WATER_MARK_FLOOR = 280
 
     def test_default_template_emits_no_soft_hyphen_markers(
         self, typst_safe_dir: Path
     ) -> None:
+        import re as _re
+
         from curator import default_cover_letter_template_path
         from tests.helpers import valid_cover_letter
 
         _write_minimal_basics(typst_safe_dir)
         letter = valid_cover_letter()
+
+        # Guard against shared-fixture drift: the page-fit assertion
+        # below is meaningful only when the fixture is near the
+        # 300-word cap. If a future contributor shrinks
+        # valid_cover_letter() for an unrelated test, surface the
+        # decoupling here instead of having the geometry assertion
+        # mislead the reader.
+        word_count = sum(
+            len(_re.findall(r"\b\w+\b", text))
+            for text in (
+                letter.opening,
+                *letter.body_paragraphs,
+                letter.closing,
+            )
+        )
+        assert word_count >= self.HIGH_WATER_MARK_FLOOR, (
+            f"valid_cover_letter() word count is {word_count}, below the "
+            f"high-water-mark floor of {self.HIGH_WATER_MARK_FLOOR}. "
+            "The page-fit assertion below relies on the fixture being "
+            "near the 300-word cap. Either restore the helper's length, "
+            "or move this test to a local high-water-mark fixture."
+        )
+
         _, pdf_path, pages = _render_cover_letter(
             typst_safe_dir,
             letter,
@@ -389,10 +422,10 @@ class TestCoverLetterSoftHyphenRegression:
         assert pdf_path is not None
         assert pdf_path.exists()
         assert pages == 1, (
-            f"Cover letter rendered to {pages} pages on the high-water-mark "
-            "fixture (~293/300 words). The cover letter has no trim cascade; "
-            "either tighten word caps in rules.py or shrink template "
-            "leading/size."
+            f"Cover letter rendered to {pages} pages at "
+            f"{word_count} words. The cover letter has no trim "
+            "cascade; either tighten word caps in rules.py or shrink "
+            "template leading/size."
         )
         assert not _content_streams_have_soft_hyphen_actualtext(pdf_path), (
             "Cover letter PDF contains /ActualText soft-hyphen markers. "
