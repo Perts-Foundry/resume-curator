@@ -315,6 +315,15 @@ class TestRenderPipeline:
 def _content_streams_have_soft_hyphen_actualtext(pdf_path: Path) -> bool:
     """Return True if any page's content stream contains the marker.
 
+    Looks for the literal ``FEFF00AD`` byte sequence (UTF-16 BOM + soft
+    hyphen) that Typst writes inside ``/ActualText <...>`` when it
+    auto-hyphenates a line break. Tighter than scanning for
+    ``/ActualText`` and ``00AD`` separately: PDF readers can legitimately
+    emit ``/ActualText`` for unrelated reasons (ligatures, accessibility
+    tags), and a stray ``00AD`` byte sequence elsewhere in the same page
+    (font CID, coordinate, hex string) would otherwise produce a false
+    positive against a benign tag.
+
     Uses pypdf's filter-aware stream walking so the assertion is robust
     against PDF encoding variations (FlateDecode chains, ObjStm, CRLF
     differences) that a manual regex would miss.
@@ -331,7 +340,7 @@ def _content_streams_have_soft_hyphen_actualtext(pdf_path: Path) -> bool:
             raw = content.get_data()
         except AttributeError:
             raw = bytes(content)
-        if b"/ActualText" in raw and b"00AD" in raw.upper():
+        if b"FEFF00AD" in raw.upper():
             return True
     return False
 
