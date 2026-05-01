@@ -820,6 +820,61 @@ class TestCoverLetterCurationStructure:
         with pytest.raises(ValidationError, match="em dash"):
             CoverLetterCuration(**kwargs)
 
+    @pytest.mark.parametrize(
+        "char",
+        [
+            "\u00ad",  # SOFT HYPHEN
+            "\u200b",  # ZERO WIDTH SPACE
+            "\u200c",  # ZWNJ
+            "\u200d",  # ZWJ
+            "\u200e",  # LRM
+            "\u200f",  # RLM
+            "\ufeff",  # BOM / ZWNBSP
+            "\x00",    # NUL (C0 baseline)
+            "\x1f",    # US (C0 baseline)
+        ],
+    )
+    @pytest.mark.parametrize(
+        "field", ["salutation", "opening", "closing", "sign_off"]
+    )
+    def test_invisible_chars_in_scalar_field_rejected(
+        self, field: str, char: str
+    ) -> None:
+        kwargs = _valid_letter_kwargs()
+        # Salutation must end in comma; sign_off enum-restricted; both must
+        # remain structurally valid so the control-char validator is the
+        # one that fires (not a sibling structural rule).
+        kwargs[field] = kwargs[field][:-1] + char + kwargs[field][-1:]
+        with pytest.raises(ValidationError, match="control characters"):
+            CoverLetterCuration(**kwargs)
+
+    @pytest.mark.parametrize(
+        "char",
+        [
+            "\u00ad",
+            "\u200b",
+            "\u200c",
+            "\u200d",
+            "\u200e",
+            "\u200f",
+            "\ufeff",
+            "\x00",
+            "\x1f",
+        ],
+    )
+    def test_invisible_chars_in_body_paragraph_rejected(self, char: str) -> None:
+        kwargs = _valid_letter_kwargs()
+        # Inject into the middle of body[0] so paragraph-band length and
+        # surface validators stay satisfied; only the control-char check
+        # should fire.
+        body0 = kwargs["body_paragraphs"][0]
+        kwargs["body_paragraphs"] = [
+            body0[: len(body0) // 2] + char + body0[len(body0) // 2 :],
+            kwargs["body_paragraphs"][1],
+        ]
+        with pytest.raises(ValidationError, match="control characters"):
+            CoverLetterCuration(**kwargs)
+
     def test_body_paragraph_count_too_few_rejected(self) -> None:
         kwargs = _valid_letter_kwargs()
         kwargs["body_paragraphs"] = kwargs["body_paragraphs"][:1]
