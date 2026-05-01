@@ -627,9 +627,7 @@ class TestResumeCuration:
             ("﻿", "BOM / ZWNBSP"),
         ],
     )
-    def test_invisible_chars_in_summary_rejected(
-        self, char: str, name: str
-    ) -> None:
+    def test_invisible_chars_in_summary_rejected(self, char: str, name: str) -> None:
         # Defense in depth for the soft-hyphen fix: Typst auto-hyphenation is
         # disabled, but if a contributor pastes a SHY (or any zero-width
         # formatting char) into the LLM output or a portfolio YAML field,

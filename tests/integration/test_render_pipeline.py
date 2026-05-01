@@ -440,4 +440,3 @@ class TestCoverLetterSoftHyphenRegression:
             "tagging, fixture no longer triggers hyphenation at this "
             "font/geometry, or pypdf stream walking changed."
         )
-
