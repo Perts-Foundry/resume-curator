@@ -160,6 +160,84 @@ submittable prose with no placeholders and no TEMPLATE banner.
 - **Discovered work**: If you find something that needs fixing or improving while
   working on another task, add it to `TODO.md` rather than leaving a `TODO` comment.
 
+## Sensitive Content
+
+This repository is **public**. Real application data (resumes, cover letters,
+job descriptions, recruiter correspondence, employer responses) is the
+candidate's private business and must never appear in the repo, git history,
+PRs, issues, comments, or release artifacts. The scope is broad on purpose:
+git history rewrites are expensive and `gh` API edits don't scrub everything.
+The only durable defense is to never let it land in the first place.
+
+### What is sensitive
+
+- **Real company / employer / recruiter names** for active or past
+  applications (anything you'd see under `profiles/`, `testing/jds/`, the
+  user's screenshots, or in a memory note).
+- **Real candidate PII**: home address, personal phone, personal email,
+  full birthdate, SSN/ITIN, immigration status, salary numbers, references.
+- **Job description text** from `testing/jds/` — those files are sourced
+  privately and may carry recruiter / company / contract markings.
+- **Real letter or resume prose** from `profiles/` runs (real
+  accomplishments tied to a real employer + real metrics).
+- **Anthropic API keys**, SDK auth tokens, GitHub PATs, and any value in
+  `SecretStr`-typed config fields. Standard `*.env` / `.env.local`
+  hygiene applies; `.gitignore` covers the obvious paths but doesn't
+  cover commit messages or PR bodies.
+- **Local-only filesystem paths** to private repos (`~/repos/professional-portfolio-source`,
+  the user's `/home/...` paths, internal corp paths from past jobs).
+
+### What is NOT sensitive (and is fine to commit)
+
+- Synthetic test fixtures: `Acme Corp`, `Beta Inc`, `Jane Doe`, `Test
+  Candidate`, the personas already used in `tests/helpers.py`.
+- Bug-mechanism descriptions in commit messages, doc entries, and PR
+  bodies — `/ActualText <FEFF00AD>` markers, codepoint ranges, byte
+  sequences. The mechanism is the value; the application that surfaced
+  it is not.
+- File **paths** that include a redacted vendor slug
+  (e.g. `profiles/2026-04-30-<redacted-vendor>/cover_letter.pdf`) —
+  the path discloses that a profile existed, which is observable from
+  `.gitignore` patterns alone.
+- The candidate's name on the public repo, since the repo identifies
+  itself.
+
+### Pre-push checklist
+
+Before every `git push`, every `gh pr create`, every `gh pr comment`, and
+every `gh issue create`:
+
+1. **Scan the full branch diff** (`git diff main..HEAD`) and **every
+   commit message** (`git log main..HEAD --format=%B`) for: real
+   employer / recruiter names, real candidate PII, secrets / tokens,
+   absolute local paths, raw JD or letter prose.
+2. **Scan the rendered PR / issue / comment body** for the same
+   categories — content typed into `gh pr create --body` does not pass
+   through the diff scan.
+3. If anything sensitive is found:
+   - **Pre-push (history not yet on remote)**: rewrite history with
+     `git filter-branch --tree-filter` + `--msg-filter` (or
+     `git filter-repo` if available). Replace with a neutral
+     descriptor (`<redacted-vendor>`, `the reference application`, etc.).
+     Re-run all checks before pushing the rewritten branch.
+   - **Already on remote**: stop. Surface to the user before any further
+     action — force-pushing rewritten history to a public repo is a
+     visible event that warrants explicit consent. Removing the content
+     from the working tree without rewriting history does not actually
+     remove it from `main` or the cached PR diff.
+4. Add a redacted-by-default mindset to **future** commit messages and
+   doc entries: when describing an incident, name the **mechanism** and
+   the **profile path** (not the vendor); include byte-level evidence
+   (codepoints, marker counts, line-break shape), not narrative excerpts.
+
+### Memory notes
+
+Memory files under `~/.claude/projects/.../memory/` may contain
+sensitive context (vendor names, candidate-specific notes) **for the
+assistant's use only**. Never paste memory content into the public
+repo; treat memory as a private context store, not a documentation
+source.
+
 ## Repository Structure
 
 ```
