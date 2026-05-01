@@ -413,3 +413,115 @@ republishing.
 - [ ] Browser automation via Playwright.
 - [ ] Human-in-the-loop approval workflow.
 - [ ] Application tracking.
+
+---
+
+# Review TODO
+
+> Deferred findings from pre-PR reviews. Check off items as resolved.
+
+## Important
+
+- [ ] **[AR-1]** Extend `_CONTROL_CHAR_RE` (or an equivalent loader-pass
+  scrub) to portfolio-side text fields. The current PR only validates
+  AI-curated output and the cover-letter portfolio file (which reuses
+  `CoverLetterCuration`). A SHY pasted into `Basics`, `WorkEntry.highlights[].text`,
+  `SkillEntry.keywords`, `ProjectEntry`, `EducationEntry`, etc. flows
+  through the loader unflagged and renders as `.notdef` in the PDF the
+  same way the original bug did, just from a different source.
+  Cheapest implementation is a one-pass scrub in `loader.py` after
+  `yaml.safe_load` that points at the offending file:line; alternative
+  is a shared `@field_validator` mixin across 10+ portfolio models.
+  (architecture-reviewer, 2026-05-01)
+- [ ] **[AR-2]** Structural cover-letter page-fit handling. The cover letter
+  has no trim cascade (`renderer.py:_render_cover_letter` is single-pass
+  with a logger.warning on overflow); first page-overflow incident on a
+  real submission ships an unusable two-page artifact. Disabling
+  hyphenation narrows the safety margin slightly. Either (a) add a
+  minimal cover-letter trimmer mirroring the resume cascade on a smaller
+  surface area (drop closing pleasantries, then tighten body paragraph
+  toward its 40-word floor, then fail loud) or (b) tighten
+  `COVER_LETTER_*_WORD_MAX` so the geometry is provably fitting at all
+  input shapes. (architecture-reviewer, 2026-04-30)
+- [ ] **[AR-7]** Surface cover-letter `pages` in the `cover_letter`
+  sub-object of `curation_log.json` so bulk-automation runs are
+  auditable (currently logger-only). (architecture-reviewer, 2026-04-30)
+
+## Suggestions
+
+- [ ] **[CR-7]** Make the verification snippet's `<date>-verify-no-shy/`
+  path resolve via glob in docs / runbooks so operators don't have to
+  substitute the date manually. (code-reviewer, 2026-04-30)
+- [ ] **[CR-8]** Document a known-hyphenation-triggering verification
+  fixture (or a one-off `verify-shy.py`) so static-render smoke checks
+  don't pass vacuously when `cover-letter.yaml` happens to contain no
+  long compound words. (code-reviewer, 2026-04-30)
+- [ ] **[DS-2]** Mirror the curated.typ file-header design comment update
+  on cover_letter.typ if/when that file grows a similar enumerated
+  design list. (doc-sync-checker, 2026-04-30)
+- [ ] **[AR-4]** Revisit the per-break ActualText control alternative if
+  a future Typst release exposes a knob to "draw hyphen but skip
+  ActualText" (not available in 0.13.x/0.14.x). (architecture-reviewer,
+  2026-04-30)
+- [ ] **[AR-6]** Class-level grouping for any further regression tests
+  added to `test_renderer.py` (file is 2850+ lines; free-floating
+  module-level tests get lost). (architecture-reviewer, 2026-04-30)
+- [ ] **[TE-8]** Ensure the soft-hyphen regression-test docstrings link
+  back to the originating issue / commit so future contributors
+  scanning a "weird" assertion can find the rationale.
+  (test-engineer, 2026-04-30)
+- [ ] **[SA-2]** Rewrite `_CONTROL_CHAR_RE` in `models.py` with explicit
+  `­` / `​-‏` / `﻿` escape sequences instead of
+  literal codepoints, so the class is greppable and reviewable without
+  a hex inspector. Blocked on tooling: the agent's edit pipeline
+  decodes `\u` sequences at the JSON layer, so direct literal
+  insertion is currently the only working form. Revisit when editing
+  by hand or via a build script. (security-auditor, 2026-05-01)
+- [ ] **[CR-2]** Tighten the positive control's "patched != original"
+  assertion to verify the active-code occurrence count went from 1 to
+  0, not just that any text changed (e.g., comment-only rewrite would
+  pass today). Strip comments before counting. (code-reviewer, 2026-05-01)
+- [ ] **[CR-4]** Add an integration regression test for the resume PDF
+  that compiles via `render()` and runs the same FEFF00AD content-stream
+  assertion. The structural unit test guards both templates at the
+  source-text layer; the integration test currently covers only the
+  cover letter. The resume is the higher-traffic artifact.
+  (code-reviewer, 2026-05-01)
+- [ ] **[DS-3]** Tighten the cover_letter.typ:3 "Typography is aligned
+  with curated.typ" comment to enumerate what is and isn't shared
+  (font/lang/hyphenate shared; size/justify/leading differ by design).
+  (doc-sync-checker, 2026-05-01)
+- [ ] **[DS-5]** Decide whether `# Review TODO` should carry an empty
+  `## Blockers` heading for symmetry with the global CLAUDE.md
+  template, or treat the heading as illustrative.
+  (doc-sync-checker, 2026-05-01)
+- [ ] **[DS-6]** Add a parenthetical `(vendor name redacted per
+  CLAUDE.md Sensitive Content)` to the 2026-04-30 architecture log
+  entry so the `<redacted-vendor>` placeholder is self-explanatory in
+  isolation. (doc-sync-checker, 2026-05-01)
+- [ ] **[AR-2-test]** Test docstring miscounted the fixture word count
+  as ~293; actual is ~286. Update the docstring (verbose form: compute
+  word count in the test setup and assert an exact range).
+  (architecture-reviewer, 2026-05-01)
+- [ ] **[AR-3]** Widen the positive-control assertion to also accept
+  `­` / `\xad` byte forms in case Typst changes how it emits
+  ActualText hex strings in a future release. The current check is
+  tied to the `FEFF00AD` BOM-prefixed form. (architecture-reviewer,
+  2026-05-01)
+- [ ] **[AR-4-test]** Add a one-line content-length-differs assertion
+  in the positive control to prove the patched template was actually
+  used by Typst (defends against a future renderer refactor that
+  resolves templates differently). (architecture-reviewer, 2026-05-01)
+- [ ] **[TE-4]** Decide positive-control failure mode on Typst version
+  drift: hard-fail (current) vs self-skip with WARNING. Hard-fail
+  surfaces unknown changes; skip avoids CI red on what is informational
+  about Typst, not about resume-curator. (test-engineer, 2026-05-01)
+- [ ] **[TE-5]** Normalize `import pypdf` to the project's
+  `from pypdf import PdfReader` style in
+  `tests/integration/test_render_pipeline.py` (other call sites use
+  the latter). Cosmetic. (test-engineer, 2026-05-01)
+- [ ] **[TE-7]** Use `\u`-escape parametrize IDs in
+  `tests/unit/test_models.py` for the invisible-char tests. Same
+  Edit-tool blocker as SA-2; revisit alongside it.
+  (test-engineer, 2026-05-01)
+  (test-engineer, 2026-04-30)

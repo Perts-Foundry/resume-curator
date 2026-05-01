@@ -3,7 +3,8 @@
 // by Python — this template renders whatever data files it receives.
 //
 // Design: Sans-serif, left-aligned header, ALL CAPS headings, navy hyperlinks,
-// grouped skills without proficiency levels, no GPA for experienced candidates.
+// grouped skills without proficiency levels, no GPA for experienced candidates,
+// auto-hyphenation off (clipboard soft-hyphen guard).
 // See docs/architecture.md Design Decisions Log for rationale.
 //
 // Usage: typst compile --root <profile-dir> templates/curated.typ <output.pdf>
@@ -26,8 +27,16 @@
 // ---------------------------------------------------------------------------
 
 #set page(paper: "us-letter", margin: 0.3in)
+// hyphenate: false  Typst's auto-hyphenation wraps line-break hyphens in
+// /ActualText <FEFF00AD>, so clipboard copy emits U+00AD (SOFT HYPHEN).
+// Web-form fonts that lack a U+00AD glyph render those as .notdef boxes.
+// Keeping it off means the rendered text, accessibility tags, and clipboard
+// text all match. Trade-off: with justify: true below, long unbreakable
+// tokens may produce slightly larger inter-word gaps; do not "fix" by
+// re-enabling hyphenation. Keep aligned with cover_letter.typ. Guarded by
+// TestTemplateTypography (unit) and the integration positive control.
 #set text(font: ("Inter", "Ubuntu Sans", "DejaVu Sans"), size: 10pt,
-          hyphenate: true, lang: "en")
+          hyphenate: false, lang: "en")
 #set par(justify: true, leading: 0.5em)
 #set list(marker: [•], indent: 0.3in, body-indent: 0.2em, spacing: 8pt)
 

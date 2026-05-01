@@ -2848,3 +2848,45 @@ class TestRendererJudgeInvariant:
         text = _RUBRIC_SYSTEM_PROMPT.lower()
         assert "employment timeline" in text or "header-only" in text
         assert "trim" in text or "page" in text
+
+
+@pytest.mark.unit
+class TestTemplateTypography:
+    """Pin typography invariants in both packaged Typst templates.
+
+    Cheap, font-independent guard against the soft-hyphen regression:
+    Typst auto-hyphenation wraps line-break hyphens in
+    /ActualText <FEFF00AD>, which web fonts render as boxes when pasted.
+    Source: 2026-04-30 the reference application cover-letter incident.
+    """
+
+    @pytest.mark.parametrize(
+        "template_attr",
+        [
+            "default_template_path",
+            "default_cover_letter_template_path",
+        ],
+    )
+    def test_hyphenation_disabled(self, template_attr: str) -> None:
+        import re as _re
+
+        import curator
+
+        template_path: Path = getattr(curator, template_attr)()
+        src = template_path.read_text(encoding="utf-8")
+        # Strip Typst comments so the rationale block (which includes
+        # the literal phrase "auto-hyphenation off") cannot satisfy the
+        # assertion. Strip block comments first (DOTALL across lines),
+        # then single-line comments (each line up to newline). Active
+        # code only.
+        code = _re.sub(r"/\*.*?\*/", "", src, flags=_re.DOTALL)
+        code = _re.sub(r"//[^\n]*", "", code)
+        assert "hyphenate: false" in code, (
+            f"{template_path.name} must set hyphenate: false. Re-enabling "
+            "produces /ActualText <FEFF00AD> markers that render as boxes "
+            "when pasted into web forms."
+        )
+        assert "hyphenate: true" not in code, (
+            f"{template_path.name} contains hyphenate: true in active code. "
+            "See the rationale comment above the #set text(...) block."
+        )
