@@ -2868,16 +2868,19 @@ class TestTemplateTypography:
         ],
     )
     def test_hyphenation_disabled(self, template_attr: str) -> None:
+        import re as _re
+
         import curator
 
         template_path: Path = getattr(curator, template_attr)()
         src = template_path.read_text(encoding="utf-8")
-        # Drop Typst single-line comments so the rationale block (which
-        # includes the literal phrase "auto-hyphenation off") cannot
-        # accidentally satisfy the assertion. Active code only.
-        code = "\n".join(
-            ln for ln in src.splitlines() if not ln.lstrip().startswith("//")
-        )
+        # Strip Typst comments so the rationale block (which includes
+        # the literal phrase "auto-hyphenation off") cannot satisfy the
+        # assertion. Strip block comments first (DOTALL across lines),
+        # then single-line comments (each line up to newline). Active
+        # code only.
+        code = _re.sub(r"/\*.*?\*/", "", src, flags=_re.DOTALL)
+        code = _re.sub(r"//[^\n]*", "", code)
         assert "hyphenate: false" in code, (
             f"{template_path.name} must set hyphenate: false. Re-enabling "
             "produces /ActualText <FEFF00AD> markers that render as boxes "
