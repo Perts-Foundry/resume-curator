@@ -830,13 +830,11 @@ class TestCoverLetterCurationStructure:
             "\u200e",  # LRM
             "\u200f",  # RLM
             "\ufeff",  # BOM / ZWNBSP
-            "\x00",    # NUL (C0 baseline)
-            "\x1f",    # US (C0 baseline)
+            "\x00",  # NUL (C0 baseline)
+            "\x1f",  # US (C0 baseline)
         ],
     )
-    @pytest.mark.parametrize(
-        "field", ["salutation", "opening", "closing", "sign_off"]
-    )
+    @pytest.mark.parametrize("field", ["salutation", "opening", "closing", "sign_off"])
     def test_invisible_chars_in_scalar_field_rejected(
         self, field: str, char: str
     ) -> None:
