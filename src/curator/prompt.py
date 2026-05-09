@@ -60,7 +60,7 @@ from curator.rules import (
 #: rulebook block is recorded separately via the ``with_cover_letter``
 #: field in the audit log. This keeps the version field monotonic and
 #: decouples code-level prompt changes from per-invocation flag state.
-PROMPT_VERSION: str = "2026-04-28"
+PROMPT_VERSION: str = "2026-05-09"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -455,7 +455,8 @@ the actual company name from the JD.
 
 Forbidden language:
 - Never use em dashes. Use commas, semicolons, parentheses, or periods.
-- Forbidden words (whole-word, case-insensitive): {forbidden_words}.
+- Forbidden words (whole-word, lowercase-only — capitalized proper-noun \
+usage like a company name is exempt): {forbidden_words}.
 - Forbidden phrases: {forbidden_phrases}.
 - Do not use "To Whom It May Concern" in the salutation.
 

@@ -524,7 +524,11 @@ COVER_LETTER_MAX_TOKENS_HEADROOM: int = 1024
 MIN_FONT_SIZE_PASS_PT: float = 8.5
 MIN_FONT_SIZE_WARN_PT: float = 7.5
 
-# Single-word AI-tell and cliché tokens (whole-word, case-insensitive).
+# Single-word AI-tell and cliché tokens. Matched whole-word against the
+# original-case body text (the validator does NOT lowercase before
+# matching), so capitalized proper-noun usage (e.g. an "Innovative Health
+# Solutions" company name) is exempt while lowercase metaphor use trips.
+# This is the [TEST-4] design.
 COVER_LETTER_FORBIDDEN_WORDS: frozenset[str] = frozenset(
     {
         # Classic AI-tell words from §17.2
@@ -550,6 +554,17 @@ COVER_LETTER_FORBIDDEN_WORDS: frozenset[str] = frozenset(
         # Formal legalese forbidden by §17.2
         "herein",
         "hereby",
+        # Haiku 4.5 marketing-speak (added 2026-05-09 from cross-model A/B
+        # in testing/results/haiku-eval/findings.md). All observed in Haiku
+        # cover letters, never in Sonnet's; lowercase-only matching exempts
+        # any capitalized proper-noun usage in target company names.
+        "innovative",
+        "leverage",
+        "leverages",
+        "leveraging",
+        "spearhead",
+        "spearheaded",
+        "spearheading",
     }
 )
 
@@ -584,6 +599,22 @@ COVER_LETTER_FORBIDDEN_PHRASES: frozenset[str] = frozenset(
         "your amazing culture",
         "your innovative team",
         "your exciting mission",
+        # Haiku 4.5 marketing-speak phrases (added 2026-05-09 from
+        # cross-model A/B in testing/results/haiku-eval/findings.md).
+        # Lowercase-only matching exempts capitalized proper-noun usage.
+        "state-of-the-art",
+        "state of the art",
+        "resonated deeply",
+        "resonated directly",
+        "resonated strongly",
+        "resonates deeply",
+        "resonates directly",
+        "energized by",
+        "talented team",
+        "stakeholder liaison",
+        "strategic depth",
+        "next generation",
+        "drive value",
     }
 )
 
