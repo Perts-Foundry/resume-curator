@@ -345,8 +345,17 @@ def evaluate_tier1(
     """
     all_metrics: list[EvalMetricResult] = []
 
+    # Page-budget-aware band selection. SHORT_FORM_BANDS for max_pages
+    # <= 1, LONG_FORM_BANDS otherwise. Threaded into Tier 1 metrics that
+    # use page-sensitive PASS/WARN ranges (content, selection, pdf).
+    from curator.eval.report import bands_for_pages
+
+    bands = bands_for_pages(ctx.max_pages)
+
     # Content Density.
-    all_metrics.extend(evaluate_content(ctx.section_data, ctx.basics))
+    all_metrics.extend(
+        evaluate_content(ctx.section_data, ctx.basics, bands=bands)
+    )
 
     # Selection Quality.
     all_metrics.extend(
@@ -355,6 +364,7 @@ def evaluate_tier1(
             ctx.basics,
             section_data=ctx.section_data,
             work_authored_highlight_counts=ctx.work_authored_highlight_counts,
+            bands=bands,
         )
     )
 
@@ -405,7 +415,7 @@ def evaluate_tier1(
     all_metrics.extend(evaluate_dates(ctx.section_data))
 
     # PDF Output Quality.
-    pdf_kwargs: dict[str, Any] = {"max_pages": ctx.max_pages}
+    pdf_kwargs: dict[str, Any] = {"max_pages": ctx.max_pages, "bands": bands}
     template_margin = get_uniform_page_margin_pt(ctx.template_path)
     if template_margin is not None:
         pdf_kwargs["page_margin_pt"] = template_margin

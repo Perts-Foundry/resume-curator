@@ -1,7 +1,10 @@
 """Content Density metrics (10% weight).
 
-Measures word counts across resume sections to ensure adequate content
-density without exceeding single-page limits.
+Measures word counts across resume sections at densities appropriate to
+the rendered page budget. Bands are page-budget-aware via ``EvalBands``;
+``SHORT_FORM_BANDS`` (1-page) and ``LONG_FORM_BANDS`` (2+-page) are
+selected by ``bands_for_pages(max_pages)`` upstream in
+``evaluate_tier1``.
 """
 
 from __future__ import annotations
@@ -9,7 +12,12 @@ from __future__ import annotations
 from typing import Any
 
 from curator.eval._text_helpers import collect_highlight_texts
-from curator.eval.report import EvalMetricResult, EvalMetricStatus
+from curator.eval.report import (
+    SHORT_FORM_BANDS,
+    EvalBands,
+    EvalMetricResult,
+    EvalMetricStatus,
+)
 from curator.rules import (
     SUMMARY_WORD_HARD_MAX,
     SUMMARY_WORD_PASS_MIN,
@@ -87,16 +95,29 @@ def _collect_all_text(
 def evaluate_content(
     section_data: dict[str, Any],
     basics: dict[str, Any],
+    *,
+    bands: EvalBands = SHORT_FORM_BANDS,
 ) -> list[EvalMetricResult]:
-    """Evaluate Content Density metrics."""
+    """Evaluate Content Density metrics against a page-budget-aware rubric.
+
+    ``bands`` defaults to ``SHORT_FORM_BANDS`` for back-compat with direct
+    callers that do not yet pass page-budget context. Production callers
+    via ``evaluate_tier1`` resolve ``bands_for_pages(ctx.max_pages)``
+    explicitly. The default is asserted by a regression test in
+    ``tests/unit/test_eval_bands.py`` so a future refactor cannot
+    silently flip it.
+    """
     results: list[EvalMetricResult] = []
 
-    # word_count — §2.1, §13.1: total 475-700 words.
+    # word_count — bands selected by page budget; short-form 475-700,
+    # long-form 900-1400 (per EvalBands.word_count_pass/warn).
+    wc_pass_lo, wc_pass_hi = bands.word_count_pass
+    wc_warn_lo, wc_warn_hi = bands.word_count_warn
     all_text = _collect_all_text(section_data, basics)
     total_words = _count_words(all_text)
-    if 475 <= total_words <= 700:
+    if wc_pass_lo <= total_words <= wc_pass_hi:
         wc_status = EvalMetricStatus.PASS
-    elif 400 <= total_words <= 800:
+    elif wc_warn_lo <= total_words <= wc_warn_hi:
         wc_status = EvalMetricStatus.WARN
     else:
         wc_status = EvalMetricStatus.FAIL
@@ -106,32 +127,39 @@ def evaluate_content(
             category=_CATEGORY,
             status=wc_status,
             value=total_words,
-            detail=f"{total_words} words (target: 475-700)",
+            detail=f"{total_words} words (target: {wc_pass_lo}-{wc_pass_hi})",
         )
     )
 
-    # bullet_word_count — relaxed thresholds: PASS 8-35, WARN 5-40, FAIL outside.
-    # Reflects reality that detailed portfolio bullets routinely run 25-35 words
-    # with specific technologies and metrics; only truly egregious bullets fail.
+    # bullet_word_count — bands equal across SHORT_FORM and LONG_FORM by
+    # design (bullet length is a per-bullet quality signal, not per-page
+    # volume). PASS 8-35, WARN 5-40, FAIL outside on both rubrics today.
+    bw_pass_lo, bw_pass_hi = bands.bullet_word_count_pass
+    bw_warn_lo, bw_warn_hi = bands.bullet_word_count_warn
     highlights = collect_highlight_texts(section_data)
     if highlights:
         out_of_range = [
             (i, _count_words(h))
             for i, h in enumerate(highlights)
-            if not 8 <= _count_words(h) <= 35
+            if not bw_pass_lo <= _count_words(h) <= bw_pass_hi
         ]
         if not out_of_range:
             bwc_status = EvalMetricStatus.PASS
-            bwc_detail = f"All {len(highlights)} bullets in 8-35 word range"
-        elif all(5 <= wc <= 40 for _, wc in out_of_range):
+            bwc_detail = (
+                f"All {len(highlights)} bullets in "
+                f"{bw_pass_lo}-{bw_pass_hi} word range"
+            )
+        elif all(bw_warn_lo <= wc <= bw_warn_hi for _, wc in out_of_range):
             bwc_status = EvalMetricStatus.WARN
             bwc_detail = (
-                f"{len(out_of_range)}/{len(highlights)} bullets outside 8-35 range"
+                f"{len(out_of_range)}/{len(highlights)} bullets outside "
+                f"{bw_pass_lo}-{bw_pass_hi} range"
             )
         else:
             bwc_status = EvalMetricStatus.FAIL
             bwc_detail = (
-                f"{len(out_of_range)}/{len(highlights)} bullets outside 8-35 range"
+                f"{len(out_of_range)}/{len(highlights)} bullets outside "
+                f"{bw_pass_lo}-{bw_pass_hi} range"
             )
         results.append(
             EvalMetricResult(

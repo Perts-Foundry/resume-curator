@@ -5,6 +5,11 @@ and font analysis. ``font_embedding_valid`` is ``informational=True``
 because embedding detection is deferred future work (Typst always embeds
 fonts by default in this codebase); the metric is retained as an
 informational stub on both the with-PDF and dry-run paths.
+
+The ``whitespace_ratio`` PASS band is page-budget-aware via
+``EvalBands``; long-form pages run slightly denser and use a lower
+floor than short-form. Bands selected by ``bands_for_pages(max_pages)``
+upstream in ``evaluate_tier1``.
 """
 
 from __future__ import annotations
@@ -12,7 +17,12 @@ from __future__ import annotations
 import statistics
 from typing import TYPE_CHECKING, Any
 
-from curator.eval.report import EvalMetricResult, EvalMetricStatus
+from curator.eval.report import (
+    SHORT_FORM_BANDS,
+    EvalBands,
+    EvalMetricResult,
+    EvalMetricStatus,
+)
 from curator.exceptions import EvalError
 from curator.io_utils import MAX_PDF_SIZE
 from curator.rules import MIN_FONT_SIZE_PASS_PT, MIN_FONT_SIZE_WARN_PT
@@ -45,6 +55,7 @@ def evaluate_pdf(
     *,
     max_pages: int = 1,
     page_margin_pt: float = 36.0,
+    bands: EvalBands = SHORT_FORM_BANDS,
 ) -> list[EvalMetricResult]:
     """Evaluate PDF Output Quality metrics.
 
@@ -88,6 +99,7 @@ def evaluate_pdf(
             basics,
             max_pages=max_pages,
             page_margin_pt=page_margin_pt,
+            bands=bands,
         )
     finally:
         pdf.close()
@@ -120,6 +132,7 @@ def _evaluate_with_pdf(
     *,
     max_pages: int,
     page_margin_pt: float = 36.0,
+    bands: EvalBands = SHORT_FORM_BANDS,
 ) -> list[EvalMetricResult]:
     """Run all PDF metrics against an open pdfplumber PDF."""
     results: list[EvalMetricResult] = []
@@ -223,12 +236,15 @@ def _evaluate_with_pdf(
         )
     )
 
-    # whitespace_ratio — 55-75% is typical for a well-spaced 1-page resume.
+    # whitespace_ratio — page-budget-aware bands. Short-form 55-75%,
+    # long-form 50-72% (long-form pages tend to run slightly denser).
+    ws_pass_lo, ws_pass_hi = bands.whitespace_ratio_pass
+    ws_warn_lo, ws_warn_hi = bands.whitespace_ratio_warn
     ws_ratio = _compute_whitespace_ratio(pages, chars, page_margin_pt=page_margin_pt)
     if ws_ratio is not None:
-        if 0.55 <= ws_ratio <= 0.75:
+        if ws_pass_lo <= ws_ratio <= ws_pass_hi:
             ws_status = EvalMetricStatus.PASS
-        elif 0.45 <= ws_ratio <= 0.80:
+        elif ws_warn_lo <= ws_ratio <= ws_warn_hi:
             ws_status = EvalMetricStatus.WARN
         else:
             ws_status = EvalMetricStatus.FAIL
@@ -238,7 +254,10 @@ def _evaluate_with_pdf(
                 category=_CATEGORY,
                 status=ws_status,
                 value=round(ws_ratio, 2),
-                detail=f"{ws_ratio:.0%} whitespace (target: 55-75%)",
+                detail=(
+                    f"{ws_ratio:.0%} whitespace "
+                    f"(target: {ws_pass_lo:.0%}-{ws_pass_hi:.0%})"
+                ),
             )
         )
     else:
