@@ -124,6 +124,12 @@ _RESERVED_TAG_NAMES: tuple[str, ...] = (
     "conventions",
     "rubric",
     "dimension",
+    # ``<page_budget>`` carries the integer max_pages into the judge
+    # user message so the bidirectional <conventions> block can key off
+    # an explicit signal rather than infer mode from rendered shape.
+    # Reserved so a JD cannot inject ``</page_budget><page_budget>1...``
+    # and flip the convention.
+    "page_budget",
     # Legacy tags (no longer emitted but blocked as defense-in-depth)
     "certificates",
     "education",
@@ -716,6 +722,7 @@ def _validate_reserved_tags() -> None:
         "conventions",
         "rubric",
         "dimension",
+        "page_budget",
     }
     stale = reserved - active_tags - legacy_tags
     if stale:
