@@ -30,6 +30,87 @@ class EvalMetricStatus(enum.IntEnum):
 
 
 @dataclass(frozen=True)
+class EvalBands:
+    """Page-budget-aware PASS/WARN bands for Tier 1 metrics.
+
+    A long-form rubric (``LONG_FORM_BANDS``) and a short-form rubric
+    (``SHORT_FORM_BANDS``) are selected by ``bands_for_pages(max_pages)``
+    so 1-page and multi-page resumes score against geometry-appropriate
+    thresholds. ``EvalBands`` is threaded through ``evaluate_content``,
+    ``evaluate_selection``, and ``evaluate_pdf`` from ``evaluate_tier1``
+    by way of the ``EvalContext.max_pages`` value.
+
+    Per-bullet metrics (``bullet_word_count_*``) are intentionally equal
+    across both forms: bullet length is a per-bullet quality signal, not
+    a per-page volume signal.
+    """
+
+    # Content density (eval/content.py)
+    word_count_pass: tuple[int, int]
+    word_count_warn: tuple[int, int]
+    bullet_word_count_pass: tuple[int, int]
+    bullet_word_count_warn: tuple[int, int]
+    # Selection quality (eval/selection.py)
+    primary_role_highlight_target: int
+    position_2plus_max_highlights: int
+    total_highlight_count_pass: tuple[int, int]
+    total_highlight_count_warn: tuple[int, int]
+    skills_keyword_count_pass: tuple[int, int]
+    skills_keyword_count_warn: tuple[int, int]
+    # PDF output quality (eval/pdf.py)
+    whitespace_ratio_pass: tuple[float, float]
+    whitespace_ratio_warn: tuple[float, float]
+
+
+SHORT_FORM_BANDS = EvalBands(
+    word_count_pass=(475, 700),
+    word_count_warn=(400, 800),
+    bullet_word_count_pass=(8, 35),
+    bullet_word_count_warn=(5, 40),
+    primary_role_highlight_target=5,
+    position_2plus_max_highlights=2,
+    total_highlight_count_pass=(6, 25),
+    total_highlight_count_warn=(4, 30),
+    skills_keyword_count_pass=(20, 70),
+    skills_keyword_count_warn=(10, 90),
+    whitespace_ratio_pass=(0.55, 0.75),
+    whitespace_ratio_warn=(0.45, 0.80),
+)
+"""1-page rubric. Preserves the band values that were hardcoded prior
+to the page-budget-aware refactor (2026-05-09)."""
+
+
+LONG_FORM_BANDS = EvalBands(
+    word_count_pass=(900, 1400),
+    word_count_warn=(750, 1600),
+    bullet_word_count_pass=(8, 35),
+    bullet_word_count_warn=(5, 40),
+    primary_role_highlight_target=6,
+    position_2plus_max_highlights=4,
+    total_highlight_count_pass=(15, 28),
+    total_highlight_count_warn=(11, 35),
+    skills_keyword_count_pass=(35, 110),
+    skills_keyword_count_warn=(20, 140),
+    whitespace_ratio_pass=(0.50, 0.72),
+    whitespace_ratio_warn=(0.40, 0.78),
+)
+"""2+-page rubric. Numeric bands are calibrated against the long-form
+goldens added alongside this rubric; tighten in lockstep when adding new
+long-form goldens. The position-2+ ceiling rises (older roles may carry
+up to 4 highlights instead of 2) but the floor stays at 0 because the
+renderer cascade has no positions-2+ floor either."""
+
+
+def bands_for_pages(max_pages: int) -> EvalBands:
+    """Return the eval band profile for a given page budget.
+
+    Plateaus at ``max_pages >= 2`` today; future executive-CV calibration
+    may add a finer profile (``EXEC_FORM_BANDS``) for ``max_pages >= 4``.
+    """
+    return SHORT_FORM_BANDS if max_pages <= 1 else LONG_FORM_BANDS
+
+
+@dataclass(frozen=True)
 class EvalMetricResult:
     """Result of a single evaluation metric.
 
