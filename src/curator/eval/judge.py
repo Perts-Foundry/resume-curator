@@ -42,7 +42,13 @@ if TYPE_CHECKING:
 # Constants
 # ---------------------------------------------------------------------------
 
-JUDGE_MAX_TOKENS: int = 2048  # ~960 expected, 2x buffer
+JUDGE_MAX_TOKENS: int = 4096
+# Sonnet 4.6 typical output is ~960 tokens (the original 2048 cap was a 2x
+# buffer over that). Haiku 4.5 produces 825-1817 tokens for the same rubric
+# (measured 2026-05-09 against 28 goldens), and three of 28 calls crossed
+# the 75% warning threshold; one truncated mid-JSON. 4096 keeps Sonnet at
+# ~25% utilization (no cost impact -- max_tokens is a ceiling, not a fee)
+# while giving Haiku 2.3x headroom over its observed peak.
 JUDGE_SCORE_MIN: int = 1
 JUDGE_SCORE_MAX: int = 5
 
