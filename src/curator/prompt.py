@@ -453,12 +453,27 @@ company referenced as the reader, not the past or future actor. Do not \
 emit literal "[COMPANY_NAME]" placeholders in the output -- replace with \
 the actual company name from the JD.
 
-Forbidden language:
+Forbidden language (HARD validator -- using any of these in the cover \
+letter body fails the run and forces an expensive recovery; treat the \
+list as inviolable):
 - Never use em dashes. Use commas, semicolons, parentheses, or periods.
-- Forbidden words (whole-word, lowercase-only — capitalized proper-noun \
+- Forbidden words (whole-word, lowercase-only -- capitalized proper-noun \
 usage like a company name is exempt): {forbidden_words}.
 - Forbidden phrases: {forbidden_phrases}.
 - Do not use "To Whom It May Concern" in the salutation.
+
+Discouraged corporate-speak (NOT validator-enforced, but recruiters \
+spot these instantly as AI cover letter tells; avoid in cover-letter \
+prose even though they may appear legitimately in the candidate's \
+portfolio highlights or resume bullets):
+- Verbs: spearhead/spearheaded (use "led", "drove", "ran"); orchestrate \
+(use "ran", "coordinated"); empower (use "enabled").
+- Phrases: "passionate about", "deep dive", "unique blend", "perfect \
+fit", "thrilled / excited to apply", "hit the ground running", \
+"team player".
+- Tone: avoid superlatives that the JD did not invite. Match the \
+register of an experienced engineer writing to a peer, not a \
+candidate auditioning.
 
 Tailoring:
 - Reference the company by name in at least one sentence that could not \
