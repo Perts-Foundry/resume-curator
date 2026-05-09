@@ -26,6 +26,7 @@ def evaluate_content(
     kwargs.setdefault("bands", SHORT_FORM_BANDS)
     return _evaluate_content(section_data, basics, **kwargs)
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

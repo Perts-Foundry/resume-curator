@@ -13,7 +13,6 @@ from typing import Any
 
 from curator.eval._text_helpers import collect_highlight_texts
 from curator.eval.report import (
-    SHORT_FORM_BANDS,
     EvalBands,
     EvalMetricResult,
     EvalMetricStatus,
@@ -147,8 +146,7 @@ def evaluate_content(
         if not out_of_range:
             bwc_status = EvalMetricStatus.PASS
             bwc_detail = (
-                f"All {len(highlights)} bullets in "
-                f"{bw_pass_lo}-{bw_pass_hi} word range"
+                f"All {len(highlights)} bullets in {bw_pass_lo}-{bw_pass_hi} word range"
             )
         elif all(bw_warn_lo <= wc <= bw_warn_hi for _, wc in out_of_range):
             bwc_status = EvalMetricStatus.WARN

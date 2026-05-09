@@ -422,9 +422,7 @@ def evaluate_tier1(
     bands = bands_for_pages(ctx.max_pages)
 
     # Content Density.
-    all_metrics.extend(
-        evaluate_content(ctx.section_data, ctx.basics, bands=bands)
-    )
+    all_metrics.extend(evaluate_content(ctx.section_data, ctx.basics, bands=bands))
 
     # Selection Quality.
     all_metrics.extend(

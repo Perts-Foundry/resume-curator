@@ -484,24 +484,18 @@ class TestPageBudgetEnvelope:
     """
 
     def test_page_budget_tag_present_for_max_pages_2(self) -> None:
-        msgs = build_judge_messages(
-            "Test JD", {}, {}, {}, max_pages=2
-        )
+        msgs = build_judge_messages("Test JD", {}, {}, {}, max_pages=2)
         content = msgs[0]["content"]
         assert "<page_budget>2</page_budget>" in content
 
     def test_page_budget_tag_present_for_max_pages_1(self) -> None:
-        msgs = build_judge_messages(
-            "Test JD", {}, {}, {}, max_pages=1
-        )
+        msgs = build_judge_messages("Test JD", {}, {}, {}, max_pages=1)
         content = msgs[0]["content"]
         assert "<page_budget>1</page_budget>" in content
 
     @pytest.mark.parametrize("max_pages", [1, 2, 3, 4, 5])
     def test_page_budget_round_trips_value(self, max_pages: int) -> None:
-        msgs = build_judge_messages(
-            "Test JD", {}, {}, {}, max_pages=max_pages
-        )
+        msgs = build_judge_messages("Test JD", {}, {}, {}, max_pages=max_pages)
         assert f"<page_budget>{max_pages}</page_budget>" in msgs[0]["content"]
 
     def test_page_budget_default_is_1(self) -> None:
@@ -515,9 +509,7 @@ class TestPageBudgetEnvelope:
         # so a JD that survives reserved-tag validation cannot leverage
         # tag ordering to flip the convention. The tag is the FIRST
         # thing the judge sees in the user message.
-        msgs = build_judge_messages(
-            "Test JD", {}, {}, {}, max_pages=2
-        )
+        msgs = build_judge_messages("Test JD", {}, {}, {}, max_pages=2)
         content = msgs[0]["content"]
         budget_pos = content.index("<page_budget>")
         jd_pos = content.index("<job_description>")

@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pypdf import PdfWriter
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-from dataclasses import dataclass
-
-from typing import Any
-
 from curator.eval.pdf import (
     _compute_whitespace_ratio,
+)
+from curator.eval.pdf import (
     evaluate_pdf as _evaluate_pdf,
 )
 from curator.eval.report import SHORT_FORM_BANDS, EvalMetricResult, EvalMetricStatus
 from curator.exceptions import EvalError
+from tests.helpers import find_metric
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def evaluate_pdf(
-    pdf_path: "Path | None",
+    pdf_path: Path | None,
     basics: dict[str, Any],
     **kwargs: Any,
 ) -> list[EvalMetricResult]:
@@ -36,7 +36,6 @@ def evaluate_pdf(
     kwargs.setdefault("bands", SHORT_FORM_BANDS)
     kwargs.setdefault("max_pages", 1)
     return _evaluate_pdf(pdf_path, basics, **kwargs)
-from tests.helpers import find_metric
 
 
 @dataclass

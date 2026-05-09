@@ -29,10 +29,12 @@ from curator.renderer import (
     _make_output_dir,
     _reorder_with_safety_net,
     _sort_work_chronologically,
-    _write_audit_artifacts as _real_write_audit_artifacts,
     _write_data_files,
     _write_layout,
     render,
+)
+from curator.renderer import (
+    _write_audit_artifacts as _real_write_audit_artifacts,
 )
 
 
@@ -46,6 +48,7 @@ def _write_audit_artifacts(*args: Any, **kwargs: Any) -> Any:
     """
     kwargs.setdefault("max_pages", 1)
     return _real_write_audit_artifacts(*args, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

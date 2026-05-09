@@ -18,7 +18,6 @@ import statistics
 from typing import TYPE_CHECKING, Any
 
 from curator.eval.report import (
-    SHORT_FORM_BANDS,
     EvalBands,
     EvalMetricResult,
     EvalMetricStatus,

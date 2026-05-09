@@ -174,10 +174,9 @@ class TestFromPipelineResultMaxPagesPriority:
         from unittest.mock import MagicMock
 
         from curator.client import CurationResult
+        from curator.models import ResumeCuration
         from curator.pipeline import PipelineResult
         from tests.helpers import make_curation_dict
-
-        from curator.models import ResumeCuration
 
         curation = ResumeCuration.model_validate(make_curation_dict())
         result = CurationResult(

@@ -17,6 +17,7 @@ the regression contract:
 from __future__ import annotations
 
 import inspect
+from dataclasses import FrozenInstanceError
 
 import pytest
 
@@ -44,11 +45,11 @@ class TestEvalBandsFrozen:
     """``EvalBands`` is a frozen dataclass; mutation raises FrozenInstanceError."""
 
     def test_short_form_is_frozen(self) -> None:
-        with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             SHORT_FORM_BANDS.word_count_pass = (0, 0)  # type: ignore[misc]
 
     def test_long_form_is_frozen(self) -> None:
-        with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             LONG_FORM_BANDS.primary_role_highlight_target = 99  # type: ignore[misc]
 
 
@@ -191,33 +192,25 @@ class TestWarnEnclosesPass:
         assert w_lo <= p_lo <= p_hi <= w_hi
 
     @pytest.mark.parametrize("rubric", [SHORT_FORM_BANDS, LONG_FORM_BANDS])
-    def test_bullet_word_count_warn_encloses_pass(
-        self, rubric: EvalBands
-    ) -> None:
+    def test_bullet_word_count_warn_encloses_pass(self, rubric: EvalBands) -> None:
         p_lo, p_hi = rubric.bullet_word_count_pass
         w_lo, w_hi = rubric.bullet_word_count_warn
         assert w_lo <= p_lo <= p_hi <= w_hi
 
     @pytest.mark.parametrize("rubric", [SHORT_FORM_BANDS, LONG_FORM_BANDS])
-    def test_total_highlight_count_warn_encloses_pass(
-        self, rubric: EvalBands
-    ) -> None:
+    def test_total_highlight_count_warn_encloses_pass(self, rubric: EvalBands) -> None:
         p_lo, p_hi = rubric.total_highlight_count_pass
         w_lo, w_hi = rubric.total_highlight_count_warn
         assert w_lo <= p_lo <= p_hi <= w_hi
 
     @pytest.mark.parametrize("rubric", [SHORT_FORM_BANDS, LONG_FORM_BANDS])
-    def test_skills_keyword_count_warn_encloses_pass(
-        self, rubric: EvalBands
-    ) -> None:
+    def test_skills_keyword_count_warn_encloses_pass(self, rubric: EvalBands) -> None:
         p_lo, p_hi = rubric.skills_keyword_count_pass
         w_lo, w_hi = rubric.skills_keyword_count_warn
         assert w_lo <= p_lo <= p_hi <= w_hi
 
     @pytest.mark.parametrize("rubric", [SHORT_FORM_BANDS, LONG_FORM_BANDS])
-    def test_whitespace_ratio_warn_encloses_pass(
-        self, rubric: EvalBands
-    ) -> None:
+    def test_whitespace_ratio_warn_encloses_pass(self, rubric: EvalBands) -> None:
         p_lo, p_hi = rubric.whitespace_ratio_pass
         w_lo, w_hi = rubric.whitespace_ratio_warn
         assert w_lo <= p_lo <= p_hi <= w_hi
@@ -305,9 +298,7 @@ class TestBandsAndCapsConsistency:
         )
 
     @pytest.mark.parametrize("max_pages", [1, 2, 3, 4, 5])
-    def test_renderer_certificate_floor_within_band_lower(
-        self, max_pages: int
-    ) -> None:
+    def test_renderer_certificate_floor_within_band_lower(self, max_pages: int) -> None:
         """Cert floor stays small enough to leave room for other content.
 
         Eval ``total_highlight_count_pass`` lower bound represents
