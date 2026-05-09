@@ -908,23 +908,21 @@ class TestCompareJudgeAgainstGolden:
         findings = compare_judge_against_golden(tier2, golden)
         assert len(findings) == 1
 
-    def test_section_selection_tighter_tolerance_diff_1_warns(self) -> None:
-        # section_selection has tolerance (warn=0, error=1); diff=1 => warn.
-        from curator.eval.golden import (
-            RegressionSeverity,
-            compare_judge_against_golden,
-        )
+    def test_section_selection_diff_1_no_finding(self) -> None:
+        # section_selection now uses default tolerances (warn=1, error=2)
+        # after the 2026-05-09 cross-model calibration showed model variance
+        # at +-1 was being flagged as regression. diff=1 => within warn band.
+        from curator.eval.golden import compare_judge_against_golden
 
         tier2 = _make_tier2_report()  # all scores=4
         golden = _make_matching_golden(tier2)
         golden.human_scores = {"section_selection": 3}  # diff=1
 
         findings = compare_judge_against_golden(tier2, golden)
-        assert len(findings) == 1
-        assert findings[0].severity == RegressionSeverity.WARNING
+        assert findings == []
 
-    def test_section_selection_diff_2_errors(self) -> None:
-        # section_selection error_tolerance=1; diff=2 => error.
+    def test_section_selection_diff_2_warns(self) -> None:
+        # section_selection (1, 2); diff=2 => warn (was ERROR pre-2026-05-09).
         from curator.eval.golden import (
             RegressionSeverity,
             compare_judge_against_golden,
@@ -933,6 +931,21 @@ class TestCompareJudgeAgainstGolden:
         tier2 = _make_tier2_report()
         golden = _make_matching_golden(tier2)
         golden.human_scores = {"section_selection": 2}  # diff=2
+
+        findings = compare_judge_against_golden(tier2, golden)
+        assert len(findings) == 1
+        assert findings[0].severity == RegressionSeverity.WARNING
+
+    def test_section_selection_diff_3_errors(self) -> None:
+        # section_selection (1, 2); diff=3 => error (above error_tolerance).
+        from curator.eval.golden import (
+            RegressionSeverity,
+            compare_judge_against_golden,
+        )
+
+        tier2 = _make_tier2_report()
+        golden = _make_matching_golden(tier2)
+        golden.human_scores = {"section_selection": 1}  # diff=3
 
         findings = compare_judge_against_golden(tier2, golden)
         assert len(findings) == 1
