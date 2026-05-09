@@ -772,6 +772,18 @@ _EVAL_JSON_OPT = typer.Option(
     "--json",
     help="Output results as JSON to stdout (machine-readable).",
 )
+_EVAL_PAGES_OPT = typer.Option(
+    None,
+    "--pages",
+    min=1,
+    max=5,
+    help=(
+        "Override the inferred max_pages used for band selection (1..5). "
+        "Without this flag, max_pages is inferred from the rendered PDF "
+        "(priority 1) or curation_log.json (priority 2). Rejected when "
+        "--golden is set: each golden case owns its own meta.max_pages."
+    ),
+)
 
 
 @app.command(name="eval")
@@ -785,6 +797,7 @@ def eval_cmd(
     apply: bool = _EVAL_APPLY_OPT,
     judge: bool = _EVAL_JUDGE_OPT,
     json_output: bool = _EVAL_JSON_OPT,
+    pages: int | None = _EVAL_PAGES_OPT,
 ) -> None:
     """Evaluate a curated resume profile with quality metrics."""
     from curator.exceptions import CuratorError
@@ -797,6 +810,15 @@ def eval_cmd(
         raise typer.Exit(code=1)
     if apply and not calibrate:
         console.print("[red]Error:[/] --apply requires --calibrate.")
+        raise typer.Exit(code=1)
+    if golden and pages is not None:
+        # Golden cases own their own meta.max_pages and must not be
+        # overridden globally; doing so would silently re-rate 1-page
+        # goldens against the long-form rubric (or vice versa).
+        console.print(
+            "[red]Error:[/] --pages is not allowed with --golden; each "
+            "golden case carries its own meta.max_pages."
+        )
         raise typer.Exit(code=1)
 
     try:
@@ -818,6 +840,7 @@ def eval_cmd(
                 skip,
                 judge=judge,
                 json_output=json_output,
+                pages_override=pages,
             )
         else:
             console.print("[red]Error:[/] Provide a profile directory or use --golden.")
@@ -835,9 +858,11 @@ def _run_profile_eval(
     *,
     judge: bool = False,
     json_output: bool = False,
+    pages_override: int | None = None,
 ) -> None:
     """Run eval against a single profile directory."""
     import json
+    from dataclasses import replace
 
     from curator.eval import evaluate_tier1, from_profile_dir
 
@@ -857,6 +882,16 @@ def _run_profile_eval(
         portfolio_data = load_portfolio(portfolio)
 
     ctx = from_profile_dir(profile_dir, portfolio=portfolio_data)
+    if pages_override is not None and pages_override != ctx.max_pages:
+        # User-supplied override disagrees with PDF/log inference; warn so
+        # the divergence is visible (user may be re-scoring a profile
+        # against the wrong rubric on purpose, or by mistake).
+        console.print(
+            f"[yellow]Warning:[/] --pages={pages_override} differs from "
+            f"inferred max_pages={ctx.max_pages}; scoring against the "
+            f"override."
+        )
+        ctx = replace(ctx, max_pages=pages_override)
     skip_set = frozenset(skip) if skip else frozenset()
     report = evaluate_tier1(ctx, skip_metrics=skip_set)
 
