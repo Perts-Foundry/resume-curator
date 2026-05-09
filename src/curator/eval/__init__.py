@@ -36,7 +36,7 @@ from curator.eval.report import (
 from curator.eval.selection import evaluate_selection
 from curator.eval.template import evaluate_template, get_uniform_page_margin_pt
 from curator.eval.writing import evaluate_writing
-from curator.exceptions import EvalError
+from curator.exceptions import EvalError, RenderError
 from curator.io_utils import MAX_TEXT_SIZE, get_page_count, load_yaml_safe
 from curator.models import RENDERABLE_SECTIONS, PortfolioData, ResumeCuration
 
@@ -227,14 +227,26 @@ def from_profile_dir(
     # the band-selection signal is decoupled from the convergence signal.
     # Malformed log values (missing, non-int, bool, out-of-range) fall
     # through to the default rather than propagate as nonsense.
-    from curator.exceptions import RenderError as _RenderError
-
     inferred_max_pages: int | None = None
     inference_source = "default"
     if pdf_path is not None:
-        with contextlib.suppress(_RenderError):
+        try:
             inferred_max_pages = get_page_count(pdf_path)
             inference_source = "pdf"
+        except RenderError as exc:
+            # Corrupt or oversized PDF: fall through to log/default rather
+            # than crash the eval. Surface the failure as a WARNING so the
+            # band-selection divergence is observable; without it, a
+            # broken PDF silently scores against log-recorded intent and
+            # the user has no signal pointing at the real cause.
+            from loguru import logger
+
+            logger.warning(
+                "PDF page count read failed for {}: {}; falling back to "
+                "log/default for max_pages inference",
+                pdf_path,
+                exc,
+            )
     if inferred_max_pages is None:
         raw_mp = log_data.get("max_pages")
         if (
