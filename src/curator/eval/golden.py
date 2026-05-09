@@ -88,6 +88,11 @@ class GoldenMeta(BaseModel):
     eval_schema_version: int
     tier: GoldenTier
     judge_version: str | None = None
+    max_pages: int = Field(default=1, ge=1, le=5)
+    """Page budget the case was authored against. Selects SHORT_FORM_BANDS
+    (1) or LONG_FORM_BANDS (>=2) when the case is loaded via
+    ``from_golden_case``. Threaded into ``materialize_profile`` so the
+    audit log carries the same value the case meta declares."""
 
 
 BaselineStatus = Literal["PASS", "WARN", "FAIL"]
@@ -294,9 +299,14 @@ def materialize_profile(golden: GoldenCase, target_dir: Path) -> Path:
     atomic_text_write(target_dir / "job_description.txt", golden.job_description)
 
     # Write curation_log.json (required by from_profile_dir for schema check).
+    # Format 2.3 carries max_pages so band-selection on materialized
+    # goldens picks the rubric the case was authored against.
     atomic_json_write(
         target_dir / "curation_log.json",
-        {"format_version": "2.0"},
+        {
+            "format_version": "2.3",
+            "max_pages": golden.meta.max_pages,
+        },
     )
 
     # Write basics.

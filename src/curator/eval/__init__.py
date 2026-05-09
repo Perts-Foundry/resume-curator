@@ -321,6 +321,11 @@ def from_golden_case(
     # highlight_counts clamping falls back to position-only bands on
     # golden runs (which is the correct behavior since goldens cannot
     # represent the portfolio's authored highlight count).
+    #
+    # ``max_pages`` is read from the case meta; cases authored against
+    # the long-form rubric carry ``meta.max_pages: 2`` so band selection
+    # in ``evaluate_tier1`` matches their geometry. Caller cannot
+    # override (the case knows what it is — see AR-10).
     return EvalContext(
         curation=curation,
         section_data=dict(case.section_data),
@@ -328,6 +333,7 @@ def from_golden_case(
         jd_text=case.job_description or None,
         pdf_path=pdf_path,
         template_path=template_path,
+        max_pages=case.meta.max_pages,
     )
 
 
