@@ -913,7 +913,7 @@ def _write_audit_artifacts(
     jd_text: str | None,
     *,
     trim_log: list[str] | None = None,
-    max_pages: int = 1,
+    max_pages: int,
 ) -> tuple[Path, Path, Path | None, Path | None]:
     """Write curated.yaml, curation_log.json, and per-source descriptor.
 

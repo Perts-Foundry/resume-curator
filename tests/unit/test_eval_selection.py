@@ -6,10 +6,24 @@ from typing import Any
 
 import pytest
 
-from curator.eval.report import EvalMetricStatus
-from curator.eval.selection import evaluate_selection
+from curator.eval.report import SHORT_FORM_BANDS, EvalMetricResult, EvalMetricStatus
+from curator.eval.selection import evaluate_selection as _evaluate_selection
 from curator.models import ResumeCuration
 from tests.helpers import find_metric, make_curation_dict
+
+
+def evaluate_selection(
+    curation: ResumeCuration,
+    basics: dict[str, Any],
+    **kwargs: Any,
+) -> list[EvalMetricResult]:
+    """Test wrapper that binds ``bands=SHORT_FORM_BANDS`` by default.
+
+    Production ``evaluate_selection`` requires an explicit ``bands``
+    kwarg; these short-form tests opt in once.
+    """
+    kwargs.setdefault("bands", SHORT_FORM_BANDS)
+    return _evaluate_selection(curation, basics, **kwargs)
 
 
 def _authored_counts(*entries: tuple[str, int]) -> dict[str, int]:

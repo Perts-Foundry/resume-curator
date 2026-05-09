@@ -96,16 +96,17 @@ def evaluate_content(
     section_data: dict[str, Any],
     basics: dict[str, Any],
     *,
-    bands: EvalBands = SHORT_FORM_BANDS,
+    bands: EvalBands,
 ) -> list[EvalMetricResult]:
     """Evaluate Content Density metrics against a page-budget-aware rubric.
 
-    ``bands`` defaults to ``SHORT_FORM_BANDS`` for back-compat with direct
-    callers that do not yet pass page-budget context. Production callers
-    via ``evaluate_tier1`` resolve ``bands_for_pages(ctx.max_pages)``
-    explicitly. The default is asserted by a regression test in
-    ``tests/unit/test_eval_bands.py`` so a future refactor cannot
-    silently flip it.
+    ``bands`` is keyword-only with no default to force the call site to
+    decide between ``SHORT_FORM_BANDS`` and ``LONG_FORM_BANDS``.
+    Production callers via ``evaluate_tier1`` resolve
+    ``bands_for_pages(ctx.max_pages)`` explicitly; tests pass
+    ``bands=SHORT_FORM_BANDS`` (or ``LONG_FORM_BANDS``) by name. A
+    silent default would mis-score any future direct caller that
+    omitted the kwarg on a 2-page profile.
     """
     results: list[EvalMetricResult] = []
 

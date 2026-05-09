@@ -29,11 +29,23 @@ from curator.renderer import (
     _make_output_dir,
     _reorder_with_safety_net,
     _sort_work_chronologically,
-    _write_audit_artifacts,
+    _write_audit_artifacts as _real_write_audit_artifacts,
     _write_data_files,
     _write_layout,
     render,
 )
+
+
+def _write_audit_artifacts(*args: Any, **kwargs: Any) -> Any:
+    """Test wrapper that binds ``max_pages=1`` by default.
+
+    Production ``_write_audit_artifacts`` now requires an explicit
+    ``max_pages`` kwarg (no default; production callers in ``render()``
+    pass ``settings.max_pages`` explicitly). These short-form tests opt
+    in to ``max_pages=1`` once at module load.
+    """
+    kwargs.setdefault("max_pages", 1)
+    return _real_write_audit_artifacts(*args, **kwargs)
 
 # ---------------------------------------------------------------------------
 # Fixtures

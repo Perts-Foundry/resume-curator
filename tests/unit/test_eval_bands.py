@@ -223,28 +223,45 @@ class TestWarnEnclosesPass:
         assert w_lo <= p_lo <= p_hi <= w_hi
 
 
-class TestEvalFunctionDefaults:
-    """``bands`` parameter on evaluate_* defaults to SHORT_FORM_BANDS.
+class TestEvalFunctionsRequireBands:
+    """``bands`` parameter on evaluate_* is keyword-only with no default.
 
-    A silent flip of the default would mis-score every direct caller
-    that omits the kwarg. Pin the default here so a refactor that
-    accidentally changes it (or removes the default) fails this test.
+    Forces every call site to make a deliberate page-budget choice. A
+    silent default (e.g. ``bands=SHORT_FORM_BANDS``) would mis-score any
+    direct caller on a 2-page profile that omitted the kwarg. The
+    keyword-only-no-default contract is the architectural fix; this test
+    pins it so a future refactor can't reintroduce the silent default.
     """
 
-    def test_evaluate_content_default(self) -> None:
+    def test_evaluate_content_bands_is_required(self) -> None:
         from curator.eval.content import evaluate_content
 
         sig = inspect.signature(evaluate_content)
-        assert sig.parameters["bands"].default is SHORT_FORM_BANDS
+        param = sig.parameters["bands"]
+        assert param.default is inspect.Parameter.empty
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
 
-    def test_evaluate_selection_default(self) -> None:
+    def test_evaluate_selection_bands_is_required(self) -> None:
         from curator.eval.selection import evaluate_selection
 
         sig = inspect.signature(evaluate_selection)
-        assert sig.parameters["bands"].default is SHORT_FORM_BANDS
+        param = sig.parameters["bands"]
+        assert param.default is inspect.Parameter.empty
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
 
-    def test_evaluate_pdf_default(self) -> None:
+    def test_evaluate_pdf_bands_is_required(self) -> None:
         from curator.eval.pdf import evaluate_pdf
 
         sig = inspect.signature(evaluate_pdf)
-        assert sig.parameters["bands"].default is SHORT_FORM_BANDS
+        param = sig.parameters["bands"]
+        assert param.default is inspect.Parameter.empty
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+    def test_evaluate_pdf_max_pages_is_required(self) -> None:
+        """Same contract for max_pages on evaluate_pdf."""
+        from curator.eval.pdf import evaluate_pdf
+
+        sig = inspect.signature(evaluate_pdf)
+        param = sig.parameters["max_pages"]
+        assert param.default is inspect.Parameter.empty
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY

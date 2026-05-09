@@ -53,9 +53,9 @@ def evaluate_pdf(
     pdf_path: Path | None,
     basics: dict[str, Any],
     *,
-    max_pages: int = 1,
+    max_pages: int,
     page_margin_pt: float = 36.0,
-    bands: EvalBands = SHORT_FORM_BANDS,
+    bands: EvalBands,
 ) -> list[EvalMetricResult]:
     """Evaluate PDF Output Quality metrics.
 
@@ -132,7 +132,7 @@ def _evaluate_with_pdf(
     *,
     max_pages: int,
     page_margin_pt: float = 36.0,
-    bands: EvalBands = SHORT_FORM_BANDS,
+    bands: EvalBands,
 ) -> list[EvalMetricResult]:
     """Run all PDF metrics against an open pdfplumber PDF."""
     results: list[EvalMetricResult] = []

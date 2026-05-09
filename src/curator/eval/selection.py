@@ -43,7 +43,7 @@ def evaluate_selection(
     *,
     section_data: dict[str, Any] | None = None,
     work_authored_highlight_counts: Mapping[str, int] | None = None,
-    bands: EvalBands = SHORT_FORM_BANDS,
+    bands: EvalBands,
 ) -> list[EvalMetricResult]:
     """Evaluate Selection Quality metrics.
 

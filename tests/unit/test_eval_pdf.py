@@ -12,12 +12,30 @@ if TYPE_CHECKING:
 
 from dataclasses import dataclass
 
+from typing import Any
+
 from curator.eval.pdf import (
     _compute_whitespace_ratio,
-    evaluate_pdf,
+    evaluate_pdf as _evaluate_pdf,
 )
-from curator.eval.report import EvalMetricStatus
+from curator.eval.report import SHORT_FORM_BANDS, EvalMetricResult, EvalMetricStatus
 from curator.exceptions import EvalError
+
+
+def evaluate_pdf(
+    pdf_path: "Path | None",
+    basics: dict[str, Any],
+    **kwargs: Any,
+) -> list[EvalMetricResult]:
+    """Test wrapper that binds ``bands=SHORT_FORM_BANDS`` and ``max_pages=1``.
+
+    Production ``evaluate_pdf`` requires both ``bands`` and ``max_pages``
+    as keyword-only kwargs with no defaults; these short-form tests
+    opt in once at module load.
+    """
+    kwargs.setdefault("bands", SHORT_FORM_BANDS)
+    kwargs.setdefault("max_pages", 1)
+    return _evaluate_pdf(pdf_path, basics, **kwargs)
 from tests.helpers import find_metric
 
 
