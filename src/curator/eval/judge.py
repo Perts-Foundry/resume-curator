@@ -575,8 +575,13 @@ def build_judge_messages(
         curation, default_flow_style=False, allow_unicode=True
     )
 
+    # Defense-in-depth: coerce max_pages to int via int() before
+    # interpolation so a future caller that bypasses the dataclass
+    # annotation and passes a string cannot inject XML through the
+    # f-string. The reserved-tag check on the JD prevents JD-borne
+    # injection; this guards the budget-tag value itself.
     user_text = (
-        f"<page_budget>{max_pages}</page_budget>\n\n"
+        f"<page_budget>{int(max_pages)}</page_budget>\n\n"
         f"<job_description>\n{jd_text}\n</job_description>\n\n"
         f"<resume_data>\n"
         f"<curation_selections>\n{curation_yaml}</curation_selections>\n\n"

@@ -31,6 +31,7 @@ from curator.eval.report import (
     EvalMetricResult,
     EvalReport,
     PortfolioFitReport,
+    bands_for_pages,
     build_report,
 )
 from curator.eval.selection import evaluate_selection
@@ -418,8 +419,6 @@ def evaluate_tier1(
     # Page-budget-aware band selection. SHORT_FORM_BANDS for max_pages
     # <= 1, LONG_FORM_BANDS otherwise. Threaded into Tier 1 metrics that
     # use page-sensitive PASS/WARN ranges (content, selection, pdf).
-    from curator.eval.report import bands_for_pages
-
     bands = bands_for_pages(ctx.max_pages)
 
     # Content Density.

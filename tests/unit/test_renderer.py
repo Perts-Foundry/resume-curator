@@ -1957,7 +1957,13 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=1),
         ):
-            final_sections, _final_interests, trim_log, pages = _trim_to_fit(
+            (
+                final_sections,
+                _final_interests,
+                trim_log,
+                pages,
+                safety_valve_fired,
+            ) = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -1971,6 +1977,8 @@ class TestTrimToFit:
         assert trim_log == []
         assert final_sections == sections
         assert pages == 1
+        # Convergent immediate fit → safety valve did NOT fire.
+        assert safety_valve_fired is False
 
     def test_trims_until_fits(self, tmp_path: Path) -> None:
         """Trims content iteratively until page count is within budget."""
@@ -2010,7 +2018,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", side_effect=page_counts),
         ):
-            final_sections, final_interests, trim_log, pages = _trim_to_fit(
+            final_sections, final_interests, trim_log, pages, _safety = _trim_to_fit(
                 sections,
                 basics,
                 interests,
@@ -2066,7 +2074,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages = _trim_to_fit(
+            _, _, trim_log, _pages, safety_valve_fired = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -2078,6 +2086,8 @@ class TestTrimToFit:
             )
 
         assert len(trim_log) == 3
+        # Iteration cap exhausted while still over-page → safety valve fired.
+        assert safety_valve_fired is True
 
     def test_nothing_to_trim(self, tmp_path: Path) -> None:
         """When nothing left to trim, returns immediately."""
@@ -2107,7 +2117,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages = _trim_to_fit(
+            _, _, trim_log, _pages, _safety = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -2149,7 +2159,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages = _trim_to_fit(
+            _, _, trim_log, _pages, _safety = _trim_to_fit(
                 sections,
                 basics,
                 interests,
@@ -2221,7 +2231,7 @@ class TestTrimToFit:
                 patch("curator.renderer.subprocess.run", side_effect=fake_run),
                 patch("curator.renderer.get_page_count", side_effect=page_counts),
             ):
-                final_sections, _, trim_log, pages = _trim_to_fit(
+                final_sections, _, trim_log, pages, _safety = _trim_to_fit(
                     sections,
                     basics,
                     None,

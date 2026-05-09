@@ -106,6 +106,14 @@ class RenderOutput:
     mode_path: Path | None = None
     cover_letter_yaml_path: Path | None = None
     cover_letter_pdf_path: Path | None = None
+    safety_valve_fired: bool = False
+    """True when the trim cascade exhausted ``max_trim_iterations`` without
+    converging, meaning the rendered PDF may exceed ``max_pages``. Distinct
+    from the convergence/page-count signal: a 2-page render under a 2-page
+    budget reads ``safety_valve_fired=False``; a 2-page render under a
+    1-page budget where the cascade gave up reads ``True``. Surfaces the
+    "shipped what we could fit" path so downstream eval / dashboards can
+    distinguish intentional 2-page output from non-converged output."""
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +721,7 @@ def _trim_to_fit(
     max_trim_iterations: int,
     recent_role_soft_floor: int = 3,
     certificate_floor: int = CERTIFICATE_FLOOR,
-) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int, bool]:
     """Iteratively trim content until the PDF fits within max_pages.
 
     Writes data files, compiles Typst, checks page count, and applies
@@ -738,7 +746,9 @@ def _trim_to_fit(
             bypass path. Defaults to ``CERTIFICATE_FLOOR``.
 
     Returns:
-        Tuple of (final_sections, final_interests, trim_log, page_count).
+        Tuple of (final_sections, final_interests, trim_log,
+        page_count, safety_valve_fired). The boolean is True if the
+        cascade exhausted ``max_trim_iterations`` without converging.
     """
     trim_log: list[str] = []
     pages = 0
@@ -765,7 +775,7 @@ def _trim_to_fit(
                     pages,
                     len(trim_log),
                 )
-            return sections, interests, trim_log, pages
+            return sections, interests, trim_log, pages, False
 
         # Generate next trim operation.
         step = _generate_next_trim(
@@ -780,7 +790,11 @@ def _trim_to_fit(
                 pages,
                 max_pages,
             )
-            return sections, interests, trim_log, pages
+            # Treat "nothing left to trim" as a safety-valve event for
+            # downstream observability: the rendered PDF exceeds the
+            # budget and the cascade has no remaining moves, which is
+            # the same operational concern as iteration exhaustion.
+            return sections, interests, trim_log, pages, True
 
         # Observability: warn if we cross the prior default iteration
         # count (15) so pathological convergence cases surface even while
@@ -811,7 +825,7 @@ def _trim_to_fit(
     _invoke_typst(output_dir, template_path)
     pages = get_page_count(output_dir / "resume.pdf")
 
-    return sections, interests, trim_log, pages
+    return sections, interests, trim_log, pages, True
 
 
 # ---------------------------------------------------------------------------
@@ -1221,8 +1235,15 @@ def render(
         pdf_path: Path | None = None
         trim_log: list[str] = []
         final_page_count: int | None = None
+        safety_valve_fired = False
         if not skip_pdf:
-            sections, interests_dict, trim_log, final_page_count = _trim_to_fit(
+            (
+                sections,
+                interests_dict,
+                trim_log,
+                final_page_count,
+                safety_valve_fired,
+            ) = _trim_to_fit(
                 sections,
                 basics_dict,
                 interests_dict,
@@ -1293,4 +1314,5 @@ def render(
         mode_path=mode_path,
         cover_letter_yaml_path=cover_letter_yaml_path,
         cover_letter_pdf_path=cover_letter_pdf_path,
+        safety_valve_fired=safety_valve_fired,
     )
