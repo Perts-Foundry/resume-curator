@@ -37,7 +37,7 @@ from curator.eval.selection import evaluate_selection
 from curator.eval.template import evaluate_template, get_uniform_page_margin_pt
 from curator.eval.writing import evaluate_writing
 from curator.exceptions import EvalError
-from curator.io_utils import MAX_TEXT_SIZE, load_yaml_safe
+from curator.io_utils import MAX_TEXT_SIZE, get_page_count, load_yaml_safe
 from curator.models import RENDERABLE_SECTIONS, PortfolioData, ResumeCuration
 
 if TYPE_CHECKING:
@@ -134,6 +134,7 @@ def from_profile_dir(
 
     # Check for old-schema profiles (missing format_version).
     log_path = resolved / "curation_log.json"
+    log_data: dict[str, Any] = {}
     if log_path.exists():
         try:
             log_size = log_path.stat().st_size
@@ -218,6 +219,44 @@ def from_profile_dir(
     pdf_file = resolved / "resume.pdf"
     pdf_path = pdf_file if pdf_file.exists() else None
 
+    # max_pages inference: PDF reality > log intent > default 1.
+    # PDF wins over log because the log records intent at render time and
+    # the PDF records what actually came out; eval band selection should
+    # follow the rendered artifact, not the requested target. The
+    # ``page_count`` metric independently measures intent-vs-reality, so
+    # the band-selection signal is decoupled from the convergence signal.
+    # Malformed log values (missing, non-int, bool, out-of-range) fall
+    # through to the default rather than propagate as nonsense.
+    from curator.exceptions import RenderError as _RenderError
+
+    inferred_max_pages: int | None = None
+    inference_source = "default"
+    if pdf_path is not None:
+        with contextlib.suppress(_RenderError):
+            inferred_max_pages = get_page_count(pdf_path)
+            inference_source = "pdf"
+    if inferred_max_pages is None:
+        raw_mp = log_data.get("max_pages")
+        if (
+            isinstance(raw_mp, int)
+            and not isinstance(raw_mp, bool)
+            and 1 <= raw_mp <= 5
+        ):
+            inferred_max_pages = raw_mp
+            inference_source = "log"
+    if inferred_max_pages is None:
+        inferred_max_pages = 1
+
+    if inference_source != "pdf":
+        from loguru import logger
+
+        logger.info(
+            "Inferred max_pages={} from {} for profile {}",
+            inferred_max_pages,
+            inference_source,
+            resolved.name,
+        )
+
     # Template — use provided or fall back to the bundled default.
     if template_path is None:
         candidate = default_template_path()
@@ -236,6 +275,7 @@ def from_profile_dir(
         work_authored_highlight_counts=_project_work_authored_highlight_counts(
             portfolio
         ),
+        max_pages=inferred_max_pages,
     )
 
 
