@@ -362,6 +362,18 @@ def from_pipeline_result(
     if basics_path is not None and basics_path.exists():
         basics = load_yaml_safe(basics_path) or {}
 
+    # max_pages priority: rendered PDF page count (reality) > settings (intent).
+    # Mirrors from_profile_dir's PDF-first chain so band selection follows the
+    # rendered artifact across in-memory and on-disk paths. If the trim cascade
+    # ran out of iterations and shipped a 3-page PDF on a 2-page budget, eval
+    # scores against the long-form rubric to match what actually shipped; the
+    # page_count metric independently surfaces the intent-vs-reality gap.
+    inferred_max_pages = (
+        result.render_output.page_count
+        if result.render_output.page_count is not None
+        else settings.max_pages
+    )
+
     return EvalContext(
         curation=result.curation.curation,
         section_data=section_data,
@@ -370,7 +382,7 @@ def from_pipeline_result(
         pdf_path=result.render_output.pdf_path,
         template_path=settings.template_path,
         portfolio=result.portfolio,
-        max_pages=settings.max_pages,
+        max_pages=inferred_max_pages,
         source=result.curation.source,
         work_authored_highlight_counts=_project_work_authored_highlight_counts(
             result.portfolio

@@ -152,3 +152,88 @@ class TestFromProfileDirMaxPagesInference:
         ctx = from_profile_dir(profile)
         # Falls through to default 1 cleanly (no exception).
         assert ctx.max_pages == 1
+
+
+class TestFromPipelineResultMaxPagesPriority:
+    """``from_pipeline_result`` mirrors ``from_profile_dir`` priority.
+
+    PDF reality (``render_output.page_count``) wins over intent
+    (``settings.max_pages``) so an in-memory eval immediately after a
+    non-converged render scores against the same rubric as an on-disk
+    replay of the same profile. Without this, the in-memory and on-disk
+    paths diverge silently when the trim cascade exhausts iterations.
+    """
+
+    @staticmethod
+    def _make_pipeline_result(
+        *,
+        page_count: int | None,
+        max_pages: int,
+    ) -> tuple[Any, Any, Any]:
+        """Construct minimum (pipeline_result, settings, jd_text) tuple."""
+        from unittest.mock import MagicMock
+
+        from curator.client import CurationResult
+        from curator.pipeline import PipelineResult
+        from tests.helpers import make_curation_dict
+
+        from curator.models import ResumeCuration
+
+        curation = ResumeCuration.model_validate(make_curation_dict())
+        result = CurationResult(
+            curation=curation,
+            model="m",
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+        render_output = MagicMock()
+        render_output.data_files = {}
+        render_output.pdf_path = None
+        render_output.page_count = page_count
+        portfolio = MagicMock()
+        pipeline_result = PipelineResult(
+            curation=result,
+            render_output=render_output,
+            portfolio=portfolio,
+            skip_pdf=page_count is None,
+            page_count=page_count,
+            converged=True,
+            total_input_tokens=0,
+            total_output_tokens=0,
+        )
+        settings = MagicMock()
+        settings.template_path = Path("ignored")
+        settings.max_pages = max_pages
+        return pipeline_result, settings, "JD text."
+
+    def test_pdf_page_count_wins_over_settings(self) -> None:
+        """Non-converged render: PDF=2 with intent=1 → eval scores at 2."""
+        from curator.eval import from_pipeline_result
+
+        pipeline_result, settings, jd_text = self._make_pipeline_result(
+            page_count=2, max_pages=1
+        )
+        ctx = from_pipeline_result(pipeline_result, jd_text, settings)
+        assert ctx.max_pages == 2
+
+    def test_settings_used_when_page_count_none(self) -> None:
+        """skip_pdf path: no rendered PDF, fall back to intent."""
+        from curator.eval import from_pipeline_result
+
+        pipeline_result, settings, jd_text = self._make_pipeline_result(
+            page_count=None, max_pages=2
+        )
+        ctx = from_pipeline_result(pipeline_result, jd_text, settings)
+        assert ctx.max_pages == 2
+
+    def test_in_memory_matches_on_disk_priority(self) -> None:
+        """Convergent render: both paths agree."""
+        from curator.eval import from_pipeline_result
+
+        pipeline_result, settings, jd_text = self._make_pipeline_result(
+            page_count=2, max_pages=2
+        )
+        ctx = from_pipeline_result(pipeline_result, jd_text, settings)
+        assert ctx.max_pages == 2
