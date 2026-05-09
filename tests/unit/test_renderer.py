@@ -2891,3 +2891,54 @@ class TestTemplateTypography:
             f"{template_path.name} contains hyphenate: true in active code. "
             "See the rationale comment above the #set text(...) block."
         )
+
+
+class TestCapsForPages:
+    """Pin _PageCaps profile values + monotonicity invariant.
+
+    Page-budget-aware floors (recent_role_soft_floor and certificate_floor)
+    must rise non-strictly with max_pages so larger budgets never reduce
+    floor protection. Per-project bullet cap is intentionally NOT in
+    _PageCaps -- it stays at 2 across all modes (see ProjectRanking
+    schema follow-up TODO).
+    """
+
+    def test_short_form_caps_match_pre_refactor_constants(self) -> None:
+        from curator.renderer import _caps_for_pages
+
+        caps = _caps_for_pages(1)
+        assert caps.recent_role_soft_floor == 3
+        assert caps.certificate_floor == 3
+
+    def test_two_page_caps(self) -> None:
+        from curator.renderer import _caps_for_pages
+
+        caps = _caps_for_pages(2)
+        assert caps.recent_role_soft_floor == 4
+        assert caps.certificate_floor == 4
+
+    def test_plateau_at_three_or_more_pages(self) -> None:
+        from curator.renderer import _caps_for_pages
+
+        caps_3 = _caps_for_pages(3)
+        caps_5 = _caps_for_pages(5)
+        assert caps_3.recent_role_soft_floor == 5
+        assert caps_3.certificate_floor == 5
+        # Plateau: 4-5 page configs use the same profile as 3-page.
+        assert caps_5 == caps_3
+
+    @pytest.mark.parametrize("n", [2, 3, 4, 5])
+    def test_caps_monotonic(self, n: int) -> None:
+        """Floors never decrease as max_pages grows."""
+        from curator.renderer import _caps_for_pages
+
+        prev = _caps_for_pages(n - 1)
+        cur = _caps_for_pages(n)
+        assert cur.recent_role_soft_floor >= prev.recent_role_soft_floor
+        assert cur.certificate_floor >= prev.certificate_floor
+
+    def test_zero_pages_treated_as_short_form(self) -> None:
+        """Defensive: pages <= 1 returns the short-form profile."""
+        from curator.renderer import _caps_for_pages
+
+        assert _caps_for_pages(0) == _caps_for_pages(1)
