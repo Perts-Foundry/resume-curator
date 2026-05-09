@@ -265,3 +265,64 @@ class TestEvalFunctionsRequireBands:
         param = sig.parameters["max_pages"]
         assert param.default is inspect.Parameter.empty
         assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+class TestBandsAndCapsConsistency:
+    """Cross-module invariants linking EvalBands and _PageCaps.
+
+    The eval rubric (``EvalBands``) and the renderer cap profile
+    (``_PageCaps``) live in separate files but share a meaning: the
+    eval expects positions 0-1 to carry up to
+    ``primary_role_highlight_target`` bullets, and the renderer
+    protects ``recent_role_soft_floor`` of them. If a future calibration
+    bumps one without the other, the eval and the renderer disagree on
+    what 2-page geometry looks like, and neither test catches the drift
+    in isolation.
+
+    These invariants pin the relationship at an axis that survives
+    reasonable calibration tweaks. (AR-17.)
+    """
+
+    @pytest.mark.parametrize("max_pages", [1, 2, 3, 4, 5])
+    def test_eval_target_at_least_renderer_floor(self, max_pages: int) -> None:
+        """Eval expects positions 0-1 to have >= what the renderer protects.
+
+        ``primary_role_highlight_target`` is the eval's expected
+        ceiling for position 0; ``recent_role_soft_floor`` is the
+        renderer's protected minimum for positions 0-1. Ceiling >=
+        floor is the structural invariant: a renderer that protects 5
+        bullets cannot satisfy an eval target of 4.
+        """
+        from curator.eval.report import bands_for_pages
+        from curator.renderer import _caps_for_pages
+
+        bands = bands_for_pages(max_pages)
+        caps = _caps_for_pages(max_pages)
+        assert bands.primary_role_highlight_target >= caps.recent_role_soft_floor, (
+            f"max_pages={max_pages}: eval target "
+            f"{bands.primary_role_highlight_target} < renderer floor "
+            f"{caps.recent_role_soft_floor}"
+        )
+
+    @pytest.mark.parametrize("max_pages", [1, 2, 3, 4, 5])
+    def test_renderer_certificate_floor_within_band_lower(
+        self, max_pages: int
+    ) -> None:
+        """Cert floor stays small enough to leave room for other content.
+
+        Eval ``total_highlight_count_pass`` lower bound represents
+        minimum acceptable content density. The renderer's
+        ``certificate_floor`` should not be so high that satisfying it
+        crowds out the eval's expected highlight count. This is a soft
+        consistency check; the precise relationship will tighten when
+        calibration data accumulates.
+        """
+        from curator.eval.report import bands_for_pages
+        from curator.renderer import _caps_for_pages
+
+        bands = bands_for_pages(max_pages)
+        caps = _caps_for_pages(max_pages)
+        # Sanity floor: cert floor stays modest relative to total
+        # highlight expectations. (e.g., on 1-page: cert_floor=3 vs
+        # total_highlight_count_pass=(6, 25) — easily compatible.)
+        assert caps.certificate_floor <= bands.total_highlight_count_pass[1]
