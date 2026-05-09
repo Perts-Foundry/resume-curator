@@ -1,0 +1,542 @@
+meta:
+  id: strong-devops-2page
+  name: Senior DevOps Engineer at Nexus Systems (long-form variant)
+  eval_schema_version: 4
+  tier: strong
+  max_pages: 2
+job_description: 'Senior DevOps Engineer — Nexus Systems (Austin, TX)
+
+  Nexus Systems is a fast-growing SaaS platform providing real-time analytics
+
+  for the logistics industry. We are seeking a Senior DevOps Engineer to own
+
+  our cloud infrastructure, CI/CD pipelines, and platform reliability.
+
+  Responsibilities:
+
+  - Design and maintain AWS-based infrastructure using Terraform and CloudFormation
+
+  - Build and optimize CI/CD pipelines for 50+ microservices
+
+  - Implement container orchestration with Kubernetes and ECS
+
+  - Establish monitoring, alerting, and incident response processes
+
+  - Drive infrastructure-as-code adoption across engineering teams
+
+  - Collaborate with security teams on compliance and access controls
+
+  - Mentor junior engineers on cloud architecture best practices
+
+  Requirements:
+
+  - 5+ years of experience in DevOps, SRE, or platform engineering
+
+  - Strong expertise with AWS (EC2, EKS, RDS, Lambda, S3, IAM)
+
+  - Proficiency with Terraform, Ansible, or similar IaC tools
+
+  - Hands-on Kubernetes experience in production environments
+
+  - Experience building CI/CD pipelines with GitHub Actions, Jenkins, or GitLab CI
+
+  - Proficiency in Python or Go for tooling and automation
+
+  - Strong understanding of networking, DNS, TLS, and load balancing
+
+  - Experience with monitoring stacks (Prometheus, Grafana, Datadog)
+
+  Nice to have:
+
+  - AWS certifications (Solutions Architect, DevOps Engineer)
+
+  - Experience with service mesh (Istio, Linkerd)
+
+  - Contributions to open source infrastructure projects
+
+  - Experience migrating workloads from on-premises to cloud
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-aws
+    - skill-containers
+    - skill-devops
+  must_exclude: {}
+baselines: {}
+# human_scores intentionally absent on long-form variants until the
+# calibration follow-up runs (see TODO.md AR-3 watch item). With no
+# human_scores, compare_judge_against_golden short-circuits with a
+# WARNING for these cases — no spurious ERROR findings under the new
+# JUDGE_VERSION.
+curation:
+  summary: Senior DevOps Engineer with 8+ years of experience designing cloud infrastructure,
+    automating CI/CD pipelines, and orchestrating container workloads at scale. Proven
+    track record of reducing deployment times by 70% and achieving 99.95% platform
+    uptime through infrastructure-as-code and Kubernetes-native architectures.
+  suggested_label: Senior DevOps Engineer
+  company_slug: nexus-systems
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-cicd-pipeline
+    - plat-k8s-migration
+    - plat-iac-adoption
+    - plat-monitoring
+    - plat-cost-optimization
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-aws-architecture
+    - infra-terraform-modules
+    - infra-eks-cluster
+    - infra-disaster-recovery
+  - work_id: devops-eng-defense
+    highlight_ids:
+    - devops-jenkins-pipeline
+    - devops-ansible-automation
+    - devops-monitoring-stack
+    - devops-security-hardening
+  - work_id: cloud-support-eng
+    highlight_ids:
+    - support-incident-response
+    - support-networking
+    - support-runbook-automation
+    - support-customer-escalations
+  skills:
+  - skill_id: skill-aws
+    keywords:
+    - EC2
+    - EKS
+    - RDS
+    - Lambda
+    - S3
+    - IAM
+    - CloudFormation
+    - Route 53
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+    - Container Registry
+  - skill_id: skill-devops
+    keywords:
+    - Terraform
+    - Ansible
+    - GitHub Actions
+    - Jenkins
+    - GitLab CI
+    - ArgoCD
+  - skill_id: skill-monitoring
+    keywords:
+    - Prometheus
+    - Grafana
+    - Datadog
+    - PagerDuty
+    - ELK Stack
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Go
+    - Bash
+    - YAML
+  - skill_id: skill-networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+    - Load Balancing
+    - VPN
+  - skill_id: skill-security
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+  - skill_id: skill-databases
+    keywords:
+    - PostgreSQL
+    - Redis
+    - DynamoDB
+  projects:
+  - proj-iac-framework
+  - proj-k8s-operator
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+    - id: plat-k8s-migration
+      text: Lead migration of 30 production services from ECS to EKS, achieving 99.95%
+        uptime during the 6-month transition while eliminating $18,000/month in compute
+        overhead through right-sized pod autoscaling
+      tags:
+      - kubernetes
+      - migration
+      technologies:
+      - Kubernetes
+      - EKS
+      - Helm
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+    - id: plat-cost-optimization
+      text: Implement cloud cost optimization program using reserved instances, spot
+        fleets, and resource tagging that reduced monthly AWS spend by $42,000 (28%
+        reduction) while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - aws
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+    - id: infra-terraform-modules
+      text: Built reusable Terraform module library of 40+ modules adopted by 6 product
+        teams, standardizing VPC layouts, security groups, and IAM policies while
+        cutting new environment provisioning from 2 days to 35 minutes
+      tags:
+      - terraform
+      - iac
+      technologies:
+      - Terraform
+      - AWS
+    - id: infra-eks-cluster
+      text: Deployed production EKS clusters across 3 environments with automated
+        node group scaling, pod security policies, and Istio service mesh, serving
+        120 pods with zero unplanned downtime over 14 months
+      tags:
+      - kubernetes
+      - eks
+      technologies:
+      - EKS
+      - Istio
+      - Kubernetes
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  - id: devops-eng-defense
+    name: Ironclad Defense Solutions
+    position: DevOps Engineer
+    start_date: 2017-01
+    end_date: 2019-05
+    highlights:
+    - id: devops-jenkins-pipeline
+      text: Developed Jenkins-based CI/CD pipeline for 25 application repositories
+        with automated testing gates, reducing production defect rate by 60% through
+        enforced code quality checks and security scanning
+      tags:
+      - ci-cd
+      - jenkins
+      technologies:
+      - Jenkins
+      - SonarQube
+      - Docker
+    - id: devops-ansible-automation
+      text: Automated server provisioning and configuration for 150+ instances using
+        Ansible playbooks and roles, eliminating 20 hours of weekly manual configuration
+        work and reducing environment drift to zero
+      tags:
+      - automation
+      - ansible
+      technologies:
+      - Ansible
+      - Linux
+    - id: devops-monitoring-stack
+      text: Implemented centralized logging and monitoring stack using ELK and Prometheus
+        that consolidated alerts from 8 disparate systems into a single dashboard,
+        cutting mean time to resolution by 55%
+      tags:
+      - monitoring
+      - elk
+      technologies:
+      - Elasticsearch
+      - Logstash
+      - Kibana
+      - Prometheus
+    - id: devops-security-hardening
+      text: Executed security hardening initiative across production infrastructure,
+        implementing CIS benchmarks for 150 servers that resolved 340 audit findings
+        and achieved full compliance within 90 days
+      tags:
+      - security
+      - compliance
+      technologies:
+      - CIS Benchmarks
+      - Ansible
+  - id: cloud-support-eng
+    name: Cirrus Technologies
+    position: Cloud Support Engineer
+    start_date: 2015-08
+    end_date: 2016-12
+    highlights:
+    - id: support-incident-response
+      text: Coordinated incident response for 200+ production events, establishing
+        post-mortem process that identified recurring failures and reduced repeat
+        incidents by 40% over 12 months
+      tags:
+      - incident-response
+      technologies:
+      - PagerDuty
+      - Jira
+    - id: support-networking
+      text: Diagnosed and resolved complex networking issues across VPC peering, DNS
+        resolution, and TLS certificate chains, maintaining 99.9% network availability
+        for 50 production services
+      tags:
+      - networking
+      technologies:
+      - AWS VPC
+      - Route 53
+      - ACM
+    - id: support-runbook-automation
+      text: Automated 35 operational runbooks using Python and Bash scripts, converting
+        manual recovery procedures into self-healing workflows that reduced after-hours
+        pages by 65%
+      tags:
+      - automation
+      - scripting
+      technologies:
+      - Python
+      - Bash
+      - AWS Lambda
+    - id: support-customer-escalations
+      text: Resolved 95% of Tier 3 customer escalations within SLA targets, building
+        diagnostic tooling in Python that decreased average resolution time from 4
+        hours to 90 minutes
+      tags:
+      - customer-support
+      - tooling
+      technologies:
+      - Python
+      - CloudWatch
+  skills:
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EC2
+    - EKS
+    - RDS
+    - Lambda
+    - S3
+    - IAM
+    - CloudFormation
+    - Route 53
+    - Aurora
+    - DynamoDB
+    - CloudWatch
+    - VPC
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+    - Container Registry
+    - Istio
+    - Pod Autoscaling
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Terraform
+    - Ansible
+    - GitHub Actions
+    - Jenkins
+    - GitLab CI
+    - ArgoCD
+    - Infrastructure as Code
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Prometheus
+    - Grafana
+    - Datadog
+    - PagerDuty
+    - ELK Stack
+    - CloudWatch
+    - Alerting
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Go
+    - Bash
+    - YAML
+    - HCL
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+    - Load Balancing
+    - VPN
+    - VPC Peering
+  - id: skill-security
+    name: Security & Compliance
+    keywords:
+    - IAM Policies
+    - RBAC
+    - Secrets Management
+    - Compliance Automation
+    - CIS Benchmarks
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - PostgreSQL
+    - Redis
+    - DynamoDB
+    - Aurora
+  projects:
+  - id: proj-iac-framework
+    name: Terraform Module Framework
+    description: Open source Terraform module framework for standardized AWS infrastructure
+      provisioning with built-in security policies and cost estimation
+    start_date: 2021-01
+    end_date: 2023-06
+    keywords:
+    - Terraform
+    - AWS
+    - Open Source
+    highlights:
+    - id: proj-iac-adoption
+      text: Created modular Terraform framework adopted by 12 organizations on GitHub
+        with 500+ stars, providing pre-built modules for VPC, EKS, and RDS deployment
+        patterns
+      tags:
+      - open-source
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+      - GitHub
+  - id: proj-k8s-operator
+    name: Kubernetes Auto-Remediation Operator
+    description: Custom Kubernetes operator written in Go that detects anomalous pod
+      behavior and executes automated remediation workflows
+    start_date: 2022-06
+    end_date: 2023-12
+    keywords:
+    - Kubernetes
+    - Go
+    - Operator Pattern
+    highlights:
+    - id: proj-k8s-operator-impact
+      text: Built custom Kubernetes operator in Go that monitors pod health metrics
+        and triggers automated remediation, reducing unplanned restarts by 70% across
+        3 production clusters
+      tags:
+      - kubernetes
+      - go
+      technologies:
+      - Go
+      - Kubernetes
+      - Prometheus
+  certificates:
+  - id: cert-aws-solutions-architect
+    name: AWS Certified Solutions Architect - Professional
+    date: 2023-04
+    type: professional
+    issuer: Amazon Web Services
+    tags:
+    - aws
+    - cloud
+    technologies:
+    - AWS
+  - id: cert-cka
+    name: Certified Kubernetes Administrator
+    date: 2022-09
+    type: professional
+    issuer: Cloud Native Computing Foundation
+    tags:
+    - kubernetes
+    - containers
+    technologies:
+    - Kubernetes
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Senior DevOps Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Senior DevOps Engineer with 8+ years of experience designing cloud infrastructure,
+    automating CI/CD pipelines, and orchestrating container workloads at scale. Proven
+    track record of reducing deployment times by 70% and achieving 99.95% platform
+    uptime through infrastructure-as-code and Kubernetes-native architectures.
+  location:
+    city: Austin
+    region: Texas
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

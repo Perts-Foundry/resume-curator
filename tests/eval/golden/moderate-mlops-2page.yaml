@@ -1,0 +1,248 @@
+meta:
+  id: moderate-mlops-2page
+  name: MLOps Engineer at ModelForge AI (long-form variant)
+  eval_schema_version: 4
+  tier: moderate
+  max_pages: 2
+job_description: 'MLOps Engineer — ModelForge AI (Seattle, WA)
+
+  ModelForge AI provides enterprise machine learning platforms for healthcare
+
+  and life sciences companies. We are hiring an MLOps Engineer to build and
+
+  maintain ML pipelines, model serving infrastructure, and feature stores
+
+  for production AI workloads.
+
+  Responsibilities:
+
+  - Design and maintain ML training pipelines using Kubeflow and Airflow
+
+  - Build model serving infrastructure with Seldon Core and KServe on Kubernetes
+
+  - Implement feature stores using Feast for real-time and batch feature serving
+
+  - Manage GPU cluster scheduling and resource optimization on EKS
+
+  - Build experiment tracking and model registry infrastructure (MLflow, Weights &
+  Biases)
+
+  - Implement data versioning and lineage tracking for model reproducibility
+
+  - Automate model validation, A/B testing, and progressive rollout pipelines
+
+  Requirements:
+
+  - 4+ years in MLOps, ML infrastructure, or platform engineering for ML
+
+  - Hands-on experience with ML pipeline frameworks (Kubeflow, Airflow, Vertex AI)
+
+  - Kubernetes experience for ML workloads (GPU scheduling, node affinity)
+
+  - Experience with model serving frameworks (Seldon, TFServing, Triton)
+
+  - Proficiency in Python with ML ecosystem (PyTorch, TensorFlow, scikit-learn)
+
+  - Understanding of feature engineering and feature store architectures
+
+  - Experience with experiment tracking platforms (MLflow, W&B, Neptune)
+
+  Nice to have:
+
+  - Experience in healthcare or regulated ML environments
+
+  - Familiarity with data versioning tools (DVC, LakeFS)
+
+  - Background in distributed training (Horovod, PyTorch Distributed)
+
+  - AWS SageMaker or Google Vertex AI experience
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-containers
+  must_exclude: {}
+baselines: {}
+# human_scores intentionally absent on long-form variants until the
+# calibration follow-up runs (see TODO.md AR-3 watch item).
+curation:
+  summary: Platform Engineer with 8+ years of experience orchestrating Kubernetes
+    workloads and building automated pipelines for containerized services. Managed
+    EKS clusters serving 120+ pods with zero unplanned downtime and reduced deployment
+    cycle times by 73%.
+  suggested_label: MLOps Engineer
+  company_slug: modelforge-ai
+  work_highlights:
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-k8s-migration
+    - plat-cicd-pipeline
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-eks-cluster
+    - infra-aws-architecture
+  skills:
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+    - Pod Autoscaling
+  - skill_id: skill-aws
+    keywords:
+    - EKS
+    - EC2
+    - S3
+    - Lambda
+  - skill_id: skill-programming
+    keywords:
+    - Python
+    - Go
+    - Bash
+  - skill_id: skill-devops
+    keywords:
+    - GitHub Actions
+    - ArgoCD
+    - Terraform
+  - skill_id: skill-monitoring
+    keywords:
+    - Prometheus
+    - Grafana
+  projects: []
+section_data:
+  work:
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-k8s-migration
+      text: Lead migration of 30 production services from ECS to EKS, achieving 99.95%
+        uptime during the 6-month transition while eliminating $18,000/month in compute
+        overhead through right-sized pod autoscaling
+      tags:
+      - kubernetes
+      - migration
+      technologies:
+      - Kubernetes
+      - EKS
+      - Helm
+    - id: plat-cicd-pipeline
+      text: Architect CI/CD pipelines serving 50+ microservices across 4 engineering
+        teams, reducing average deployment time from 45 minutes to 12 minutes through
+        parallelized builds and cached dependency layers
+      tags:
+      - ci-cd
+      - automation
+      technologies:
+      - GitHub Actions
+      - Docker
+      - ECR
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-eks-cluster
+      text: Deployed production EKS clusters across 3 environments with automated
+        node group scaling, pod security policies, and Istio service mesh, serving
+        120 pods with zero unplanned downtime over 14 months
+      tags:
+      - kubernetes
+      - eks
+      technologies:
+      - EKS
+      - Istio
+      - Kubernetes
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+  skills:
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+    - Pod Autoscaling
+    - Istio
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EKS
+    - EC2
+    - S3
+    - Lambda
+    - IAM
+  - id: skill-programming
+    name: Programming Languages
+    keywords:
+    - Python
+    - Go
+    - Bash
+    - YAML
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - GitHub Actions
+    - ArgoCD
+    - Terraform
+    - Infrastructure as Code
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - Prometheus
+    - Grafana
+    - CloudWatch
+  certificates:
+  - id: cert-cka
+    name: Certified Kubernetes Administrator
+    date: 2022-09
+    type: professional
+    issuer: Cloud Native Computing Foundation
+    tags:
+    - kubernetes
+    - containers
+    technologies:
+    - Kubernetes
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: MLOps Engineer
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Platform Engineer with 8+ years of experience orchestrating Kubernetes
+    workloads and building automated pipelines for containerized services. Managed
+    EKS clusters serving 120+ pods with zero unplanned downtime and reduced deployment
+    cycle times by 73%.
+  location:
+    city: Seattle
+    region: Washington
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan
