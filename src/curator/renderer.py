@@ -358,10 +358,47 @@ def _apply_selections(
 # the judge convention block in lockstep AND bump JUDGE_VERSION; bump
 # PROMPT_VERSION too if curator-prompt language refers to it.
 
-# Minimum number of certificates the cascade will never trim below. The
-# top ``CERTIFICATE_FLOOR`` portfolio certificates are treated as
-# load-bearing credentials that should survive any page pressure.
+# Default certificate floor for 1-page resumes; 2+-page renders use
+# ``_caps_for_pages(max_pages).certificate_floor``. Load-bearing
+# credentials are preserved under page pressure within the budget-aware
+# floor. The constant is retained for test-import compatibility.
 CERTIFICATE_FLOOR = 3
+
+
+@dataclass(frozen=True)
+class _PageCaps:
+    """Internal renderer cap profile keyed on ``max_pages``.
+
+    Consumers should pass ``max_pages`` and let :func:`render` derive the
+    caps via :func:`_caps_for_pages`; do not construct directly.
+
+    Per-project bullet cap is intentionally NOT in this profile:
+    ``ResumeCuration.projects`` is an ordered list of project IDs only,
+    so the AI does not rank highlights *within* a project. Per-project
+    highlight order comes from the portfolio. Raising the cap above the
+    constant 2 would surface portfolio-position-2 content rather than
+    JD-relevance content. The constant 2 is enforced in
+    :func:`_apply_selections`; see ``TODO.md`` for the ``ProjectRanking``
+    schema follow-up that would unblock a higher cap.
+    """
+
+    recent_role_soft_floor: int
+    certificate_floor: int
+
+
+def _caps_for_pages(max_pages: int) -> _PageCaps:
+    """Return the renderer cap profile for a given page budget.
+
+    Floors rise modestly with the page budget: positions 0-1 keep more
+    bullet depth, and the top-N certificates carried as load-bearing grow
+    in lockstep. Plateaus at ``max_pages >= 3``; future executive-CV
+    calibration may add a finer profile for ``max_pages >= 4``.
+    """
+    if max_pages <= 1:
+        return _PageCaps(recent_role_soft_floor=3, certificate_floor=3)
+    if max_pages == 2:
+        return _PageCaps(recent_role_soft_floor=4, certificate_floor=4)
+    return _PageCaps(recent_role_soft_floor=5, certificate_floor=5)
 
 
 def _generate_next_trim(
@@ -399,19 +436,23 @@ def _generate_next_trim(
     cuts the whole entry.
 
     Certificates are trimmed bottom-up early in the cascade (tier 4)
-    but ``CERTIFICATE_FLOOR`` entries are always preserved: the top 3
-    are treated as load-bearing credentials and never cut regardless of
-    page pressure. There is no late-stage cert drain to break this
-    floor -- if page pressure persists after tier 10 skill-group
-    removal, the below-floor work-highlight tiers (11-12) fire as the
-    final escape hatch rather than removing the top 3 certs.
+    but ``certificate_floor`` entries are always preserved as
+    load-bearing credentials. The floor is page-budget-aware: 3 on
+    1-page renders, 4 on 2-page, 5 on 3+-page (see
+    :func:`_caps_for_pages`). There is no late-stage cert drain to
+    break this floor -- if page pressure persists after tier 10
+    skill-group removal, the below-floor work-highlight tiers (11-12)
+    fire as the final escape hatch rather than removing the top
+    ``certificate_floor`` certs.
 
     The two most recent work entries (positions 0 and 1 after reverse
-    chronological sort) are protected by ``recent_role_soft_floor``: they
-    keep at least that many highlights until every other trim avenue has
-    been exhausted. "Soft" because tiers 11-12 are a last-resort cascade
-    that CAN trim below the floor once tiers 1-10 have nothing left to
-    cut; the trim loop emits a WARNING when that happens.
+    chronological sort) are protected by ``recent_role_soft_floor``,
+    also page-budget-aware (3 on 1-page, 4 on 2-page, 5 on 3+-page).
+    They keep at least that many highlights until every other trim
+    avenue has been exhausted. "Soft" because tiers 11-12 are a
+    last-resort cascade that CAN trim below the floor once tiers 1-10
+    have nothing left to cut; the trim loop emits a WARNING when that
+    happens.
     """
     # Tier 1: Remove interests section.
     if interests is not None:
@@ -1170,6 +1211,7 @@ def render(
             interests_dict = portfolio.interests.model_dump(exclude_none=True)
 
         # Compile PDF with page-fitting trim loop.
+        caps = _caps_for_pages(settings.max_pages)
         pdf_path: Path | None = None
         trim_log: list[str] = []
         final_page_count: int | None = None
@@ -1183,6 +1225,8 @@ def render(
                 list(settings.section_order),
                 max_pages=settings.max_pages,
                 max_trim_iterations=settings.max_trim_iterations,
+                recent_role_soft_floor=caps.recent_role_soft_floor,
+                certificate_floor=caps.certificate_floor,
             )
             pdf_path = output_dir / "resume.pdf"
         else:
