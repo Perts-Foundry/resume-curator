@@ -138,7 +138,9 @@ def _evaluate_with_pdf(
     results: list[EvalMetricResult] = []
     pages = pdf.pages
 
-    # page_count — should equal max_pages (default 1).
+    # page_count — must be ≤ max_pages (driven by EvalContext.max_pages,
+    # which is inferred from the rendered PDF or curation_log.json upstream
+    # in evaluate_tier1, not from any function default).
     pc = len(pages)
     results.append(
         EvalMetricResult(

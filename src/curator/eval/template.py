@@ -180,8 +180,9 @@ def _evaluate_template_content(content: str) -> list[EvalMetricResult]:
         )
 
     # template_margins — #set page(margin: ...).
-    # 0.3in is the lower bound for tight single-page layouts; 1.0in is the upper
-    # bound for generous breathing room. 0.25-1.1in is the WARN fallback.
+    # 0.3in is the tightest lower bound the templates render at across all
+    # page budgets; 1.0in is the upper bound for generous breathing room.
+    # 0.25-1.1in is the WARN fallback.
     margins = _extract_margins(content)
     if margins:
         all_ok = all(0.3 <= m <= 1.0 for m in margins.values())
