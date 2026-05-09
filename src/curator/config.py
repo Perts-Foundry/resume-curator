@@ -76,13 +76,14 @@ class CuratorSettings(BaseSettings):
 
     # Page count enforcement
     max_pages: int = Field(
-        default=1,
+        default=2,
         ge=1,
         le=5,
         description=(
-            "Maximum PDF page count (renderer trims if exceeded). "
-            "Values 1-3 are typical for curate (JD-tailored); 4-5 supports "
-            "static-mode multi-page resumes (executive/academic profiles)."
+            "Maximum PDF page count (renderer trims if exceeded). Default 2 "
+            "is the typical submission shape for both curate and static; "
+            "pass --pages 1 (CLI) or set CURATOR_MAX_PAGES=1 for short-form "
+            "output. 3-5 supports executive/academic CVs."
         ),
     )
     max_trim_iterations: int = Field(

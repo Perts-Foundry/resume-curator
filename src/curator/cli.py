@@ -384,6 +384,16 @@ def curate(
         "--clipboard",
         help="Read job description from system clipboard (requires pyperclip).",
     ),
+    pages: int | None = typer.Option(
+        None,
+        "--pages",
+        min=1,
+        max=5,
+        help=(
+            "Target page count (1..5). Overrides CuratorSettings.max_pages "
+            "(default 2). Pass --pages 1 for short-form output."
+        ),
+    ),
     cover_letter: bool = typer.Option(
         False,
         "--cover-letter/--no-cover-letter",
@@ -412,7 +422,11 @@ def curate(
             raise typer.Exit(code=1)
 
         try:
-            settings = CuratorSettings()
+            settings = (
+                CuratorSettings(max_pages=pages)
+                if pages is not None
+                else CuratorSettings()
+            )
         except ValidationError as e:
             raise ConfigError(str(e)) from e
 
@@ -555,11 +569,14 @@ def static_cmd(
         ),
     ),
     pages: int = typer.Option(
-        1,
+        2,
         "--pages",
         min=1,
         max=5,
-        help="Target page count (1..5). Passed to the renderer's trim loop.",
+        help=(
+            "Target page count (1..5). Default 2 (matches curator curate); "
+            "pass --pages 1 for short-form output."
+        ),
     ),
     max_highlights: int | None = typer.Option(
         None,

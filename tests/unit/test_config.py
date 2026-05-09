@@ -60,7 +60,7 @@ class TestCuratorSettings:
         assert settings.max_tokens == 4096
         assert settings.portfolio_path == Path("../professional-portfolio-source")
         assert settings.output_dir == Path("profiles")
-        assert settings.max_pages == 1
+        assert settings.max_pages == 2
         assert settings.max_trim_iterations == 150
         assert settings.api_max_retries == 5
         assert settings.effort is None
