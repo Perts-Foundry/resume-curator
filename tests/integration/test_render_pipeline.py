@@ -266,11 +266,12 @@ class TestRenderPipeline:
         )
 
         log = json.loads(result.curation_log_path.read_text())
-        assert log["format_version"] == "2.2"
+        assert log["format_version"] == "2.3"
         assert log["source"] == "api"
         assert log["model"] == "claude-sonnet-4-6-20260217"
         assert log["input_tokens"] == 5000
         assert log["cache_creation_input_tokens"] == 3000
+        assert log["max_pages"] >= 1
 
     def test_snake_case_field_names(
         self,

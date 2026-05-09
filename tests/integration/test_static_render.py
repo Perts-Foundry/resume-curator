@@ -189,11 +189,12 @@ class TestStaticRenderArtifacts:
         result = _render_static(static_portfolio, tmp_path)
 
         log = json.loads(result.curation_log_path.read_text())
-        assert log["format_version"] == "2.2"
+        assert log["format_version"] == "2.3"
         assert log["source"] == "static"
         assert log["model"] == "n/a"
         assert log["input_tokens"] == 0
         assert log["output_tokens"] == 0
+        assert log["max_pages"] >= 1
         assert log["cover_letter"]["enabled"] is False
 
     def test_mode_txt_descriptor(

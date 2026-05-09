@@ -441,7 +441,8 @@ class TestWriteAuditArtifacts:
         # presence and shape only.
         from curator.prompt import PROMPT_HASH
 
-        assert log_data["format_version"] == "2.2"
+        assert log_data["format_version"] == "2.3"
+        assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
         assert log_data["prompt_version"] == "2026-04-28"
         assert log_data["prompt_hash"] == PROMPT_HASH

@@ -913,6 +913,7 @@ def _write_audit_artifacts(
     jd_text: str | None,
     *,
     trim_log: list[str] | None = None,
+    max_pages: int = 1,
 ) -> tuple[Path, Path, Path | None, Path | None]:
     """Write curated.yaml, curation_log.json, and per-source descriptor.
 
@@ -933,9 +934,13 @@ def _write_audit_artifacts(
     atomic_yaml_write(curated_path, curation.curation.model_dump())
 
     # Curation log — provenance, API metadata, and trim history.
+    # ``format_version`` 2.3 adds ``max_pages`` for downstream eval band
+    # selection (``bands_for_pages``). Renderer caps are deterministic from
+    # ``max_pages`` via ``_caps_for_pages`` and are intentionally not
+    # persisted; storing both invites drift.
     log_path = output_dir / "curation_log.json"
     log_data: dict[str, Any] = {
-        "format_version": "2.2",
+        "format_version": "2.3",
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "source": curation.source,
@@ -944,6 +949,7 @@ def _write_audit_artifacts(
         "output_tokens": curation.output_tokens,
         "cache_creation_input_tokens": curation.cache_creation_input_tokens,
         "cache_read_input_tokens": curation.cache_read_input_tokens,
+        "max_pages": max_pages,
         "timestamp": datetime.now(tz=UTC).isoformat(),
     }
     if trim_log is not None:
@@ -1236,7 +1242,11 @@ def render(
 
         # Write audit artifacts (after trimming so trim_log is persisted).
         curated_path, log_path, jd_path, mode_path = _write_audit_artifacts(
-            output_dir, curation, jd_text, trim_log=trim_log or None
+            output_dir,
+            curation,
+            jd_text,
+            trim_log=trim_log or None,
+            max_pages=settings.max_pages,
         )
 
         # Cover letter (if present on the curation result). Runs after the
