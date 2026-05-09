@@ -160,6 +160,27 @@ design choice.
 These were deliberately deferred so the wave 1-3 PR could land without
 expanding scope. Each is independently shippable.
 
+- [ ] **Long-form safety-net + soft-floor interaction**: on long-form
+  rerenders, `_reorder_with_safety_net` (renderer.py:124) appends every
+  AI-unranked portfolio highlight to the current role, then the trim
+  cascade's `recent_role_soft_floor=4` (max_pages=2) protects positions
+  0-1 while draining positions 2-4 to zero. Net effect: position 0
+  monopolizes page 1 (e.g. 21 bullets) while positions 2-4 render as
+  header-only rows. This is exactly the "curation gap" pattern the new
+  long-form judge `<conventions>` will FAIL on. Reproduced on
+  `profiles/2026-05-09-boeing/` (rerender of a 1-page-targeted curation
+  at `--pages 2`): AI ranked 5 highlights for the current role; renderer
+  shipped 21 (5 ranked + 16 safety-net-appended); 3 of 5 work entries
+  rendered with 0 bullets. Pure rendering / cascade concern -- the AI
+  prompt is page-agnostic by design and will not see `max_pages`.
+  Possible fixes: (a) per-role hard cap that scales with `max_pages`,
+  (b) cap the safety net per entry (e.g. `max_safety_net_per_entry =
+  max_pages * 2`), (c) cascade reorder so safety-net-appended highlights
+  drain before AI-ranked highlights at non-current positions, (d) drain
+  current-role excess before draining older roles to zero. Best
+  diagnosed alongside the AR-1 ProjectRanking work since both touch the
+  AI/renderer split. (Real-world finding 2026-05-09.)
+
 - [ ] **AR-1 / ProjectRanking schema**: extend `ResumeCuration.projects`
   from `list[str]` to `list[ProjectRanking]` so the AI ranks highlights
   *within* each project, not just project IDs. Today's renderer caps
