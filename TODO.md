@@ -444,9 +444,11 @@ republishing.
 
 ### CI & tooling
 
-- [ ] Remove the `--ignore-vuln CVE-2026-3219` flag from the
-  `pip-audit` step in `.github/workflows/ci.yml` once pip 26.1 ships
-  to PyPI and the lockfile picks it up. Tracking issue: pypa/pip#13870.
+- [ ] Remove the `--ignore-vuln CVE-2026-3219` and
+  `--ignore-vuln CVE-2026-6357` flags from the `pip-audit` step in
+  `.github/workflows/ci.yml` once pip 26.1 ships to PyPI and the
+  lockfile picks it up. Both CVEs are scoped to pip 26.0.1 and both
+  fixes ship in pip 26.1. Tracking issue: pypa/pip#13870.
 - [ ] Pre-commit `mypy` hook only sees changed files; CI mypy only
   covers `src/`. Either extend CI mypy to cover `tests/` or note the
   IDE-only scope in `CLAUDE.md`.
