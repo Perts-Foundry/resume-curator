@@ -5,7 +5,7 @@ Tailor your resume to any job description -- AI selects from your portfolio, you
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-Feed in a YAML portfolio and a plain-text job description. The Claude API ranks, prioritizes, and reorders your existing entries -- it never fabricates content. Typst compiles the result into a one-page PDF.
+Feed in a YAML portfolio and a plain-text job description. The Claude API ranks, prioritizes, and reorders your existing entries -- it never fabricates content. Typst compiles the result into a tailored PDF (default: 2 pages; pass `--pages 1` for short-form).
 
 ## Quick Start
 
@@ -72,7 +72,7 @@ Feed in a YAML portfolio and a plain-text job description. The Claude API ranks,
 uv run curator curate job-description.txt
 ```
 
-The pipeline reads your portfolio data, sends it with the job description to the Claude API, and compiles a PDF via Typst. If the result exceeds the target page count (default: 1), the renderer trims lowest-value content and re-compiles until it fits.
+The pipeline reads your portfolio data, sends it with the job description to the Claude API, and compiles a PDF via Typst. If the result exceeds the target page count (default: 2; override with `--pages 1..5`), the renderer trims lowest-value content and re-compiles until it fits.
 
 #### Providing the job description
 
@@ -121,11 +121,14 @@ Output lands in `profiles/<date>-<company-slug>/`:
 For a polished, general-purpose resume that does not require a job description and makes zero API calls, use the `static` subcommand. It synthesizes a curation deterministically from your portfolio and renders the same Typst template as `curate`.
 
 ```bash
-# 1-page general resume, default name "general"
+# 2-page general resume (default; --name "general")
 uv run curator static
 
-# Multi-page resume (1..5)
-uv run curator static --pages 2 --name long-form
+# Short-form 1-page resume
+uv run curator static --pages 1 --name short
+
+# Other page budgets (1..5)
+uv run curator static --pages 3 --name long-form
 
 # Cap each work entry to N highlights for predictable output
 uv run curator static --pages 1 --max-highlights 3
@@ -251,7 +254,7 @@ Settings are resolved in priority order: **CLI arguments > environment variables
 | `CURATOR_MODEL` | `claude-sonnet-4-6` | Claude model for curation (alias by default; override with a snapshot ID for reproducibility) |
 | `CURATOR_MAX_TOKENS` | `4096` | Maximum output tokens (256-8192) |
 | `CURATOR_EFFORT` | *(none)* | Response quality: low / medium / high / max |
-| `CURATOR_MAX_PAGES` | `1` | Target page count; renderer trims if exceeded (1-5; 1-3 typical for `curate`, up to 5 for `static` multi-page resumes) |
+| `CURATOR_MAX_PAGES` | `2` | Target page count; renderer trims if exceeded (1-5). 2 is the typical submission shape for both `curate` and `static`; pass `--pages 1` for short-form, 3-5 for executive/academic CVs |
 | `CURATOR_MAX_TRIM_ITERATIONS` | `150` | Maximum renderer trim iterations (1-200); WARNING logged at 15 as convergence signal |
 | `CURATOR_JUDGE_MODEL` | `claude-sonnet-4-6` | Model for Tier 2 judge evaluation |
 | `CURATOR_SUMMARY_MANDATORY_MENTION` | *(author's identity by default)* | Phrase the AI must include verbatim in every generated resume summary. Forks should set this to their own mandatory mention (e.g. `"founder of YourCo"`) or to an empty string to disable. |
