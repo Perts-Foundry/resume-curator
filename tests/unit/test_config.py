@@ -56,7 +56,12 @@ class TestCuratorSettings:
 
     def test_defaults(self) -> None:
         settings = _settings()
-        assert settings.model == "claude-sonnet-4-6"
+        # Both model defaults flipped 2026-05-09 from claude-sonnet-4-6 to
+        # claude-haiku-4-5 after the cross-model A/B (judge: tolerances hold;
+        # curate: equivalent quality + lexicon expansion that landed in the
+        # same PR closes the cover-letter prose gap). See findings doc at
+        # testing/results/haiku-eval/findings.md.
+        assert settings.model == "claude-haiku-4-5"
         assert settings.max_tokens == 4096
         assert settings.portfolio_path == Path("../professional-portfolio-source")
         assert settings.output_dir == Path("profiles")
@@ -65,7 +70,7 @@ class TestCuratorSettings:
         assert settings.api_max_retries == 5
         assert settings.effort is None
         assert settings.allow_api_spend is False
-        assert settings.judge_model == "claude-sonnet-4-6"
+        assert settings.judge_model == "claude-haiku-4-5"
         assert settings.judge_effort is None
 
     def test_env_var_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
