@@ -172,12 +172,12 @@ jobs:
         id: pip-audit
         run: |
           set +e
-          # CVE-2026-3219 (pip 26.0.1): tar/ZIP confusion handling. Fix
-          # merged on pypa/pip main but not yet released to PyPI (pip 26.1
-          # ships the fix). Local-only CWE-434 (CVSS 4.6) — not exploitable
-          # in CI's package install path. Remove this ignore once pip 26.1
-          # lands and uv.lock can be bumped.
-          OUTPUT=$(uv run pip-audit --ignore-vuln CVE-2026-3219 2>&1)
+          # CVE-2026-3219 + CVE-2026-6357 (pip 26.0.1): both ship a fix
+          # in pip 26.1 (pypa/pip main, not yet released to PyPI). Both
+          # are local-only and not exploitable in CI's package install
+          # path. Remove both ignores once pip 26.1 lands and uv.lock
+          # can be bumped (Dependabot PR #4).
+          OUTPUT=$(uv run pip-audit --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357 2>&1)
           EXIT_CODE=$?
           echo "$OUTPUT"
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
