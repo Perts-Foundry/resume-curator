@@ -50,7 +50,7 @@ class TestEvalBandsFrozen:
 
     def test_long_form_is_frozen(self) -> None:
         with pytest.raises(FrozenInstanceError):
-            LONG_FORM_BANDS.primary_role_highlight_target = 99  # type: ignore[misc]
+            LONG_FORM_BANDS.work_position_floors = (99,)  # type: ignore[misc]
 
 
 class TestShortFormPreservation:
@@ -69,11 +69,9 @@ class TestShortFormPreservation:
     def test_bullet_word_count_pass(self) -> None:
         assert SHORT_FORM_BANDS.bullet_word_count_pass == (8, 35)
 
-    def test_primary_role_highlight_target(self) -> None:
-        assert SHORT_FORM_BANDS.primary_role_highlight_target == 5
-
-    def test_position_2plus_max_highlights(self) -> None:
-        assert SHORT_FORM_BANDS.position_2plus_max_highlights == 2
+    def test_work_position_floors(self) -> None:
+        # 1-page preserves ghost-row policy: positions 2+ at floor 0.
+        assert SHORT_FORM_BANDS.work_position_floors == (3, 3, 0, 0, 0)
 
     def test_total_highlight_count_pass(self) -> None:
         assert SHORT_FORM_BANDS.total_highlight_count_pass == (6, 25)
@@ -88,16 +86,13 @@ class TestShortFormPreservation:
 class TestLongFormShape:
     """LONG_FORM_BANDS values are calibrated against 2-page geometry."""
 
-    def test_primary_role_highlight_target(self) -> None:
-        assert LONG_FORM_BANDS.primary_role_highlight_target == 6
-
-    def test_position_2plus_max_highlights(self) -> None:
-        # Older roles may carry up to 4 highlights on long-form (was 2).
-        assert LONG_FORM_BANDS.position_2plus_max_highlights == 4
+    def test_work_position_floors(self) -> None:
+        # Graduated 2-page floors so older roles always render content.
+        assert LONG_FORM_BANDS.work_position_floors == (8, 6, 6, 2, 2)
 
     def test_total_highlight_count_pass(self) -> None:
-        # Per AR-5, tightened from (18, 45) for per-position consistency.
-        assert LONG_FORM_BANDS.total_highlight_count_pass == (15, 28)
+        # Pre-emptively widened to accommodate floor sum 24 on 5 entries.
+        assert LONG_FORM_BANDS.total_highlight_count_pass == (20, 38)
 
 
 class TestMonotonicity:
@@ -133,17 +128,22 @@ class TestMonotonicity:
             > SHORT_FORM_BANDS.skills_keyword_count_pass[1]
         )
 
-    def test_primary_role_highlight_target_higher(self) -> None:
-        assert (
-            LONG_FORM_BANDS.primary_role_highlight_target
-            > SHORT_FORM_BANDS.primary_role_highlight_target
-        )
+    def test_work_position_floors_per_position_monotonic(self) -> None:
+        """Each position's floor is non-decreasing as page budget grows.
 
-    def test_position_2plus_max_higher(self) -> None:
-        assert (
-            LONG_FORM_BANDS.position_2plus_max_highlights
-            > SHORT_FORM_BANDS.position_2plus_max_highlights
-        )
+        Iterates to the longer of the two tuples, falling through to
+        the last value for indices beyond a tuple's length, so future
+        tuple-length divergence does not silently skip indices.
+        """
+        short = SHORT_FORM_BANDS.work_position_floors
+        long = LONG_FORM_BANDS.work_position_floors
+        n = max(len(short), len(long))
+        for i in range(n):
+            short_val = short[i] if i < len(short) else short[-1]
+            long_val = long[i] if i < len(long) else long[-1]
+            assert long_val >= short_val, (
+                f"position {i}: long-form floor {long_val} < short-form {short_val}"
+            )
 
 
 class TestPerBulletEquality:
@@ -264,37 +264,36 @@ class TestBandsAndCapsConsistency:
     """Cross-module invariants linking EvalBands and _PageCaps.
 
     The eval rubric (``EvalBands``) and the renderer cap profile
-    (``_PageCaps``) live in separate files but share a meaning: the
-    eval expects positions 0-1 to carry up to
-    ``primary_role_highlight_target`` bullets, and the renderer
-    protects ``recent_role_soft_floor`` of them. If a future calibration
-    bumps one without the other, the eval and the renderer disagree on
-    what 2-page geometry looks like, and neither test catches the drift
-    in isolation.
-
-    These invariants pin the relationship at an axis that survives
-    reasonable calibration tweaks. (AR-17.)
+    (``_PageCaps``) live in separate modules but now share a single
+    source of truth for per-position highlight floors: both consume
+    ``_PageCaps.work_position_floors`` from :mod:`curator.page_caps`.
+    This invariant test pins the shared identity so a future
+    refactor cannot silently re-introduce two parallel definitions.
     """
 
-    @pytest.mark.parametrize("max_pages", [1, 2, 3, 4, 5])
-    def test_eval_target_at_least_renderer_floor(self, max_pages: int) -> None:
-        """Eval expects positions 0-1 to have >= what the renderer protects.
+    @pytest.mark.parametrize("max_pages", [1, 2])
+    def test_eval_bands_share_caps_floors(self, max_pages: int) -> None:
+        """``bands.work_position_floors`` IS ``caps.work_position_floors``.
 
-        ``primary_role_highlight_target`` is the eval's expected
-        ceiling for position 0; ``recent_role_soft_floor`` is the
-        renderer's protected minimum for positions 0-1. Ceiling >=
-        floor is the structural invariant: a renderer that protects 5
-        bullets cannot satisfy an eval target of 4.
+        Replaces the previous ``test_eval_target_at_least_renderer_floor``
+        invariant. Under the new design the eval rubric does not
+        maintain its own per-position ceiling — it derives every
+        position band from the renderer floor tuple, eliminating drift.
+
+        Parametrized only for ``max_pages`` 1 and 2 because the eval
+        side currently has just two profiles (``SHORT_FORM_BANDS`` and
+        ``LONG_FORM_BANDS``) while the renderer differentiates 1/2/3+;
+        the 3+ asymmetry is tracked as ``EXEC_FORM_BANDS`` in TODO.md.
         """
         from curator.eval.report import bands_for_pages
-        from curator.renderer import _caps_for_pages
+        from curator.page_caps import _caps_for_pages
 
         bands = bands_for_pages(max_pages)
         caps = _caps_for_pages(max_pages)
-        assert bands.primary_role_highlight_target >= caps.recent_role_soft_floor, (
-            f"max_pages={max_pages}: eval target "
-            f"{bands.primary_role_highlight_target} < renderer floor "
-            f"{caps.recent_role_soft_floor}"
+        assert bands.work_position_floors == caps.work_position_floors, (
+            f"max_pages={max_pages}: bands floors "
+            f"{bands.work_position_floors} != caps floors "
+            f"{caps.work_position_floors}"
         )
 
     @pytest.mark.parametrize("max_pages", [1, 2, 3, 4, 5])
@@ -309,7 +308,7 @@ class TestBandsAndCapsConsistency:
         calibration data accumulates.
         """
         from curator.eval.report import bands_for_pages
-        from curator.renderer import _caps_for_pages
+        from curator.page_caps import _caps_for_pages
 
         bands = bands_for_pages(max_pages)
         caps = _caps_for_pages(max_pages)

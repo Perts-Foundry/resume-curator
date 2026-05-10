@@ -29,6 +29,13 @@ class _PageCaps:
     Consumers should pass ``max_pages`` and let :func:`_caps_for_pages`
     derive the caps; do not construct directly.
 
+    ``work_position_floors`` indexes by work-entry position
+    (``index 0`` = most recent role) after
+    ``_sort_work_chronologically``. Positions beyond the tuple length
+    receive the last value, so a 7-entry portfolio under 2-page caps
+    gets ``(8, 6, 6, 2, 2, 2, 2)`` implicitly. Any change to the work
+    sort order must update this profile in lockstep.
+
     Per-project bullet cap is intentionally NOT in this profile:
     ``ResumeCuration.projects`` is an ordered list of project IDs only,
     so the AI does not rank highlights *within* a project. Per-project
@@ -39,20 +46,58 @@ class _PageCaps:
     ``ProjectRanking`` schema follow-up that would unblock a higher cap.
     """
 
-    recent_role_soft_floor: int
+    work_position_floors: tuple[int, ...]
     certificate_floor: int
+
+    def __post_init__(self) -> None:
+        if not self.work_position_floors:
+            msg = "work_position_floors must be non-empty"
+            raise ValueError(msg)
+        if any(f < 0 for f in self.work_position_floors):
+            msg = "work_position_floors values must be >= 0"
+            raise ValueError(msg)
+        if self.certificate_floor < 0:
+            msg = "certificate_floor must be >= 0"
+            raise ValueError(msg)
+
+    def floor_for_position(self, position: int) -> int:
+        """Return the per-position floor, falling through to the last value.
+
+        ``position`` is 0-indexed (0 = most recent role). Indices beyond
+        the tuple length return the last value so a portfolio with more
+        work entries than the profile defines explicitly still gets a
+        sensible floor.
+        """
+        if position < 0:
+            msg = "position must be non-negative"
+            raise ValueError(msg)
+        if position < len(self.work_position_floors):
+            return self.work_position_floors[position]
+        return self.work_position_floors[-1]
 
 
 def _caps_for_pages(max_pages: int) -> _PageCaps:
     """Return the renderer cap profile for a given page budget.
 
-    Floors rise modestly with the page budget: positions 0-1 keep more
-    bullet depth, and the top-N certificates carried as load-bearing grow
-    in lockstep. Plateaus at ``max_pages >= 3``; future executive-CV
-    calibration may add a finer profile for ``max_pages >= 4``.
+    Floors rise with the page budget. The 2-page profile introduces
+    *graduated* per-position floors so older roles always render
+    content (no "ghost rows"); 1-page deliberately keeps positions 2+
+    at floor 0 because page space is too constrained to support a
+    non-zero floor on older roles. Plateaus at ``max_pages >= 3``;
+    future executive-CV calibration may add a finer profile for
+    ``max_pages >= 4`` (tracked in ``TODO.md``).
     """
     if max_pages <= 1:
-        return _PageCaps(recent_role_soft_floor=3, certificate_floor=3)
+        return _PageCaps(
+            work_position_floors=(3, 3, 0, 0, 0),
+            certificate_floor=3,
+        )
     if max_pages == 2:
-        return _PageCaps(recent_role_soft_floor=4, certificate_floor=4)
-    return _PageCaps(recent_role_soft_floor=5, certificate_floor=5)
+        return _PageCaps(
+            work_position_floors=(8, 6, 6, 2, 2),
+            certificate_floor=4,
+        )
+    return _PageCaps(
+        work_position_floors=(10, 8, 8, 4, 4),
+        certificate_floor=5,
+    )

@@ -6,6 +6,7 @@ import enum
 from dataclasses import dataclass, field
 from typing import Any
 
+from curator.page_caps import _caps_for_pages
 from curator.rules import CATEGORY_WEIGHTS, SCORE_PASS_THRESHOLD, SCORE_WARN_THRESHOLD
 
 EVAL_SCHEMA_VERSION: int = 4
@@ -50,9 +51,13 @@ class EvalBands:
     word_count_warn: tuple[int, int]
     bullet_word_count_pass: tuple[int, int]
     bullet_word_count_warn: tuple[int, int]
-    # Selection quality (eval/selection.py)
-    primary_role_highlight_target: int
-    position_2plus_max_highlights: int
+    # Selection quality (eval/selection.py).
+    #
+    # ``work_position_floors`` is sourced from the renderer's
+    # ``_caps_for_pages`` so the eval rubric and the renderer cascade
+    # cannot drift out of agreement on per-position highlight counts.
+    # Selection metrics derive position bands from this tuple directly.
+    work_position_floors: tuple[int, ...]
     total_highlight_count_pass: tuple[int, int]
     total_highlight_count_warn: tuple[int, int]
     skills_keyword_count_pass: tuple[int, int]
@@ -67,8 +72,7 @@ SHORT_FORM_BANDS = EvalBands(
     word_count_warn=(400, 800),
     bullet_word_count_pass=(8, 35),
     bullet_word_count_warn=(5, 40),
-    primary_role_highlight_target=5,
-    position_2plus_max_highlights=2,
+    work_position_floors=_caps_for_pages(1).work_position_floors,
     total_highlight_count_pass=(6, 25),
     total_highlight_count_warn=(4, 30),
     skills_keyword_count_pass=(20, 70),
@@ -85,10 +89,11 @@ LONG_FORM_BANDS = EvalBands(
     word_count_warn=(750, 1600),
     bullet_word_count_pass=(8, 35),
     bullet_word_count_warn=(5, 40),
-    primary_role_highlight_target=6,
-    position_2plus_max_highlights=4,
-    total_highlight_count_pass=(15, 28),
-    total_highlight_count_warn=(11, 35),
+    work_position_floors=_caps_for_pages(2).work_position_floors,
+    # Pre-emptively widened to accommodate the new graduated 2-page
+    # floors (8+6+6+2+2 = 24 minimum guaranteed by the renderer).
+    total_highlight_count_pass=(20, 38),
+    total_highlight_count_warn=(15, 45),
     skills_keyword_count_pass=(35, 110),
     skills_keyword_count_warn=(20, 140),
     whitespace_ratio_pass=(0.50, 0.72),
@@ -96,16 +101,17 @@ LONG_FORM_BANDS = EvalBands(
 )
 """2+-page rubric. Numeric bands are calibrated against the long-form
 goldens added alongside this rubric; tighten in lockstep when adding new
-long-form goldens. The position-2+ ceiling rises (older roles may carry
-up to 4 highlights instead of 2) but the floor stays at 0 because the
-renderer cascade has no positions-2+ floor either."""
+long-form goldens. ``work_position_floors`` is shared with the renderer
+so older-role bullet expectations stay self-consistent."""
 
 
 def bands_for_pages(max_pages: int) -> EvalBands:
     """Return the eval band profile for a given page budget.
 
     Plateaus at ``max_pages >= 2`` today; future executive-CV calibration
-    may add a finer profile (``EXEC_FORM_BANDS``) for ``max_pages >= 4``.
+    may add a finer profile (``EXEC_FORM_BANDS``) for ``max_pages >= 4``
+    (the renderer now scales 2-vs-3+ asymmetrically while the eval still
+    treats them as one).
     """
     return SHORT_FORM_BANDS if max_pages <= 1 else LONG_FORM_BANDS
 

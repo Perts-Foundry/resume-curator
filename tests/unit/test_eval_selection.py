@@ -151,11 +151,19 @@ class TestHighlightCounts:
         m = find_metric(results, "highlight_counts")
         assert m.status == EvalMetricStatus.PASS, m.detail
 
-    def test_position_0_underselects_authored_warns(self) -> None:
-        """Entry at position 0 with 6 authored highlights but only 3 selected
-        should still flag (curator under-selected). Single-entry case lands
-        in the 1-issue WARN bucket; the FAIL path requires 2+ issues across
-        entries (covered separately by test_clamped_still_underselects_fails)."""
+    def test_position_0_at_floor_passes_regardless_of_authored(self) -> None:
+        """Position 0 with 3 selected (== short-form floor) passes even when
+        the portfolio authored more.
+
+        Semantic shift from the old ``primary_role_highlight_target=5``
+        model: under the new floor-derived bands, the metric checks
+        whether the rendered output landed at the per-position floor.
+        Position 0 at floor 3 with 3 selected == band lower bound →
+        PASS. The "rich-portfolio under-selection" signal moved out of
+        ``highlight_counts``; if it's needed as a separate eval, a
+        dedicated metric can be added without disturbing the
+        floor-derived band semantics.
+        """
         curation = _make_curation(
             work_highlights=[
                 {
@@ -172,7 +180,7 @@ class TestHighlightCounts:
             work_authored_highlight_counts=_authored_counts(("deep-role", 6)),
         )
         m = find_metric(results, "highlight_counts")
-        assert m.status == EvalMetricStatus.WARN, m.detail
+        assert m.status == EvalMetricStatus.PASS, m.detail
         # No clamp fired (authored=6 >= hi=5 at position 0), so the
         # detail should NOT carry the [authored: ...] decoration. Pins
         # CR-1's invariant that the decoration only appears on clamped

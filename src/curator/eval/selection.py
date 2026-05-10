@@ -30,10 +30,14 @@ if TYPE_CHECKING:
 
 _CATEGORY = "selection_quality"
 
-#: Default short-form target (5 highlights on the primary role). Long-form
-#: bumps this to 6 via ``EvalBands.primary_role_highlight_target``. Constant
-#: retained for tests that pin the short-form value directly.
-PRIMARY_ROLE_HIGHLIGHT_TARGET = 5
+#: Headroom above the per-position floor for ``highlight_counts`` PASS
+#: bands. The renderer cascade trims TO the floor, so the rendered
+#: output typically lands at exactly the floor; ``floor + margin``
+#: leaves room for cases where the cascade converged before tier 6
+#: fired (no trim needed). The lower bound stays at the floor — going
+#: below the floor only happens via the last-resort below-floor tier 8
+#: which logs a WARNING, so flagging it in the eval is correct.
+_HIGHLIGHT_BAND_HEADROOM = 2
 
 
 def evaluate_selection(
@@ -109,24 +113,20 @@ def evaluate_selection(
             for e in rendered_work
             if isinstance(e, dict)
         ]
-        budget = bands.primary_role_highlight_target
+        floors = bands.work_position_floors
+        last_floor = floors[-1] if floors else 0
         for position, (entry_id, count) in enumerate(entries_for_check):
-            if position == 0:
-                # Current role: strong evidence expected.
-                lo, hi = int(budget * 0.8), budget
-            elif position == 1:
-                # Prior role: substantial evidence expected.
-                lo, hi = int(budget * 0.4), int(budget * 0.7)
-            else:
-                # Positions 2+: header-only rows are valid (lo = 0). The
-                # ceiling tracks the page budget via
-                # ``bands.position_2plus_max_highlights``: 2 on short-form
-                # (older roles should not match recent-role density on a
-                # 1-page resume), 4 on long-form (older roles may carry
-                # more bullets when there is room). The renderer cascade
-                # has no positions-2+ floor either, so the metric is
-                # ceiling-only on both rubrics.
-                lo, hi = 0, bands.position_2plus_max_highlights
+            # Per-position floor sourced from the renderer cascade
+            # (``work_position_floors``). Lower bound is the floor
+            # itself (cascade trims TO the floor; the only way to land
+            # below is the last-resort tier 8 which logs a WARNING).
+            # Upper bound is ``floor + _HIGHLIGHT_BAND_HEADROOM`` to
+            # accommodate renders that converged before tier 6 fired.
+            # Positions beyond the tuple length receive the last value,
+            # matching renderer behavior.
+            floor = floors[position] if position < len(floors) else last_floor
+            lo = floor
+            hi = floor + _HIGHLIGHT_BAND_HEADROOM
             # Clamp the expected band against the entry's authored highlight
             # count. A recent role with only 3 authored highlights cannot
             # render 4-5 no matter how the curator ranks it; treat
