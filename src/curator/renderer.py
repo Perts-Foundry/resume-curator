@@ -41,9 +41,10 @@ from curator.rules import COVER_LETTER_WORD_MAX
 # ``_PageCaps``, ``_caps_for_pages``, and ``CERTIFICATE_FLOOR`` are imported
 # above and live in :mod:`curator.page_caps` so :mod:`curator.eval.report`
 # can consume them without importing the renderer (avoids a circular
-# dependency). The imports are re-exported via ``# noqa: F401`` rather than
-# ``__all__`` so the module's true public API (``render``, ``RenderOutput``,
-# ``TrimKind``, ``TrimStep``) stays exportable via ``from x import *``.
+# dependency). The imports are re-exported via a ruff F401 suppression on
+# the import statement rather than ``__all__`` so the module's true public
+# API (``render``, ``RenderOutput``, ``TrimKind``, ``TrimStep``) stays
+# exportable via ``from x import *``.
 
 if TYPE_CHECKING:
     from curator.client import CurationResult
