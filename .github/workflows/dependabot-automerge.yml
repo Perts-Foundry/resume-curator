@@ -1,0 +1,387 @@
+# Auto-merge Dependabot patch/minor PRs after CI succeeds.
+#
+# Trust model (in evaluation order):
+#   1. Trigger fires only on workflow_run.conclusion == 'success' →
+#      CI-green is a precondition, not a downstream gate. CI is what
+#      actually catches a hostile package version (ruff, mypy, pytest,
+#      pip-audit, gitleaks, trufflehog all run on the PR head).
+#   2. trustedSha resolved from actions.getWorkflowRun(run.id).head_sha →
+#      defends against late-firing race where pr.head.sha has moved.
+#   3. 4-way bot identity gate (verified signature + author + committer +
+#      pr.user) → only commits actually authored by Dependabot land.
+#      Dependabot signs every commit with GitHub's GPG key; an unverified
+#      commit means a different actor pushed onto the dependabot/* branch.
+#   4. Major-bump regex on PR title + body → patch/minor only. Anchored
+#      on "Bump(s) <pkg> from X.Y.Z to X.Y.Z" so unrelated version numbers
+#      in release-note prose cannot trigger false positives. Majors stay
+#      open for human merge.
+#   5. SHA-pinned merge via pulls.merge({ sha: trustedSha }) → fails with
+#      409 if HEAD moved between CI completion and merge. The merged commit
+#      is always the validated commit.
+#
+# The skip path posts a sticky `dependabot-automerge-skip` comment with
+# the reason; the merge path posts a `dependabot-automerge` success
+# comment and deletes any prior skip comments.
+#
+# DO NOT add steps that require checkout, secrets beyond GITHUB_TOKEN, or
+# environment bindings. Route those to a separate workflow.
+#
+# WARNING: Triggered by the CI workflow's exact name. Renaming ci.yml's
+# `name:` field silently breaks this workflow.
+
+name: Dependabot Auto-merge
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    # Only fire for Dependabot branches. Eliminates the "skipped" runs that
+    # would otherwise appear in the Actions tab when non-Dependabot PRs
+    # complete CI.
+    branches: ["dependabot/**"]
+
+# Serialize runs against the same Dependabot branch so a rapid re-run on
+# synchronize doesn't race the merge call.
+concurrency:
+  group: dependabot-automerge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # ── Resolve trusted SHA from the triggering CI run ──────────
+      - name: Resolve trusted SHA
+        id: trusted
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        with:
+          script: |
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+            });
+            if (!run.head_sha) {
+              core.setFailed('workflow_run has no head_sha; cannot pin trusted SHA.');
+              return;
+            }
+            core.setOutput('sha', run.head_sha);
+            core.setOutput('head_branch', process.env.HEAD_BRANCH || run.head_branch || '');
+
+      # ── Find PR + verify all gates + decide merge/skip ──────────
+      - name: Find PR and verify gates
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_SHA: ${{ steps.trusted.outputs.sha }}
+          HEAD_BRANCH: ${{ steps.trusted.outputs.head_branch }}
+        with:
+          script: |
+            const trustedSha = process.env.TRUSTED_SHA;
+            const headBranch = process.env.HEAD_BRANCH;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sameRepoFull = `${owner}/${repo}`;
+            const expectedBot = 'dependabot[bot]';
+            const skipMarker = '<!-- dependabot-automerge-skip -->';
+
+            // Sticky skip comment with paginated dedup. Keep oldest comment
+            // as canonical (preserves thread position; subscribers don't get
+            // re-notified by an updateComment).
+            const postSkip = async (prNumber, reason) => {
+              const safe = String(reason)
+                .replace(/```/g, '​```')
+                .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+              const body = [
+                skipMarker,
+                '# Dependabot Auto-Merge Skipped',
+                '',
+                safe,
+                '',
+                'Resolve the reason above (or merge manually) and the next CI run will re-trigger this workflow.',
+              ].join('\n');
+              let existing = [];
+              try {
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: prNumber, per_page: 100,
+                });
+                existing = comments
+                  .filter((c) => c.body && c.body.includes(skipMarker))
+                  .sort((a, b) => a.id - b.id);
+              } catch (e) {
+                core.warning(`listComments failed on PR #${prNumber}; will post without dedup: ${e.message}`);
+              }
+              const [keep, ...dupes] = existing;
+              try {
+                if (keep) {
+                  await github.rest.issues.updateComment({ owner, repo, comment_id: keep.id, body });
+                } else {
+                  await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+                }
+              } catch (e) {
+                core.warning(`Failed to post skip comment on PR #${prNumber}: ${e.message}`);
+              }
+              for (const d of dupes) {
+                try { await github.rest.issues.deleteComment({ owner, repo, comment_id: d.id }); }
+                catch (_) { /* swallowed */ }
+              }
+            };
+
+            if (!headBranch || !headBranch.startsWith('dependabot/')) {
+              core.info(`head_branch \`${headBranch}\` does not start with dependabot/; nothing to do.`);
+              return;
+            }
+
+            const { data: pulls } = await github.rest.pulls.list({
+              owner, repo, state: 'open',
+              head: `${owner}:${headBranch}`,
+              per_page: 5,
+            });
+            if (pulls.length === 0) {
+              core.info(`No open PR for ${headBranch}.`);
+              return;
+            }
+            const pr = pulls[0];
+            const prNumber = pr.number;
+
+            // Same-repo guard: refuse fork PRs (Dependabot doesn't open
+            // these in standard config; defense-in-depth).
+            if (!pr.head.repo || pr.head.repo.full_name !== sameRepoFull) {
+              await postSkip(prNumber, `PR head is not in the origin repo (${pr.head.repo?.full_name}).`);
+              return;
+            }
+
+            // HEAD pin: pr.head.sha must equal the SHA CI ran against.
+            if (pr.head.sha !== trustedSha) {
+              await postSkip(prNumber, `HEAD drifted (validated \`${trustedSha.substring(0,7)}\`, current \`${pr.head.sha.substring(0,7)}\`). Next CI run will re-trigger.`);
+              return;
+            }
+            // compareCommits as extra defense beyond SHA equality.
+            try {
+              const { data: cmp } = await github.rest.repos.compareCommits({
+                owner, repo, base: trustedSha, head: pr.head.sha,
+              });
+              if (cmp.status !== 'identical') {
+                await postSkip(prNumber, `compareCommits status is \`${cmp.status}\` (expected \`identical\`).`);
+                return;
+              }
+            } catch (e) {
+              await postSkip(prNumber, `compareCommits failed: ${e.message}.`);
+              return;
+            }
+
+            // 4-way bot identity gate: verified signature + author + committer
+            // + pr.user must all == 'dependabot[bot]'. Catches force-push by
+            // another actor onto the dependabot/* branch.
+            const { data: commit } = await github.rest.repos.getCommit({
+              owner, repo, ref: trustedSha,
+            });
+            const verified = commit.commit?.verification?.verified === true;
+            const authorLogin = commit.author?.login;
+            const committerLogin = commit.committer?.login;
+            const prUserLogin = pr.user?.login;
+            if (!verified || authorLogin !== expectedBot || committerLogin !== expectedBot || prUserLogin !== expectedBot) {
+              await postSkip(prNumber, `Bot-identity gate failed (verified=${verified}, author=${authorLogin}, committer=${committerLogin}, pr.user=${prUserLogin}; expected ${expectedBot}).`);
+              return;
+            }
+
+            // Major-bump detection. Anchor on Dependabot's canonical phrasing
+            // for both single-package PRs ("Bump(s) <pkg> from X.Y.Z to X.Y.Z")
+            // and grouped PR per-package lines ("Updates `<pkg>` from X.Y.Z to
+            // X.Y.Z"). \S* after the third digit accepts pre-release suffixes
+            // (`-rc.1`, `+build.5`). Apply against title+body. /g captures
+            // every match; any cross-major flags the PR.
+            const bumpRegex = /\b(?:bumps?|updates?)\s+\S+\s+from\s+v?(\d+)\.\d+\.\d+\S*\s+to\s+v?(\d+)\.\d+\.\d+/gi;
+            const haystack = `${pr.title}\n${pr.body || ''}`;
+            const majorBumps = [];
+            let m;
+            while ((m = bumpRegex.exec(haystack)) !== null) {
+              if (parseInt(m[2], 10) > parseInt(m[1], 10)) {
+                majorBumps.push(m[0]);
+              }
+            }
+            if (majorBumps.length > 0) {
+              const list = majorBumps.slice(0, 5).map((s) => `\`${s}\``).join(', ');
+              await postSkip(prNumber, `Detected major-version bump(s): ${list}. Major bumps require human review; auto-merge declined.`);
+              return;
+            }
+
+            // All gates passed.
+            core.setOutput('number', prNumber.toString());
+            core.setOutput('sha', trustedSha);
+            core.setOutput('short_sha', trustedSha.substring(0, 7));
+            core.setOutput('ref', pr.head.ref);
+            core.setOutput('base_ref', pr.base.ref);
+
+      # ── SHA-pinned merge ─────────────────────────────────────────
+      - name: Squash-merge with SHA pin
+        if: steps.pr.outputs.number != ''
+        id: merge
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_SHA: ${{ steps.pr.outputs.sha }}
+        with:
+          script: |
+            // withRetry: only retry transient 5xx + network. Don't retry 4xx.
+            const RETRYABLE = new Set([500, 502, 503, 504]);
+            const NON_RETRYABLE = new Set([400, 401, 403, 404, 405, 409, 422]);
+            const isTransient = (err) => {
+              if (NON_RETRYABLE.has(err.status)) return false;
+              if (RETRYABLE.has(err.status)) return true;
+              const m = err.message || '';
+              return /Unexpected end of JSON|ECONNRESET|ETIMEDOUT|socket hang up|network|fetch failed/.test(m);
+            };
+            const withRetry = async (fn, { attempts = 3, delayMs = 2000, label = 'API call' } = {}) => {
+              for (let i = 1; i <= attempts; i++) {
+                try { return await fn(); }
+                catch (err) {
+                  if (i < attempts && isTransient(err)) {
+                    const wait = delayMs * Math.pow(2, i - 1);
+                    core.warning(`${label} attempt ${i}/${attempts} failed: ${err.message}. Retrying in ${wait}ms.`);
+                    await new Promise((r) => setTimeout(r, wait));
+                  } else { throw err; }
+                }
+              }
+              // Defensive: should be unreachable with attempts >= 1.
+              throw new Error(`${label}: exhausted ${attempts} attempts without throwing or returning`);
+            };
+
+            // SHA-pinned merge. If HEAD drifted between CI green and now,
+            // GitHub returns 409 and the merge fails — the next CI run on
+            // the new HEAD will re-trigger this workflow.
+            await withRetry(
+              () => github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: parseInt(process.env.PR_NUMBER, 10),
+                merge_method: 'squash',
+                sha: process.env.PR_SHA,
+              }),
+              { attempts: 3, delayMs: 2000, label: 'Squash merge' }
+            );
+            core.setOutput('merged', 'true');
+
+      # ── Delete branch + post success report + clean up skip ─────
+      - name: Post success and clean up
+        if: success() && steps.merge.outputs.merged == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_SHORT_SHA: ${{ steps.pr.outputs.short_sha }}
+          PR_REF: ${{ steps.pr.outputs.ref }}
+          PR_BASE_REF: ${{ steps.pr.outputs.base_ref }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const skipMarker = '<!-- dependabot-automerge-skip -->';
+            const successMarker = '<!-- dependabot-automerge -->';
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const shortSha = process.env.PR_SHORT_SHA;
+            const ref = process.env.PR_REF;
+            const baseRef = process.env.PR_BASE_REF;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            // Delete branch (swallow 404/422 — already gone or repo auto-delete).
+            let branchDeleted = false;
+            try {
+              await github.rest.git.deleteRef({ owner, repo, ref: `heads/${ref}` });
+              branchDeleted = true;
+            } catch (e) {
+              if (e.status !== 404 && e.status !== 422) {
+                core.warning(`Failed to delete branch ${ref} (status ${e.status || 'unknown'}): ${e.message}`);
+              }
+            }
+
+            // Success comment (one per merge; no dedup needed since the PR closes).
+            const body = [
+              successMarker,
+              '# Dependabot Auto-Merge Report',
+              '',
+              ':white_check_mark: **Merged successfully** after CI green.',
+              '',
+              '| | |',
+              '|:--|:--|',
+              `| **Commit** | \`${shortSha}\` |`,
+              `| **Branch** | \`${ref}\` -> \`${baseRef}\`${branchDeleted ? ' (branch deleted)' : ''} |`,
+              `| **Workflow run** | [#${context.runNumber}](${runUrl}) |`,
+            ].join('\n');
+            try {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: prNumber, body,
+              });
+            } catch (e) {
+              core.warning(`Failed to post success comment: ${e.message}`);
+            }
+
+            // Clean up any prior skip comments on this PR.
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: prNumber, per_page: 100,
+              });
+              const stale = comments.filter((c) => c.body && c.body.includes(skipMarker));
+              for (const c of stale) {
+                try {
+                  await github.rest.issues.deleteComment({ owner, repo, comment_id: c.id });
+                } catch (e) {
+                  core.warning(`Failed to delete skip comment ${c.id}: ${e.message}`);
+                }
+              }
+              if (stale.length > 0) {
+                core.info(`Deleted ${stale.length} stale skip comment(s).`);
+              }
+            } catch (e) {
+              core.warning(`Failed to list comments for cleanup: ${e.message}`);
+            }
+
+      # ── Report merge failure ─────────────────────────────────────
+      # Uses a distinct `dependabot-automerge-fail` marker (not the skip
+      # marker) so the success-path cleanup does NOT erase failure history
+      # on a subsequent successful merge attempt. Operators investigating
+      # "why did this PR fail to merge twice before succeeding?" need that
+      # trail. The failure step also fails fast if the merge step actually
+      # succeeded (catches e.g. a post-success comment-API blip).
+      - name: Report merge failure
+        if: failure() && steps.pr.outputs.number != '' && steps.merge.outputs.merged != 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_SHORT_SHA: ${{ steps.pr.outputs.short_sha }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const marker = '<!-- dependabot-automerge-fail -->';
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const shortSha = process.env.PR_SHORT_SHA;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              '# Dependabot Auto-Merge Failed',
+              '',
+              ':x: All gates passed but the squash-merge call failed.',
+              '',
+              `Likely cause: HEAD drifted (\`${shortSha}\` no longer matches), or branch protection requires more than CI's checks.`,
+              '',
+              `[View workflow run](${runUrl})`,
+            ].join('\n');
+            try {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: prNumber, body,
+              });
+            } catch (e) {
+              core.warning(`Failed to post failure comment: ${e.message}`);
+            }

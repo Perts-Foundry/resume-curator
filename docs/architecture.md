@@ -815,7 +815,7 @@ user-friendly Rich-formatted messages. Unhandled exceptions are bugs.
 GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and on manual
 `validate` comment trigger. Single-job design.
 
-**Checks:** ruff check, ruff format, mypy, pytest, pip-audit.
+**Checks:** ruff check, ruff format, mypy, pytest, golden eval, pip-audit, gitleaks, trufflehog.
 
 **Features:**
 - PR comment with structured validation report (pass/fail table + expandable details)
@@ -824,6 +824,10 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and on man
 - SHA-pinned actions, `ubuntu-24.04`, `uv sync --locked`, 15-min timeout
 
 **Branch protection check:** `CI / validate`
+
+### Dependabot auto-merge
+
+A second workflow at `.github/workflows/dependabot-automerge.yml` chains off `ci.yml` via `workflow_run` and auto-merges Dependabot patch/minor PRs after CI green. Trust model: CI-green precondition + `trustedSha` threading + 4-way bot identity gate (verified signature + author + committer + PR user all == `dependabot[bot]`) + major-bump regex on title/body + SHA-pinned `pulls.merge({ sha })`. Majors stay open for human merge. The workflow uses no checkout, no secrets beyond `GITHUB_TOKEN`, no environment binding. Recovery from a bad bump is `git revert`. The trigger filter is name-based (`workflow_run: ["CI"]`), so renaming `ci.yml`'s `name:` field silently breaks auto-merge.
 
 ---
 
