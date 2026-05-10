@@ -504,6 +504,14 @@ COVER_LETTER_WORD_MIN: int = 250
 COVER_LETTER_WORD_MAX: int = 300
 COVER_LETTER_PARAGRAPH_WORD_MIN: int = 40
 COVER_LETTER_PARAGRAPH_WORD_MAX: int = 90
+# Prompt-side body upper bound, surfaced to the model in both the prompt
+# rulebook prose and the Pydantic field descriptions for body_paragraph_*.
+# Tighter than COVER_LETTER_PARAGRAPH_WORD_MAX so the model steers below
+# the validator's hard cap without losing legitimate 86-90 word output.
+# Mirrors the SUMMARY_WORD_TARGET_MAX vs SUMMARY_WORD_HARD_MAX slack
+# pattern. Achievable upper bound on the cover letter total becomes
+# 65 + 2*COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX + 45.
+COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX: int = 87
 # Body paragraphs fixed at exactly 2. Allowing a 2-or-3 choice gave the model
 # a discrete variance source that let total word count drift past the cap even
 # when the per-paragraph cap held. With exactly 2, the arithmetic is bounded:

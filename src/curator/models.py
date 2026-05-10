@@ -22,6 +22,7 @@ from curator.rules import (
     COVER_LETTER_BODY_MAX_COUNT,
     COVER_LETTER_FORBIDDEN_PHRASES,
     COVER_LETTER_FORBIDDEN_WORDS,
+    COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX,
     COVER_LETTER_PARAGRAPH_WORD_MAX,
     COVER_LETTER_PARAGRAPH_WORD_MIN,
     COVER_LETTER_PLACEHOLDER_PATTERN,
@@ -744,8 +745,9 @@ class CoverLetterCuration(BaseModel):
         max_length=2000,
         description=(
             "First STAR-shaped body paragraph, ordered by JD relevance "
-            f"(the strongest match goes here). 80 to {COVER_LETTER_PARAGRAPH_WORD_MAX} "
-            "words, 3-4 sentences, single topic. Every claim must trace "
+            "(the strongest match goes here). 80 to "
+            f"{COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX} words, 3-4 "
+            "sentences, single topic. Every claim must trace "
             "to portfolio data; include at least one number, specific "
             "name, or concrete artifact."
         ),
@@ -756,7 +758,7 @@ class CoverLetterCuration(BaseModel):
             "Second STAR-shaped body paragraph, ordered by JD relevance "
             "(the second-strongest match goes here). Same shape as "
             "body_paragraph_1: 80 to "
-            f"{COVER_LETTER_PARAGRAPH_WORD_MAX} words, 3-4 sentences, "
+            f"{COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX} words, 3-4 sentences, "
             "single topic, every claim grounded in portfolio data. Cover "
             "a different topic than body_paragraph_1."
         ),
