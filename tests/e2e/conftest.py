@@ -233,7 +233,7 @@ def portfolio_dir(tmp_path: Path) -> Path:
 _CURATION_DICT: dict[str, Any] = {
     "summary": (
         "Experienced SRE and founder of Perts Foundry LLC "
-        "(a consulting company) with 10 years of expertise in Kubernetes, "
+        "with 10 years of expertise in Kubernetes, "
         "cloud infrastructure, and site reliability engineering. "
         "Delivered 99.9% uptime across distributed clusters serving 50k RPS, "
         "reduced deployment time by 70% through CI/CD pipeline automation."

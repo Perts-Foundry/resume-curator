@@ -468,7 +468,7 @@ def _make_curation_dict(**overrides: Any) -> dict[str, Any]:
     """Build a minimal valid ResumeCuration dict with overrides."""
     base: dict[str, Any] = {
         "summary": "A seasoned engineer and founder of Perts Foundry LLC "
-        "(a consulting company) with 10 years of experience in cloud "
+        "with 10 years of experience in cloud "
         "infrastructure and DevOps.",
         "suggested_label": "Senior Engineer",
         "company_slug": "test-co",
@@ -891,7 +891,7 @@ class TestResumeCurationWithCoverLetter:
         resume = ResumeCuration(
             summary=(
                 "Platform engineer and founder of Perts Foundry LLC "
-                "(a consulting company) with eight years leading "
+                "with eight years leading "
                 "infrastructure rollouts."
             ),
             suggested_label="Staff DevOps Engineer",

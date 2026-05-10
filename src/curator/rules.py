@@ -463,7 +463,7 @@ SUMMARY_WORD_WARN_MAX: int = 100  # eval WARN upper bound
 # zero-API path summary derivation.
 SUMMARY_MANDATORY_MENTION: str = os.environ.get(
     "CURATOR_SUMMARY_MANDATORY_MENTION",
-    "founder of Perts Foundry LLC (a consulting company)",
+    "founder of Perts Foundry LLC",
 )
 
 CATEGORY_WEIGHTS: dict[str, float] = {
