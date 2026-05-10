@@ -287,8 +287,11 @@
         // future relaxation of the data contract doesn't render a
         // bare " · " separator.
         if edu.at("institution", default: "") != "" [ #sym.dot.c #edu.institution]
-        if yr != "" [ #sym.dot.c #yr]
         if honors != "" [ #sym.dot.c #honors]
+        // Year is right-aligned via #h(1fr), mirroring the
+        // certificates layout (line 302) so degree dates and credential
+        // dates anchor to the same visual column.
+        if yr != "" [#h(1fr)#yr]
       }
     ]
   ]
