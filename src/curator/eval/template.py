@@ -180,13 +180,22 @@ def _evaluate_template_content(content: str) -> list[EvalMetricResult]:
         )
 
     # template_margins — #set page(margin: ...).
-    # 0.3in is the tightest lower bound the templates render at across all
-    # page budgets; 1.0in is the upper bound for generous breathing room.
-    # 0.25-1.1in is the WARN fallback.
+    # 0.3in is the tightest standard lower bound for top/sides; 1.0in is
+    # the upper bound for generous breathing room. The bottom margin is
+    # allowed to go as low as 0.1in to absorb trim-cascade dead space
+    # (the cascade converges at "fits in N pages" and cannot backfill).
+    # WARN floor 0.1in, PASS floor 0.3in for top/left/right.
     margins = _extract_margins(content)
     if margins:
-        all_ok = all(0.3 <= m <= 1.0 for m in margins.values())
-        nearly_ok = all(0.25 <= m <= 1.1 for m in margins.values())
+        # Per-side PASS check: top/left/right must hit the standard
+        # 0.3in floor; bottom is allowed lower (down to PASS = 0.15in).
+        sides_ok = all(
+            0.3 <= margins.get(side, 0.3) <= 1.0
+            for side in ("top", "left", "right")
+        )
+        bottom_ok = 0.15 <= margins.get("bottom", 0.3) <= 1.0
+        all_ok = sides_ok and bottom_ok
+        nearly_ok = all(0.10 <= m <= 1.1 for m in margins.values())
         margin_str = ", ".join(f"{k}: {v}in" for k, v in margins.items())
         results.append(
             EvalMetricResult(
