@@ -346,7 +346,7 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
     - 8-tier trim cascade: interests > project highlights (lowest project first,
       drained to 0) > lowest-ranked project wholesale (keep >=2 so weight-1 and
       weight-2 survive) > certificates bottom-up (keep top `certificate_floor`,
-      page-budget-aware: 3/4/5 for max_pages 1/2/3+) > education > work
+      page-budget-aware: 3/3/5 for max_pages 1/2/3+) > education > work
       highlights to per-position floor (graduated `work_position_floors` tuple,
       bottom-up scan, fall-through to last value) > skill groups removed
       atomically (lowest-priority group first) > below-floor last resort
@@ -370,8 +370,9 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
       iterations than the old keyword-at-a-time drain
     - Certificates trim bottom-up at tier 4 but the top `certificate_floor`
       entries are treated as load-bearing credentials and never cut. The floor
-      scales with the page budget via `_caps_for_pages`: 3 on max_pages=1, 4
-      on max_pages=2, 5 on max_pages=3+. There is no late-stage cert drain:
+      scales with the page budget via `_caps_for_pages`: 3 on max_pages=1, 3
+      on max_pages=2 (cert section is short, leaves more room for skills),
+      5 on max_pages=3+. There is no late-stage cert drain:
       once the floor is reached the cascade skips certs and falls through to
       skill-group removal and, as last resort, below-floor work-highlight
       removal

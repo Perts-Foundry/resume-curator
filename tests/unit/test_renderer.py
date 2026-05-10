@@ -2958,7 +2958,7 @@ class TestCapsForPages:
 
         caps = _caps_for_pages(2)
         assert caps.work_position_floors == (8, 6, 6, 2, 2)
-        assert caps.certificate_floor == 4
+        assert caps.certificate_floor == 3
 
     def test_plateau_at_three_or_more_pages(self) -> None:
         from curator.renderer import _caps_for_pages

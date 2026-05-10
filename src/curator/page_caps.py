@@ -95,7 +95,7 @@ def _caps_for_pages(max_pages: int) -> _PageCaps:
     if max_pages == 2:
         return _PageCaps(
             work_position_floors=(8, 6, 6, 2, 2),
-            certificate_floor=4,
+            certificate_floor=3,
         )
     return _PageCaps(
         work_position_floors=(10, 8, 8, 4, 4),
