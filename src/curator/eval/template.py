@@ -190,8 +190,7 @@ def _evaluate_template_content(content: str) -> list[EvalMetricResult]:
         # Per-side PASS check: top/left/right must hit the standard
         # 0.3in floor; bottom is allowed lower (down to PASS = 0.15in).
         sides_ok = all(
-            0.3 <= margins.get(side, 0.3) <= 1.0
-            for side in ("top", "left", "right")
+            0.3 <= margins.get(side, 0.3) <= 1.0 for side in ("top", "left", "right")
         )
         bottom_ok = 0.15 <= margins.get("bottom", 0.3) <= 1.0
         all_ok = sides_ok and bottom_ok
