@@ -166,7 +166,7 @@ Patch and minor Dependabot updates auto-merge after CI succeeds. The workflow at
 
 - Fires on `workflow_run` after the `CI` workflow completes successfully on a `dependabot/*` branch.
 - Resolves a `trustedSha` from the triggering CI run and threads it through every downstream API call.
-- Verifies a 4-way bot identity gate: `verification.verified === true` AND `commit.author.login` AND `commit.committer.login` AND `pr.user.login` all == `dependabot[bot]`.
+- Verifies a bot identity gate: `verification.verified === true` AND `commit.author.login == dependabot[bot]` AND `pr.user.login == dependabot[bot]` AND `commit.committer.login ∈ {dependabot[bot], web-flow}`. The `web-flow` allowance covers Dependabot rebases performed via the GitHub API, which produce commits authored by `dependabot[bot]` but committed by GitHub's server-side `web-flow` bot (not forgeable externally).
 - Detects major bumps by regex anchored on Dependabot's canonical phrasing for both single-package PRs (`Bump(s) <pkg> from X.Y.Z to X.Y.Z`) and grouped PR per-package lines (`Updates \`<pkg>\` from X.Y.Z to X.Y.Z`). See the workflow file for the exact pattern. Majors fall through and stay open for human merge.
 - Merges with the SHA pinned (`pulls.merge({ sha })`); a force-push between CI green and merge fails with 409.
 
