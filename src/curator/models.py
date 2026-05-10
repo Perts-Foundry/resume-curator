@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal
 
 from loguru import logger
 from pydantic import (
@@ -20,7 +20,6 @@ from pydantic import (
 from curator.exceptions import CurationValidationError
 from curator.rules import (
     COVER_LETTER_BODY_MAX_COUNT,
-    COVER_LETTER_BODY_MIN_COUNT,
     COVER_LETTER_FORBIDDEN_PHRASES,
     COVER_LETTER_FORBIDDEN_WORDS,
     COVER_LETTER_PARAGRAPH_WORD_MAX,
@@ -785,8 +784,7 @@ class CoverLetterCuration(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _migrate_legacy_body_paragraphs(cls, data: Any) -> Any:
-        """Accept legacy ``body_paragraphs: [p1, p2]`` and convert to the
-        tuple shape.
+        """Accept legacy ``body_paragraphs: [p1, p2]`` and convert to tuple shape.
 
         On-disk artifacts (``data/cover_letter.yaml`` in profile dirs and
         portfolio cover-letter files) and existing tests construct the
@@ -802,10 +800,7 @@ class CoverLetterCuration(BaseModel):
             return data
         paras = data["body_paragraphs"]
         if not isinstance(paras, list):
-            msg = (
-                f"legacy body_paragraphs must be a list; got "
-                f"{type(paras).__name__}"
-            )
+            msg = f"legacy body_paragraphs must be a list; got {type(paras).__name__}"
             raise ValueError(msg)
         if len(paras) != COVER_LETTER_BODY_MAX_COUNT:
             msg = (
@@ -833,9 +828,7 @@ class CoverLetterCuration(BaseModel):
             raise ValueError(msg)
         return v
 
-    @field_validator(
-        "opening", "body_paragraph_1", "body_paragraph_2", "closing"
-    )
+    @field_validator("opening", "body_paragraph_1", "body_paragraph_2", "closing")
     @classmethod
     def _no_em_dashes_in_prose(cls, v: str) -> str:
         if _EM_DASH_RE.search(v):
