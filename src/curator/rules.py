@@ -499,7 +499,7 @@ if abs(sum(CATEGORY_WEIGHTS.values()) - 1.0) > 1e-9:
 #   Both the static path (portfolio-authored) and the API path (generated)
 #   must ship letters with no unfilled [UPPERCASE] tokens.
 
-COVER_LETTER_WORD_TARGET: int = 275
+COVER_LETTER_WORD_TARGET: int = 265
 COVER_LETTER_WORD_MIN: int = 250
 COVER_LETTER_WORD_MAX: int = 300
 COVER_LETTER_PARAGRAPH_WORD_MIN: int = 40

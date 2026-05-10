@@ -50,15 +50,23 @@ from curator.rules import (
     render_weak_phrases_for_prompt,
 )
 
-#: Audit-trail version for the system prompt + portfolio block layout.
-#: Bump on any prompt rewrite or schema-affecting change so logged
-#: ``curation_log.json`` entries can distinguish curations across prompt
-#: revisions. Independent of curation_log's ``format_version``.
+#: Audit-trail version for the curator system prompt
+#: (``_SYSTEM_PROMPT_TEXT``). Bump on any rewrite or schema-affecting
+#: change to the system prompt itself so logged ``curation_log.json``
+#: entries can distinguish curations across system-prompt revisions.
+#: Independent of curation_log's ``format_version``.
 #:
-#: Kept as a pure date. Whether a run also included the cover-letter
-#: rulebook block is recorded separately via the ``with_cover_letter``
-#: field in the audit log. This keeps the version field monotonic and
-#: decouples code-level prompt changes from per-invocation flag state.
+#: NOT bumped for cover-letter-only edits. The cover-letter prompt
+#: block (``_COVER_LETTER_PROMPT_BLOCK``) is conditionally appended to
+#: the system prompt based on the ``--cover-letter`` flag and is
+#: byte-different from the version off-path runs see. ``PROMPT_HASH``
+#: covers both blocks together so cover-letter content drift is
+#: detectable in the audit log without requiring a version bump that
+#: would mislead off-path log readers (whose effective prompt is
+#: byte-identical across cover-letter constant changes).
+#:
+#: Whether a run included the cover-letter rulebook block is recorded
+#: separately via the ``with_cover_letter`` field in the audit log.
 PROMPT_VERSION: str = "2026-05-09"
 
 # ---------------------------------------------------------------------------
@@ -384,15 +392,15 @@ add up by design.
   Section       | Words   | Sentences | Notes
   ------------- | ------- | --------- | ----------------------------------
   opening       | 55-65   | 2         | company-specific hook
-  body (each)   | 80-90   | 3-4       | exactly 2 paragraphs, STAR-shaped
+  body (each)   | 80-87   | 3-4       | exactly 2 paragraphs, STAR-shaped
   closing       | 35-45   | 2         | value recap + subtle CTA
 
 Arithmetic (both bounds are provable from the section bands):
-  Ceiling: 65 + 2*90 + 45 = 290, under the {total_max}-word cap.
+  Ceiling: 65 + 2*87 + 45 = 284, comfortably under the {total_max}-word cap.
   Floor:   55 + 2*80 + 35 = 250, at the {total_min}-word minimum.
 Stay inside every section's band and the total is guaranteed to fall in \
-[{total_min}, {total_max}]. Aim for mid-band in each section (opening ~60, \
-body ~85 each, closing ~40) to land near the {target}-word target.
+[{total_min}, 284]. Aim for mid-band in each section (opening ~60, \
+body ~83 each, closing ~40) to land near the {target}-word target.
 
 Structure:
 - ``salutation``: "Dear [Name]," when the hiring manager name is present \
@@ -403,11 +411,11 @@ reference. Use an achievement lead, a specific origin story, or a \
 company-product hook. Do NOT open with "I am writing to apply for" or \
 similar boilerplate.
 - ``body_paragraph_1``: First STAR-shaped paragraph, the strongest \
-match to the job description. 80 to 90 words, 3-4 sentences, single \
+match to the job description. 80 to 87 words, 3-4 sentences, single \
 topic. Every claim must trace to a portfolio entry; never fabricate \
 metrics, team sizes, or technologies.
 - ``body_paragraph_2``: Second STAR-shaped paragraph, the next-strongest \
-match. Same shape as body_paragraph_1 (80 to 90 words, 3-4 sentences, \
+match. Same shape as body_paragraph_1 (80 to 87 words, 3-4 sentences, \
 grounded in portfolio data). Cover a different topic than \
 body_paragraph_1; do not restate the same point.
 - ``closing``: 2 sentences, 35-45 words. Recap value, add a subtle call \
@@ -482,7 +490,7 @@ plausibly be sent to another company with only a name swap.
 - Mirror 3 to 5 JD keywords naturally across the letter.
 
 Final pass before emitting:
-- Word counts land mid-band per section (opening ~60, each body ~85, \
+- Word counts land mid-band per section (opening ~60, each body ~83, \
 closing ~40).
 - Every metric, project, incident, and technology in the body \
 paragraphs traces to portfolio data; nothing fabricated.
