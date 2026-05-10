@@ -635,7 +635,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-09"
+        assert PROMPT_VERSION == "2026-05-10"
 
 
 class TestSystemPromptByteIdentity:
@@ -652,7 +652,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "31ae0b43159ba9638607ede1f23810b94eb1c20f3bfb9fccdb052302492cf1e8"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "d8a0b00ee00199f090f6f109583c03c739f0284bbe24a10b463a9ba9fdfef4b3"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()
