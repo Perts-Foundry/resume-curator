@@ -275,8 +275,8 @@ expanding scope. Each is independently shippable.
   partial-recovery flow is built out (per CLAUDE.md "Failure
   recovery (API path only)"). Reconsider promoting per-paragraph
   over-max to a hard reject on the API path. Would have caught the
-  Roadie 311-word output before it shipped. (prompt-reviewer
-  CRIT-1 follow-up.)
+  311-word output observed on the 2026-05-10 reference run before
+  it shipped. (prompt-reviewer CRIT-1 follow-up.)
 
 - [ ] **Cover-letter prompt block hash pin**: today's
   `EXPECTED_SHA256` test pin in `tests/unit/test_prompt.py:655`

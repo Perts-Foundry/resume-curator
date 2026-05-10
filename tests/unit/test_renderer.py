@@ -3175,18 +3175,19 @@ class TestPerPositionFloorEdgeCases:
         assert step.below_floor is True
 
 
-class TestRoadieBoeingShapeRegression:
+class TestCascadeCliffRegression:
     """Regression tests for the cascade-cliff problem the rebalance fixed.
 
-    Synthetic distributions mirror the Roadie (2026-05-10) and Boeing
-    (2026-05-09) profile shapes that motivated the rebalance. Pinned
-    here so future cascade tweaks cannot regress to the
-    11/4/0/0/0-style "ghost row" output.
+    Synthetic high-density 5-entry distributions exercise the corner
+    case where the prior cascade drained positions 2+ to zero before
+    trimming positions 0/1, producing 11/4/0/0/0-style "ghost row"
+    output. Pinned here so future cascade tweaks cannot regress.
     """
 
-    def test_roadie_distribution_no_ghost_rows_on_2page(self) -> None:
-        """Roadie shape (32/24/12/17/4) under 2-page floors produces no
-        empty work entries (positions 2+ render content).
+    def test_high_density_5entry_no_ghost_rows_on_2page(self) -> None:
+        """5-entry portfolio with skewed-high counts (32/24/12/17/4)
+        under 2-page floors produces no empty work entries (positions 2+
+        render content).
         """
         from curator.renderer import _apply_trim, _generate_next_trim
 

@@ -277,7 +277,7 @@ class TestBandsAndCapsConsistency:
 
         Replaces the previous ``test_eval_target_at_least_renderer_floor``
         invariant. Under the new design the eval rubric does not
-        maintain its own per-position ceiling — it derives every
+        maintain its own per-position ceiling; it derives every
         position band from the renderer floor tuple, eliminating drift.
 
         Parametrized only for ``max_pages`` 1 and 2 because the eval

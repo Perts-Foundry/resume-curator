@@ -30,15 +30,20 @@ from curator.io_utils import (
     priority_sort_key,
 )
 from curator.models import EMPTY_INTERESTS, RENDERER_MANAGED_SECTIONS, RENDERER_SECTIONS
-from curator.page_caps import CERTIFICATE_FLOOR, _caps_for_pages, _PageCaps
+from curator.page_caps import (  # noqa: F401 (re-exported for back-compat)
+    CERTIFICATE_FLOOR,
+    _caps_for_pages,
+    _PageCaps,
+)
 from curator.prompt import PROMPT_HASH, PROMPT_VERSION
 from curator.rules import COVER_LETTER_WORD_MAX
 
-# Re-export so existing call sites (`from curator.renderer import _PageCaps`,
-# etc.) keep working. ``_PageCaps`` and ``_caps_for_pages`` now live in
-# :mod:`curator.page_caps` so :mod:`curator.eval.report` can consume them
-# without importing the renderer (avoids a circular dependency).
-__all__ = ["CERTIFICATE_FLOOR", "_PageCaps", "_caps_for_pages"]
+# ``_PageCaps``, ``_caps_for_pages``, and ``CERTIFICATE_FLOOR`` are imported
+# above and live in :mod:`curator.page_caps` so :mod:`curator.eval.report`
+# can consume them without importing the renderer (avoids a circular
+# dependency). The imports are re-exported via ``# noqa: F401`` rather than
+# ``__all__`` so the module's true public API (``render``, ``RenderOutput``,
+# ``TrimKind``, ``TrimStep``) stays exportable via ``from x import *``.
 
 if TYPE_CHECKING:
     from curator.client import CurationResult
@@ -428,8 +433,8 @@ def _generate_next_trim(
     tuple is page-budget-aware; positions beyond its length receive
     the last value (a 6-entry portfolio under a 5-element floor tuple
     gets the last value applied to position 5). For 1-page profiles
-    where positions 2+ have floor 0, tier 6 drains them fully — the
-    timeline still renders as header-only rows ("ghost rows" are
+    where positions 2+ have floor 0, tier 6 drains them fully (the
+    timeline still renders as header-only rows; "ghost rows" are
     intentional on 1-page where page space cannot support a non-zero
     older-role floor). For 2+-page profiles with non-zero older-role
     floors, tier 6 stops at the floor and the cascade falls through to
@@ -624,7 +629,7 @@ def _prune_empty_sections(
 
     Cleans up defects the trim cascade can leave behind:
 
-    - Skill groups whose ``keywords`` list is empty. Tier 10 now
+    - Skill groups whose ``keywords`` list is empty. Tier 7 now
       removes whole groups atomically so the cascade itself never
       produces an empty-keyword group, but this guard still runs
       defensively in case upstream construction leaves one behind.
