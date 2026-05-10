@@ -36,25 +36,30 @@ class CuratorSettings(BaseSettings):
         default=None,
         description="Anthropic API key (required for API calls)",
     )
-    # Default to the alias `claude-haiku-4-5` (changed 2026-05-09 from
-    # `claude-sonnet-4-6`). The Sonnet-vs-Haiku A/B against 3 real JDs
-    # showed Haiku producing equivalent or better resume quality on
-    # Tier 1 + Tier 2 metrics at ~32% of Sonnet's per-call cost
-    # (testing/results/haiku-eval/findings.md). Cover-letter prose
-    # quality required the lexicon expansion landing in this same PR
-    # to bring Haiku in line. Override `CURATOR_MODEL=claude-sonnet-4-6`
-    # if you want the older default. `effort` is removed by default
-    # because Haiku 4.5 errors on the parameter; if you set
-    # CURATOR_MODEL=claude-sonnet-4-6 you may also want to restore
-    # CURATOR_EFFORT=high.
+    # Default to the alias `claude-sonnet-4-6` rather than a snapshot ID:
+    # at the time of writing the snapshot `claude-sonnet-4-6-20260217` did
+    # not yet exist on the Anthropic API and returned 404 against a default
+    # `curator curate` invocation. Forks that want reproducibility against
+    # a specific model release should override `CURATOR_MODEL` with the
+    # snapshot ID once one is published.
+    #
+    # The 2026-05-09 cross-model evaluation (testing/results/haiku-eval/
+    # findings.md) tested Haiku 4.5 on this path through four prompt and
+    # schema iterations. Haiku produced acceptable resumes but failed on
+    # the cover letter at every level: prose validator trips,
+    # paragraph-count drift, and (after the v4 exemplar attempt)
+    # confident wrong-company outputs that would silently ship to the
+    # wrong recruiter. Sonnet 4.6 ran 3 of 3 clean. Until retry-with-
+    # feedback (TODO Curation Reliability) is implemented to amortize
+    # Haiku's failure rate, the curate path stays on Sonnet for
+    # reliability. Judge path remains on Haiku (clean separation;
+    # judge had no analogous capability gap).
     model: str = Field(
-        default="claude-haiku-4-5",
+        default="claude-sonnet-4-6",
         description=(
             "Claude model identifier. Alias by default; override CURATOR_MODEL "
-            "with a snapshot ID (e.g. claude-haiku-4-5-20251001) for "
-            "reproducibility against a frozen model release. Haiku 4.5 errors "
-            "on the `effort` parameter -- leave CURATOR_EFFORT unset when "
-            "using Haiku."
+            "with a snapshot ID (e.g. claude-sonnet-4-6-20260217) for "
+            "reproducibility against a frozen model release."
         ),
     )
     max_tokens: int = Field(default=4096, ge=256, le=8192)

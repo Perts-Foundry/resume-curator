@@ -56,12 +56,14 @@ class TestCuratorSettings:
 
     def test_defaults(self) -> None:
         settings = _settings()
-        # Both model defaults flipped 2026-05-09 from claude-sonnet-4-6 to
-        # claude-haiku-4-5 after the cross-model A/B (judge: tolerances hold;
-        # curate: equivalent quality + lexicon expansion that landed in the
-        # same PR closes the cover-letter prose gap). See findings doc at
-        # testing/results/haiku-eval/findings.md.
-        assert settings.model == "claude-haiku-4-5"
+        # judge_model default flipped 2026-05-09 from claude-sonnet-4-6 to
+        # claude-haiku-4-5 after the cross-model A/B (tolerances hold,
+        # ~37% of Sonnet's per-call cost). curate `model` was likewise
+        # flipped briefly that day but reverted in the same PR after the
+        # v4 retest produced confident wrong-company cover letters; see
+        # testing/results/haiku-eval/findings.md and the same-day design
+        # log entry.
+        assert settings.model == "claude-sonnet-4-6"
         assert settings.max_tokens == 4096
         assert settings.portfolio_path == Path("../professional-portfolio-source")
         assert settings.output_dir == Path("profiles")
