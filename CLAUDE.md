@@ -160,6 +160,22 @@ submittable prose with no placeholders and no TEMPLATE banner.
 - **Discovered work**: If you find something that needs fixing or improving while
   working on another task, add it to `TODO.md` rather than leaving a `TODO` comment.
 
+## Dependabot Auto-Merge
+
+Patch and minor Dependabot updates auto-merge after CI succeeds. The workflow at `.github/workflows/dependabot-automerge.yml`:
+
+- Fires on `workflow_run` after the `CI` workflow completes successfully on a `dependabot/*` branch.
+- Resolves a `trustedSha` from the triggering CI run and threads it through every downstream API call.
+- Verifies a bot identity gate: `verification.verified === true` AND `commit.author.login == dependabot[bot]` AND `pr.user.login == dependabot[bot]` AND `commit.committer.login ∈ {dependabot[bot], web-flow}`. The `web-flow` allowance covers Dependabot rebases performed via the GitHub API, which produce commits authored by `dependabot[bot]` but committed by GitHub's server-side `web-flow` bot (not forgeable externally).
+- Detects major bumps by regex anchored on Dependabot's canonical phrasing for both single-package PRs (`Bump(s) <pkg> from X.Y.Z to X.Y.Z`) and grouped PR per-package lines (`Updates \`<pkg>\` from X.Y.Z to X.Y.Z`). See the workflow file for the exact pattern. Majors fall through and stay open for human merge.
+- Merges with the SHA pinned (`pulls.merge({ sha })`); a force-push between CI green and merge fails with 409.
+
+The workflow posts a sticky `<!-- dependabot-automerge-skip -->` comment when it declines (with the reason), a `<!-- dependabot-automerge -->` success comment on merge, and a distinct `<!-- dependabot-automerge-fail -->` comment if all gates pass but the merge call itself fails. Stale skip comments are deleted on success; fail comments are preserved across success so retry history stays visible.
+
+The workflow does not check out PR content, request secrets beyond `GITHUB_TOKEN`, or bind a GitHub Environment. Trust comes from the CI-green precondition + signed-commit identity gate; CI (ruff/mypy/pytest/pip-audit/gitleaks/trufflehog) is what actually validates a Dependabot PR's content. Recovery from a bad bump that slipped through CI is `git revert`.
+
+**WARNING**: the trigger filter is `workflow_run: ["CI"]`. Renaming `ci.yml`'s `name:` field silently breaks auto-merge.
+
 ## Sensitive Content
 
 This repository is **public**. Real application data (resumes, cover letters,
@@ -254,6 +270,7 @@ resume-curator/
   .pre-commit-config.yaml
   .github/
     workflows/ci.yml                # CI: ruff, mypy, pytest, pip-audit, PR comments
+    workflows/dependabot-automerge.yml  # Auto-merge Dependabot patch/minor PRs after CI green
     dependabot.yml                  # Weekly grouped dependency updates
   src/
     curator/
