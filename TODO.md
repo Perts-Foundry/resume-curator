@@ -34,7 +34,17 @@ Items below address the underlying class, not specific incidents.
   never the full portfolio (cache preservation).
 - [ ] Generalize the loop to also carry cover-letter validator context
   so word-count overshoots and forbidden-word hits are recoverable
-  through the same mechanism.
+  through the same mechanism. **2026-05-09 update**: this is the
+  identified unblocker for switching `model` default to
+  `claude-haiku-4-5`. The cross-model A/B at
+  `testing/results/haiku-eval/findings.md` showed Haiku failing
+  ~67% of cover-letter calls across 6 paid samples (lexicon trips,
+  paragraph drift, wrong-company artifacts), making it net more
+  expensive than Sonnet despite the 3x sticker-price advantage.
+  With retry-with-feedback the failures self-correct on the next
+  attempt, amortizing across 1-3 calls instead of 1-3 wasted-paid
+  recovery cycles. Re-test Haiku once this lands and revisit the
+  default.
 
 ### Observability
 
