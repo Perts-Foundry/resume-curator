@@ -7,10 +7,14 @@
 #      pip-audit, gitleaks, trufflehog all run on the PR head).
 #   2. trustedSha resolved from actions.getWorkflowRun(run.id).head_sha →
 #      defends against late-firing race where pr.head.sha has moved.
-#   3. 4-way bot identity gate (verified signature + author + committer +
-#      pr.user) → only commits actually authored by Dependabot land.
+#   3. Bot identity gate (verified signature + author == dependabot[bot]
+#      + pr.user == dependabot[bot] + committer ∈ {dependabot[bot],
+#      web-flow}) → only commits actually authored by Dependabot land.
 #      Dependabot signs every commit with GitHub's GPG key; an unverified
 #      commit means a different actor pushed onto the dependabot/* branch.
+#      `web-flow` is allowed as committer for the rebase case (Dependabot
+#      rebasing via the API produces commits authored by dependabot[bot]
+#      but committed by GitHub's server-side `web-flow` bot).
 #   4. Major-bump regex on PR title + body → patch/minor only. Anchored
 #      on "Bump(s) <pkg> from X.Y.Z to X.Y.Z" so unrelated version numbers
 #      in release-note prose cannot trigger false positives. Majors stay
@@ -182,9 +186,17 @@ jobs:
               return;
             }
 
-            // 4-way bot identity gate: verified signature + author + committer
-            // + pr.user must all == 'dependabot[bot]'. Catches force-push by
-            // another actor onto the dependabot/* branch.
+            // Bot identity gate: verified signature + author == dependabot[bot]
+            // + pr.user == dependabot[bot] + committer ∈ {dependabot[bot], web-flow}.
+            //
+            // The committer is `web-flow` (GitHub's server-side bot, not
+            // forgeable by an external actor) when Dependabot performs a
+            // rebase via the API: e.g., after a `@dependabot rebase` comment,
+            // or an automatic rebase when main advances. In those cases the
+            // commit is GitHub-signed (verified=true), authored by
+            // dependabot[bot], but committed by web-flow. Refusing this case
+            // would block every rebased PR from auto-merging.
+            const allowedCommitters = new Set([expectedBot, 'web-flow']);
             const { data: commit } = await github.rest.repos.getCommit({
               owner, repo, ref: trustedSha,
             });
@@ -192,8 +204,8 @@ jobs:
             const authorLogin = commit.author?.login;
             const committerLogin = commit.committer?.login;
             const prUserLogin = pr.user?.login;
-            if (!verified || authorLogin !== expectedBot || committerLogin !== expectedBot || prUserLogin !== expectedBot) {
-              await postSkip(prNumber, `Bot-identity gate failed (verified=${verified}, author=${authorLogin}, committer=${committerLogin}, pr.user=${prUserLogin}; expected ${expectedBot}).`);
+            if (!verified || authorLogin !== expectedBot || !allowedCommitters.has(committerLogin) || prUserLogin !== expectedBot) {
+              await postSkip(prNumber, `Bot-identity gate failed (verified=${verified}, author=${authorLogin}, committer=${committerLogin}, pr.user=${prUserLogin}; expected author/pr.user=${expectedBot}, committer ∈ {${expectedBot}, web-flow}).`);
               return;
             }
 
