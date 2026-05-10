@@ -1,3 +1,6 @@
+# DO NOT rename without updating .github/workflows/dependabot-automerge.yml
+# (its `workflow_run.workflows: ["CI"]` filter is a name-based string match
+# and silently fails if this name changes).
 name: CI
 
 on:
