@@ -55,9 +55,14 @@ profiles/**
 # Testing (may contain resume content or employer references)
 testing/notes.md
 testing/jds/
-testing/results/*.json
-testing/results/*.stdout
-testing/results/*.stderr
+# testing/results/ holds eval JSONs, partial recovery files, and full
+# rendered profiles from real-JD test runs (JD text, curated YAML, PDFs,
+# cover letter prose). All real-candidate / real-employer content; per
+# CLAUDE.md Sensitive Content section it must never land in the public
+# repo. The previous narrow patterns only caught top-level *.json /
+# *.stdout / *.stderr; broadened 2026-05-09 to ignore the entire tree
+# after a `git add -A` from the Haiku eval staged real cover letters.
+testing/results/
 
 # Config overrides (user-specific)
 config.toml
