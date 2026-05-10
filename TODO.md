@@ -34,7 +34,17 @@ Items below address the underlying class, not specific incidents.
   never the full portfolio (cache preservation).
 - [ ] Generalize the loop to also carry cover-letter validator context
   so word-count overshoots and forbidden-word hits are recoverable
-  through the same mechanism.
+  through the same mechanism. **2026-05-09 update**: this is the
+  identified unblocker for switching `model` default to
+  `claude-haiku-4-5`. The cross-model A/B at
+  `testing/results/haiku-eval/findings.md` showed Haiku failing
+  ~67% of cover-letter calls across 6 paid samples (lexicon trips,
+  paragraph drift, wrong-company artifacts), making it net more
+  expensive than Sonnet despite the 3x sticker-price advantage.
+  With retry-with-feedback the failures self-correct on the next
+  attempt, amortizing across 1-3 calls instead of 1-3 wasted-paid
+  recovery cycles. Re-test Haiku once this lands and revisit the
+  default.
 
 ### Observability
 
@@ -152,6 +162,137 @@ design choice.
   `protected: bool` or `protection_tier: int` to `ResumeCuration`
   sub-models so the renderer consults the field rather than positional
   heuristics.
+
+---
+
+## Two-Page-Mode Follow-ups (from 2026-05-09 work)
+
+These were deliberately deferred so the wave 1-3 PR could land without
+expanding scope. Each is independently shippable.
+
+- [ ] **Long-form safety-net + soft-floor interaction**: on long-form
+  rerenders, `_reorder_with_safety_net` (renderer.py:124) appends every
+  AI-unranked portfolio highlight to the current role, then the trim
+  cascade's `recent_role_soft_floor=4` (max_pages=2) protects positions
+  0-1 while draining positions 2-4 to zero. Net effect: position 0
+  monopolizes page 1 (e.g. 21 bullets) while positions 2-4 render as
+  header-only rows. This is exactly the "curation gap" pattern the new
+  long-form judge `<conventions>` will FAIL on. Reproduced on
+  `profiles/2026-05-09-boeing/` (rerender of a 1-page-targeted curation
+  at `--pages 2`): AI ranked 5 highlights for the current role; renderer
+  shipped 21 (5 ranked + 16 safety-net-appended); 3 of 5 work entries
+  rendered with 0 bullets. Pure rendering / cascade concern -- the AI
+  prompt is page-agnostic by design and will not see `max_pages`.
+  Possible fixes: (a) per-role hard cap that scales with `max_pages`,
+  (b) cap the safety net per entry (e.g. `max_safety_net_per_entry =
+  max_pages * 2`), (c) cascade reorder so safety-net-appended highlights
+  drain before AI-ranked highlights at non-current positions, (d) drain
+  current-role excess before draining older roles to zero. Best
+  diagnosed alongside the AR-1 ProjectRanking work since both touch the
+  AI/renderer split. (Real-world finding 2026-05-09.)
+
+- [ ] **AR-1 / ProjectRanking schema**: extend `ResumeCuration.projects`
+  from `list[str]` to `list[ProjectRanking]` so the AI ranks highlights
+  *within* each project, not just project IDs. Today's renderer caps
+  every project at 2 bullets across all `max_pages` modes precisely
+  because the AI cannot rank per-project highlights — raising the cap
+  to 3+ on long-form would surface portfolio-position-2 content rather
+  than JD-relevance content. Schema extension would unblock a long-form
+  per-project cap of 3-4 and add genuine project depth on 2-page output.
+  Bumps `PROMPT_VERSION` (one cache invalidation cycle); update
+  `_caps_for_pages` to return `project_bullet_cap` once the AI ranking
+  exists. (architecture-reviewer 2026-05-09 review.)
+
+- [ ] **AR-7 / EXEC_FORM_BANDS**: third tier in `bands_for_pages` for
+  executive 4-5 page CVs. Today's selector plateaus at `LONG_FORM_BANDS`
+  for `max_pages >= 2` so a 4-page exec CV scores against 2-page bands
+  (likely too dense). Add `EXEC_FORM_BANDS` (or rename to a generic
+  per-page profile) when 3+-page output becomes a real workflow target.
+  Track in `_caps_for_pages` too — it also plateaus at 3+.
+
+- [ ] **AR-15 / Auto-downsize on under-fill**: renderer post-check that
+  emits an INFO log + `auto_downsize_eligible: true` in
+  `curation_log.json` when the final page is < 30% filled. Future
+  enhancement: optional flag that auto-recompiles at `max_pages-1` and
+  ships the smaller PDF. User explicitly chose "always target the
+  requested page count" for the wave-1-3 scope; this lands as opt-in
+  later if needed. (architecture-reviewer 2026-05-09 review.)
+
+- [ ] **AR-3 / Per-mode `_JUDGE_DIMENSION_TOLERANCES`**: watch item.
+  Existing tolerances (`section_selection: (0,1)`, `overall_impression:
+  (1,3)`, default `(1,2)`) were calibrated against 1-page goldens. If
+  the long-form judge calibration shows wider dispersion on
+  `narrative_coherence` / `highlight_quality`, add a per-page-budget
+  tolerance map. Land only if observed empirically, not preemptively.
+
+- [ ] **TE-15 / Long-form golden human_scores**: the 4 long-form
+  goldens shipped with `baselines: {}` and no `human_scores` block.
+  After running the judge against them once (paid; ~$0.20), populate
+  `human_scores` from the calibration output and set `meta.judge_version`
+  so the regression contract is restored on the long-form arm.
+
+- [ ] **CR-15 / 1-page golden re-baseline**: existing 24 goldens'
+  `human_scores` are stamped with `judge_version="2026-04-26"`. Until
+  re-baselined, `compare_judge_against_golden` short-circuits with a
+  WARNING for each (no ERROR). Run the judge once against all 24 cases
+  (paid; ~$1.20), lift `meta.judge_version` to `"2026-05-09"` where
+  diffs ≤ tolerance, mark out-of-tolerance cases for fresh human review.
+
+- [ ] **CR-21 / Annotate stale band claims**: the design-log entries
+  dated 2026-04-10, 2026-04-13, and 2026-04-14 still describe band
+  values (e.g. `total_highlight_count PASS 6-25`, `whitespace_ratio
+  PASS 55-75%`) as universal facts. Annotate inline with "now
+  SHORT_FORM_BANDS-specific" supersedes-style notes so the log reads
+  correctly to a future contributor. (doc-sync-checker 2026-05-09
+  review.)
+
+## Trim Cascade Rebalance Follow-ups (from 2026-05-10 work)
+
+- [ ] **Calibrate `work_position_floors` from real runs**: the
+  `(8, 6, 6, 2, 2)` 2-page profile is a starting point. After N>=10
+  2-page renders ship under the new profile, review the `trim_log`
+  pattern + on-page bullet distribution and tighten or relax the
+  per-position floors. Particular concerns: 6-bullet position-1 floor
+  may be too generous for short-content roles; 2-bullet position 3-4
+  floor may be too low for substantive older roles when the page
+  budget allows.
+
+- [ ] **EXEC_FORM_BANDS for `max_pages >= 4`**: the renderer now
+  scales 2-vs-3+ asymmetrically (`(8,6,6,2,2)` vs `(10,8,8,4,4)`)
+  while `bands_for_pages` still treats `max_pages >= 2` as one
+  profile (`LONG_FORM_BANDS = caps(2)`). On 3+-page renders the eval
+  scores against 2-page bands. Add a third `EvalBands` profile keyed
+  on `max_pages >= 3` once 3+-page output becomes a real workflow
+  target (touches `bands_for_pages`, `EvalBands` field defaults, and
+  `test_eval_bands_share_caps_floors` parametrize range). Subsumes
+  the AR-7 follow-up above on the eval side.
+
+- [ ] **Validator hard-vs-soft on per-paragraph cover-letter
+  over-max**: today's API path soft-warns on per-paragraph word
+  count over `COVER_LETTER_PARAGRAPH_WORD_MAX=90`; the static path
+  hard-rejects. Original rationale ("paid calls are expensive") was
+  sound but the cost asymmetry has shifted now that the
+  partial-recovery flow is built out (per CLAUDE.md "Failure
+  recovery (API path only)"). Reconsider promoting per-paragraph
+  over-max to a hard reject on the API path. Would have caught the
+  311-word output observed on the 2026-05-10 reference run before
+  it shipped. (prompt-reviewer CRIT-1 follow-up.)
+
+- [ ] **Cover-letter prompt block hash pin**: today's
+  `EXPECTED_SHA256` test pin in `tests/unit/test_prompt.py:655`
+  covers `_SYSTEM_PROMPT_TEXT` only. The cover-letter block
+  (`_COVER_LETTER_PROMPT_BLOCK`) is interpolated and only audited
+  via `PROMPT_HASH`. Adding a parallel byte-identity pin for the
+  cover-letter block would catch silent edits at test time
+  (parallel to the system-prompt pin). Defer until an unrelated
+  cover-letter prompt edit warrants the cache-rotation cost.
+
+- [ ] **Aggressive cover-letter band tightening (escalation
+  trigger)**: if the conservative target+body-band change shipped
+  2026-05-10 still produces >20% drift over the 300-word soft cap
+  on the next 5+ paid `--cover-letter` runs, tighten body band
+  prose further from `80-87` to `80-85` (achievable upper bound
+  becomes `65 + 2*85 + 45 = 280`). Validator constants stay at 90.
 
 ---
 
@@ -330,9 +471,11 @@ design choice.
 - [ ] Have `render()` accept `ResumeCuration` directly instead of
   `CurationResult`. Large call-site refactor; deferred until a
   second non-API producer of curations exists.
-- [ ] Soft validation: warn when `curator curate` runs with
-  `--max-pages > 3` (currently allowed by the global `le=5` bump;
-  typical curate output is 1-3).
+- [x] ~~Soft validation: warn when `curator curate` runs with
+  `--max-pages > 3`~~ — superseded 2026-05-09 by the explicit `--pages`
+  flag on `curate` and the aligned default of 2 (`--pages 1` for
+  short-form, `--pages 4..5` for executive CVs is now an explicit
+  user choice, not a "watch this carefully" warning surface).
 
 ### Suggestions worth prompt drift
 
@@ -380,9 +523,11 @@ republishing.
 
 ### CI & tooling
 
-- [ ] Remove the `--ignore-vuln CVE-2026-3219` flag from the
-  `pip-audit` step in `.github/workflows/ci.yml` once pip 26.1 ships
-  to PyPI and the lockfile picks it up. Tracking issue: pypa/pip#13870.
+- [ ] Remove the `--ignore-vuln CVE-2026-3219` and
+  `--ignore-vuln CVE-2026-6357` flags from the `pip-audit` step in
+  `.github/workflows/ci.yml` once pip 26.1 ships to PyPI and the
+  lockfile picks it up. Both CVEs are scoped to pip 26.0.1 and both
+  fixes ship in pip 26.1. Tracking issue: pypa/pip#13870.
 - [ ] Pre-commit `mypy` hook only sees changed files; CI mypy only
   covers `src/`. Either extend CI mypy to cover `tests/` or note the
   IDE-only scope in `CLAUDE.md`.

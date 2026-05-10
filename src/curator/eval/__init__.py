@@ -31,13 +31,14 @@ from curator.eval.report import (
     EvalMetricResult,
     EvalReport,
     PortfolioFitReport,
+    bands_for_pages,
     build_report,
 )
 from curator.eval.selection import evaluate_selection
 from curator.eval.template import evaluate_template, get_uniform_page_margin_pt
 from curator.eval.writing import evaluate_writing
-from curator.exceptions import EvalError
-from curator.io_utils import MAX_TEXT_SIZE, load_yaml_safe
+from curator.exceptions import EvalError, RenderError
+from curator.io_utils import MAX_TEXT_SIZE, get_page_count, load_yaml_safe
 from curator.models import RENDERABLE_SECTIONS, PortfolioData, ResumeCuration
 
 if TYPE_CHECKING:
@@ -134,6 +135,7 @@ def from_profile_dir(
 
     # Check for old-schema profiles (missing format_version).
     log_path = resolved / "curation_log.json"
+    log_data: dict[str, Any] = {}
     if log_path.exists():
         try:
             log_size = log_path.stat().st_size
@@ -218,6 +220,56 @@ def from_profile_dir(
     pdf_file = resolved / "resume.pdf"
     pdf_path = pdf_file if pdf_file.exists() else None
 
+    # max_pages inference: PDF reality > log intent > default 1.
+    # PDF wins over log because the log records intent at render time and
+    # the PDF records what actually came out; eval band selection should
+    # follow the rendered artifact, not the requested target. The
+    # ``page_count`` metric independently measures intent-vs-reality, so
+    # the band-selection signal is decoupled from the convergence signal.
+    # Malformed log values (missing, non-int, bool, out-of-range) fall
+    # through to the default rather than propagate as nonsense.
+    inferred_max_pages: int | None = None
+    inference_source = "default"
+    if pdf_path is not None:
+        try:
+            inferred_max_pages = get_page_count(pdf_path)
+            inference_source = "pdf"
+        except RenderError as exc:
+            # Corrupt or oversized PDF: fall through to log/default rather
+            # than crash the eval. Surface the failure as a WARNING so the
+            # band-selection divergence is observable; without it, a
+            # broken PDF silently scores against log-recorded intent and
+            # the user has no signal pointing at the real cause.
+            from loguru import logger
+
+            logger.warning(
+                "PDF page count read failed for {}: {}; falling back to "
+                "log/default for max_pages inference",
+                pdf_path,
+                exc,
+            )
+    if inferred_max_pages is None:
+        raw_mp = log_data.get("max_pages")
+        if (
+            isinstance(raw_mp, int)
+            and not isinstance(raw_mp, bool)
+            and 1 <= raw_mp <= 5
+        ):
+            inferred_max_pages = raw_mp
+            inference_source = "log"
+    if inferred_max_pages is None:
+        inferred_max_pages = 1
+
+    if inference_source != "pdf":
+        from loguru import logger
+
+        logger.info(
+            "Inferred max_pages={} from {} for profile {}",
+            inferred_max_pages,
+            inference_source,
+            resolved.name,
+        )
+
     # Template — use provided or fall back to the bundled default.
     if template_path is None:
         candidate = default_template_path()
@@ -236,6 +288,7 @@ def from_profile_dir(
         work_authored_highlight_counts=_project_work_authored_highlight_counts(
             portfolio
         ),
+        max_pages=inferred_max_pages,
     )
 
 
@@ -281,6 +334,11 @@ def from_golden_case(
     # highlight_counts clamping falls back to position-only bands on
     # golden runs (which is the correct behavior since goldens cannot
     # represent the portfolio's authored highlight count).
+    #
+    # ``max_pages`` is read from the case meta; cases authored against
+    # the long-form rubric carry ``meta.max_pages: 2`` so band selection
+    # in ``evaluate_tier1`` matches their geometry. Caller cannot
+    # override (the case knows what it is — see AR-10).
     return EvalContext(
         curation=curation,
         section_data=dict(case.section_data),
@@ -288,6 +346,7 @@ def from_golden_case(
         jd_text=case.job_description or None,
         pdf_path=pdf_path,
         template_path=template_path,
+        max_pages=case.meta.max_pages,
     )
 
 
@@ -316,6 +375,18 @@ def from_pipeline_result(
     if basics_path is not None and basics_path.exists():
         basics = load_yaml_safe(basics_path) or {}
 
+    # max_pages priority: rendered PDF page count (reality) > settings (intent).
+    # Mirrors from_profile_dir's PDF-first chain so band selection follows the
+    # rendered artifact across in-memory and on-disk paths. If the trim cascade
+    # ran out of iterations and shipped a 3-page PDF on a 2-page budget, eval
+    # scores against the long-form rubric to match what actually shipped; the
+    # page_count metric independently surfaces the intent-vs-reality gap.
+    inferred_max_pages = (
+        result.render_output.page_count
+        if result.render_output.page_count is not None
+        else settings.max_pages
+    )
+
     return EvalContext(
         curation=result.curation.curation,
         section_data=section_data,
@@ -324,7 +395,7 @@ def from_pipeline_result(
         pdf_path=result.render_output.pdf_path,
         template_path=settings.template_path,
         portfolio=result.portfolio,
-        max_pages=settings.max_pages,
+        max_pages=inferred_max_pages,
         source=result.curation.source,
         work_authored_highlight_counts=_project_work_authored_highlight_counts(
             result.portfolio
@@ -345,8 +416,13 @@ def evaluate_tier1(
     """
     all_metrics: list[EvalMetricResult] = []
 
+    # Page-budget-aware band selection. SHORT_FORM_BANDS for max_pages
+    # <= 1, LONG_FORM_BANDS otherwise. Threaded into Tier 1 metrics that
+    # use page-sensitive PASS/WARN ranges (content, selection, pdf).
+    bands = bands_for_pages(ctx.max_pages)
+
     # Content Density.
-    all_metrics.extend(evaluate_content(ctx.section_data, ctx.basics))
+    all_metrics.extend(evaluate_content(ctx.section_data, ctx.basics, bands=bands))
 
     # Selection Quality.
     all_metrics.extend(
@@ -355,6 +431,7 @@ def evaluate_tier1(
             ctx.basics,
             section_data=ctx.section_data,
             work_authored_highlight_counts=ctx.work_authored_highlight_counts,
+            bands=bands,
         )
     )
 
@@ -405,7 +482,7 @@ def evaluate_tier1(
     all_metrics.extend(evaluate_dates(ctx.section_data))
 
     # PDF Output Quality.
-    pdf_kwargs: dict[str, Any] = {"max_pages": ctx.max_pages}
+    pdf_kwargs: dict[str, Any] = {"max_pages": ctx.max_pages, "bands": bands}
     template_margin = get_uniform_page_margin_pt(ctx.template_path)
     if template_margin is not None:
         pdf_kwargs["page_margin_pt"] = template_margin

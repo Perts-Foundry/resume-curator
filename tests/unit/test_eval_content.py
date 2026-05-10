@@ -6,9 +6,26 @@ from typing import Any
 
 import pytest
 
-from curator.eval.content import evaluate_content
-from curator.eval.report import EvalMetricStatus
+from curator.eval.content import evaluate_content as _evaluate_content
+from curator.eval.report import SHORT_FORM_BANDS, EvalMetricResult, EvalMetricStatus
 from tests.helpers import find_metric
+
+
+def evaluate_content(
+    section_data: dict[str, Any],
+    basics: dict[str, Any],
+    **kwargs: Any,
+) -> list[EvalMetricResult]:
+    """Test wrapper that binds ``bands=SHORT_FORM_BANDS`` by default.
+
+    The production ``evaluate_content`` requires an explicit ``bands``
+    kwarg (no default; see ``test_eval_bands.py``). These short-form
+    tests opt in to ``SHORT_FORM_BANDS`` once at module load rather
+    than threading the kwarg through every call site.
+    """
+    kwargs.setdefault("bands", SHORT_FORM_BANDS)
+    return _evaluate_content(section_data, basics, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Helpers

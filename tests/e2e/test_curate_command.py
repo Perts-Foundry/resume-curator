@@ -210,11 +210,12 @@ class TestCurateHappyPath:
         output_dir = _find_output_dir(e2e_output_dir)
 
         log = json.loads((output_dir / "curation_log.json").read_text())
-        assert log["format_version"] == "2.2"
+        assert log["format_version"] == "2.3"
         assert log["source"] == "api"
         assert log["model"] == "claude-sonnet-4-6-20260217"
         assert log["input_tokens"] == 5000
         assert log["output_tokens"] == 500
+        assert log["max_pages"] >= 1
         assert "timestamp" in log
 
     def test_preserves_jd_text(
@@ -535,3 +536,34 @@ class TestCurateCoverLetterOnPath:
         assert log["cover_letter"]["enabled"] is True
         assert "is_template" not in log["cover_letter"]
         assert log["cover_letter"]["word_count"] > 0
+
+
+@pytest.mark.parametrize("pages", [1, 2])
+def test_curate_pages_flag_threads_through_render_and_log(
+    pages: int,
+    portfolio_dir: Path,
+    jd_file: Path,
+    invoke_curate: Any,
+    e2e_output_dir: Path,
+) -> None:
+    """End-to-end ``--pages`` parametrize: render and audit log both honor it.
+
+    Pinned by AR-6. With real Typst + mocked API, a 1-page run and a
+    2-page run produce different ``curation_log.json["max_pages"]``
+    values and different actual PDF page counts (within reason — the
+    cascade may converge identically on a small fixture, but the
+    persisted ``max_pages`` is unconditional).
+    """
+    result, _ = invoke_curate(jd_file, extra_args=["--pages", str(pages)])
+    assert result.exit_code == 0, result.output
+    output_dir = _find_output_dir(e2e_output_dir)
+
+    # Audit log records the requested page budget.
+    log = json.loads((output_dir / "curation_log.json").read_text())
+    assert log["max_pages"] == pages
+
+    # PDF exists and is at most max_pages pages.
+    pdf = output_dir / "resume.pdf"
+    assert pdf.exists()
+    reader = PdfReader(pdf)
+    assert 1 <= len(reader.pages) <= pages

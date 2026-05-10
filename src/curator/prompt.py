@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 from curator.exceptions import JobDescriptionError
 from curator.models import AI_RANKED_SECTIONS, PortfolioData
 from curator.rules import (
-    COVER_LETTER_BODY_MAX_COUNT,
     COVER_LETTER_WORD_MAX,
     COVER_LETTER_WORD_MIN,
     COVER_LETTER_WORD_TARGET,
@@ -51,16 +50,24 @@ from curator.rules import (
     render_weak_phrases_for_prompt,
 )
 
-#: Audit-trail version for the system prompt + portfolio block layout.
-#: Bump on any prompt rewrite or schema-affecting change so logged
-#: ``curation_log.json`` entries can distinguish curations across prompt
-#: revisions. Independent of curation_log's ``format_version``.
+#: Audit-trail version for the curator system prompt
+#: (``_SYSTEM_PROMPT_TEXT``). Bump on any rewrite or schema-affecting
+#: change to the system prompt itself so logged ``curation_log.json``
+#: entries can distinguish curations across system-prompt revisions.
+#: Independent of curation_log's ``format_version``.
 #:
-#: Kept as a pure date. Whether a run also included the cover-letter
-#: rulebook block is recorded separately via the ``with_cover_letter``
-#: field in the audit log. This keeps the version field monotonic and
-#: decouples code-level prompt changes from per-invocation flag state.
-PROMPT_VERSION: str = "2026-04-28"
+#: NOT bumped for cover-letter-only edits. The cover-letter prompt
+#: block (``_COVER_LETTER_PROMPT_BLOCK``) is conditionally appended to
+#: the system prompt based on the ``--cover-letter`` flag and is
+#: byte-different from the version off-path runs see. ``PROMPT_HASH``
+#: covers both blocks together so cover-letter content drift is
+#: detectable in the audit log without requiring a version bump that
+#: would mislead off-path log readers (whose effective prompt is
+#: byte-identical across cover-letter constant changes).
+#:
+#: Whether a run included the cover-letter rulebook block is recorded
+#: separately via the ``with_cover_letter`` field in the audit log.
+PROMPT_VERSION: str = "2026-05-09"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -124,6 +131,12 @@ _RESERVED_TAG_NAMES: tuple[str, ...] = (
     "conventions",
     "rubric",
     "dimension",
+    # ``<page_budget>`` carries the integer max_pages into the judge
+    # user message so the bidirectional <conventions> block can key off
+    # an explicit signal rather than infer mode from rendered shape.
+    # Reserved so a JD cannot inject ``</page_budget><page_budget>1...``
+    # and flip the convention.
+    "page_budget",
     # Legacy tags (no longer emitted but blocked as defense-in-depth)
     "certificates",
     "education",
@@ -379,15 +392,15 @@ add up by design.
   Section       | Words   | Sentences | Notes
   ------------- | ------- | --------- | ----------------------------------
   opening       | 55-65   | 2         | company-specific hook
-  body (each)   | 80-90   | 3-4       | exactly 2 paragraphs, STAR-shaped
+  body (each)   | 80-87   | 3-4       | exactly 2 paragraphs, STAR-shaped
   closing       | 35-45   | 2         | value recap + subtle CTA
 
 Arithmetic (both bounds are provable from the section bands):
-  Ceiling: 65 + 2*90 + 45 = 290, under the {total_max}-word cap.
+  Ceiling: 65 + 2*87 + 45 = 284, comfortably under the {total_max}-word cap.
   Floor:   55 + 2*80 + 35 = 250, at the {total_min}-word minimum.
 Stay inside every section's band and the total is guaranteed to fall in \
-[{total_min}, {total_max}]. Aim for mid-band in each section (opening ~60, \
-body ~85 each, closing ~40) to land near the {target}-word target.
+[{total_min}, 284]. Aim for mid-band in each section (opening ~60, \
+body ~83 each, closing ~40) to land near the {target}-word target.
 
 Structure:
 - ``salutation``: "Dear [Name]," when the hiring manager name is present \
@@ -397,12 +410,14 @@ in the job description, otherwise "Dear Hiring Manager,". Never \
 reference. Use an achievement lead, a specific origin story, or a \
 company-product hook. Do NOT open with "I am writing to apply for" or \
 similar boilerplate.
-- ``body_paragraphs``: EXACTLY {body_max} STAR-shaped paragraphs, ordered \
-by relevance to the job description. Each paragraph is 80 to 90 words, \
-3-4 sentences, focused on a single topic. Every claim must trace to a \
-portfolio entry; never fabricate metrics, team sizes, or technologies. \
-Must be exactly {body_max} entries; not 1, not 3. The schema rejects any \
-other count.
+- ``body_paragraph_1``: First STAR-shaped paragraph, the strongest \
+match to the job description. 80 to 87 words, 3-4 sentences, single \
+topic. Every claim must trace to a portfolio entry; never fabricate \
+metrics, team sizes, or technologies.
+- ``body_paragraph_2``: Second STAR-shaped paragraph, the next-strongest \
+match. Same shape as body_paragraph_1 (80 to 87 words, 3-4 sentences, \
+grounded in portfolio data). Cover a different topic than \
+body_paragraph_1; do not restate the same point.
 - ``closing``: 2 sentences, 35-45 words. Recap value, add a subtle call \
 to action (e.g., "I would welcome a conversation"). No moral-reminder \
 closers. No generic praise of the company.
@@ -447,44 +462,44 @@ company referenced as the reader, not the past or future actor. Do not \
 emit literal "[COMPANY_NAME]" placeholders in the output -- replace with \
 the actual company name from the JD.
 
-Forbidden language:
+Forbidden language (HARD validator -- using any of these in the cover \
+letter body fails the run and forces an expensive recovery; treat the \
+list as inviolable):
 - Never use em dashes. Use commas, semicolons, parentheses, or periods.
-- Forbidden words (whole-word, case-insensitive): {forbidden_words}.
+- Forbidden words (whole-word, lowercase-only -- capitalized proper-noun \
+usage like a company name is exempt): {forbidden_words}.
 - Forbidden phrases: {forbidden_phrases}.
 - Do not use "To Whom It May Concern" in the salutation.
+
+Discouraged corporate-speak (NOT validator-enforced, but recruiters \
+spot these instantly as AI cover letter tells; avoid in cover-letter \
+prose even though they may appear legitimately in the candidate's \
+portfolio highlights or resume bullets):
+- Verbs: spearhead/spearheaded (use "led", "drove", "ran"); orchestrate \
+(use "ran", "coordinated"); empower (use "enabled").
+- Phrases: "passionate about", "deep dive", "unique blend", "perfect \
+fit", "thrilled / excited to apply", "hit the ground running", \
+"team player".
+- Tone: avoid superlatives that the JD did not invite. Match the \
+register of an experienced engineer writing to a peer, not a \
+candidate auditioning.
 
 Tailoring:
 - Reference the company by name in at least one sentence that could not \
 plausibly be sent to another company with only a name swap.
 - Mirror 3 to 5 JD keywords naturally across the letter.
 
-Self-review before finalizing the cover letter (check each section \
-independently; do not try to count the total):
-- Opening: 2 sentences, 55-65 words. If longer, cut the second sentence \
-shorter or drop the weakest clause. If shorter, expand the \
-company-specific detail with one more concrete reference.
-- Each body paragraph: 3-4 sentences, 80-90 words. If any paragraph runs \
-long, cut a supporting detail, not the metric. If any paragraph runs \
-short, add one concrete artifact (tool name, metric, or timeline).
-- Closing: 2 sentences, 35-45 words. No hedging, no generic praise. If \
-shorter, expand the CTA sentence.
-- Exactly {body_max} body paragraphs. Not 1, not 3.
-- Every paragraph covers a single topic.
-- No forbidden words or phrases.
-- Salutation ends with a comma, sign-off does not.
-- At least one company-specific reference.
-- Grounding: every metric, project, incident, and technology in the \
-body paragraphs traces to a portfolio entry. The opening references \
-the target company by posting, product, mission, or industry, or \
-opens with a candidate-led achievement -- never by attributing \
-portfolio-specific events to the company.
-- No literal placeholders ([UPPERCASE], {{...}}, etc.) anywhere in \
-salutation, opening, body, or closing.
+Final pass before emitting:
+- Word counts land mid-band per section (opening ~60, each body ~83, \
+closing ~40).
+- Every metric, project, incident, and technology in the body \
+paragraphs traces to portfolio data; nothing fabricated.
+- No literal placeholders ([UPPERCASE], {{...}}, etc.) anywhere.
+- No em or en dashes; no marketing adjectives or generic enthusiasm.
 </cover_letter_rules>\
 """
 
 _COVER_LETTER_PROMPT_BLOCK = _COVER_LETTER_PROMPT_BLOCK.format(
-    body_max=COVER_LETTER_BODY_MAX_COUNT,
     total_min=COVER_LETTER_WORD_MIN,
     total_max=COVER_LETTER_WORD_MAX,
     target=COVER_LETTER_WORD_TARGET,
@@ -716,6 +731,7 @@ def _validate_reserved_tags() -> None:
         "conventions",
         "rubric",
         "dimension",
+        "page_budget",
     }
     stale = reserved - active_tags - legacy_tags
     if stale:

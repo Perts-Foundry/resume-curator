@@ -11,7 +11,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from curator.eval.report import EvalMetricResult, EvalMetricStatus
+from curator.eval.report import (
+    EvalBands,
+    EvalMetricResult,
+    EvalMetricStatus,
+)
 from curator.rules import (
     SUMMARY_WORD_HARD_MAX,
     SUMMARY_WORD_PASS_MIN,
@@ -26,7 +30,14 @@ if TYPE_CHECKING:
 
 _CATEGORY = "selection_quality"
 
-PRIMARY_ROLE_HIGHLIGHT_TARGET = 5
+#: Headroom above the per-position floor for ``highlight_counts`` PASS
+#: bands. The renderer cascade trims TO the floor, so the rendered
+#: output typically lands at exactly the floor; ``floor + margin``
+#: leaves room for cases where the cascade converged before tier 6
+#: fired (no trim needed). The lower bound stays at the floor; going
+#: below the floor only happens via the last-resort below-floor tier 8
+#: which logs a WARNING, so flagging it in the eval is correct.
+_HIGHLIGHT_BAND_HEADROOM = 2
 
 
 def evaluate_selection(
@@ -35,6 +46,7 @@ def evaluate_selection(
     *,
     section_data: dict[str, Any] | None = None,
     work_authored_highlight_counts: Mapping[str, int] | None = None,
+    bands: EvalBands,
 ) -> list[EvalMetricResult]:
     """Evaluate Selection Quality metrics.
 
@@ -75,10 +87,14 @@ def evaluate_selection(
     # output has appropriate highlight density per position.
     #
     # Philosophy: every portfolio work entry renders in the output (preserving
-    # the full employment timeline), but only the two most recent roles are
-    # expected to carry bullets. Older roles (positions 2+) render as
-    # header-only rows when the page budget is tight, and the metric treats
-    # that as acceptable (no lower bound).
+    # the full employment timeline). Per-position bullet expectations are
+    # page-budget-aware via ``bands.work_position_floors`` (sourced from the
+    # renderer cascade): on 1-page profiles the floor is ``(3, 3, 0, 0, 0)``,
+    # so older positions render as header-only rows ("ghost rows") and the
+    # metric treats that as acceptable (lower bound 0). On 2+-page profiles
+    # the older floors are non-zero (`(8, 6, 6, 2, 2)` on 2-page), so the
+    # metric expects positions 2+ to carry content; an unexpectedly empty
+    # older role on 2-page output flags as below-band.
     if not rendered_work:
         results.append(
             EvalMetricResult(
@@ -101,22 +117,20 @@ def evaluate_selection(
             for e in rendered_work
             if isinstance(e, dict)
         ]
-        budget = PRIMARY_ROLE_HIGHLIGHT_TARGET
+        floors = bands.work_position_floors
+        last_floor = floors[-1] if floors else 0
         for position, (entry_id, count) in enumerate(entries_for_check):
-            if position == 0:
-                # Current role: strong evidence expected.
-                lo, hi = int(budget * 0.8), budget
-            elif position == 1:
-                # Prior role: substantial evidence expected.
-                lo, hi = int(budget * 0.4), int(budget * 0.7)
-            else:
-                # Positions 2+: header-only rows are valid (lo = 0). The
-                # ceiling is tighter than positions 0-1: older roles should
-                # not match recent-role bullet density, so we cap at
-                # int(budget * 0.5) (= 2 with budget 5). Exceeding this
-                # flags an issue -- older roles shouldn't overweight the
-                # page even when they pass the lower bound.
-                lo, hi = 0, int(budget * 0.5)
+            # Per-position floor sourced from the renderer cascade
+            # (``work_position_floors``). Lower bound is the floor
+            # itself (cascade trims TO the floor; the only way to land
+            # below is the last-resort tier 8 which logs a WARNING).
+            # Upper bound is ``floor + _HIGHLIGHT_BAND_HEADROOM`` to
+            # accommodate renders that converged before tier 6 fired.
+            # Positions beyond the tuple length receive the last value,
+            # matching renderer behavior.
+            floor = floors[position] if position < len(floors) else last_floor
+            lo = floor
+            hi = floor + _HIGHLIGHT_BAND_HEADROOM
             # Clamp the expected band against the entry's authored highlight
             # count. A recent role with only 3 authored highlights cannot
             # render 4-5 no matter how the curator ranks it; treat
@@ -284,17 +298,21 @@ def evaluate_selection(
     # total_highlight_count -- from section_data (post-render).
     #
     # Philosophy: the two most recent roles carry the weight of the resume.
-    # Older roles can render as header-only rows, so the total can be as
-    # low as ~6 (3 + 3 at soft floor) on a tightly-trimmed page.
+    # On short-form the total can be as low as ~6 (positions 0-1 at floor 3
+    # plus header-only older rows); on long-form positions 0-1 carry more
+    # depth and positions 2+ may carry up to 4 bullets each, raising the
+    # expected total. Bands selected via ``bands.total_highlight_count_*``.
+    thc_pass_lo, thc_pass_hi = bands.total_highlight_count_pass
+    thc_warn_lo, thc_warn_hi = bands.total_highlight_count_warn
     if rendered_work:
         thc = sum(
             len(e.get("highlights", [])) for e in rendered_work if isinstance(e, dict)
         )
     else:
         thc = sum(len(wh.highlight_ids) for wh in curation.work_highlights)
-    if 6 <= thc <= 25:
+    if thc_pass_lo <= thc <= thc_pass_hi:
         thc_status = EvalMetricStatus.PASS
-    elif 4 <= thc <= 30:
+    elif thc_warn_lo <= thc <= thc_warn_hi:
         thc_status = EvalMetricStatus.WARN
     else:
         thc_status = EvalMetricStatus.FAIL
@@ -304,7 +322,7 @@ def evaluate_selection(
             category=_CATEGORY,
             status=thc_status,
             value=thc,
-            detail=f"{thc} total highlights (target: 6-25)",
+            detail=f"{thc} total highlights (target: {thc_pass_lo}-{thc_pass_hi})",
         )
     )
 
@@ -312,12 +330,15 @@ def evaluate_selection(
     #
     # Philosophy: skill groups are preserved as a signal of breadth; the
     # renderer trims keywords one-by-one (never whole groups). A full skill
-    # matrix with 8-10 groups at 4-7 keywords each lands in the 30-70 range,
-    # so the target band accommodates that.
+    # matrix with 8-10 groups at 4-7 keywords each lands in the 30-70 range
+    # on short-form; long-form accommodates broader breadth (35-110). Bands
+    # selected via ``bands.skills_keyword_count_*``.
+    skc_pass_lo, skc_pass_hi = bands.skills_keyword_count_pass
+    skc_warn_lo, skc_warn_hi = bands.skills_keyword_count_warn
     skc = sum(len(s.keywords) for s in curation.skills)
-    if 20 <= skc <= 70:
+    if skc_pass_lo <= skc <= skc_pass_hi:
         skc_status = EvalMetricStatus.PASS
-    elif 10 <= skc <= 90:
+    elif skc_warn_lo <= skc <= skc_warn_hi:
         skc_status = EvalMetricStatus.WARN
     else:
         skc_status = EvalMetricStatus.FAIL
@@ -327,7 +348,7 @@ def evaluate_selection(
             category=_CATEGORY,
             status=skc_status,
             value=skc,
-            detail=f"{skc} total keywords (target: 20-70)",
+            detail=f"{skc} total keywords (target: {skc_pass_lo}-{skc_pass_hi})",
         )
     )
 

@@ -296,12 +296,15 @@ resume-curator/
                                     #   writes mode.txt for static runs
       static_mode.py                # Zero-API curation synthesis (synthesize_curation,
                                     #   build_static_result, synthesize_cover_letter)
-      config.py                     # pydantic-settings configuration; max_pages 1..5,
-                                    #   cover_letter_template_path
+      config.py                     # pydantic-settings configuration; max_pages
+                                    #   default 2, range 1..5; cover_letter_template_path
       exceptions.py                 # Custom exception hierarchy
       rules.py                      # Shared resume quality constants (word lists, thresholds)
       io_utils.py                   # Shared I/O: atomic writes, YAML loading, PDF page counting,
                                     #   slugify, priority_sort_key
+      page_caps.py                  # _PageCaps + _caps_for_pages (work_position_floors tuple,
+                                    #   certificate_floor); leaf module shared by renderer.py
+                                    #   and eval/report.py to keep cascade and eval bands aligned
       eval/
         __init__.py                 # Public API: evaluate_tier1(), evaluate_tier2(),
                                     #   from_profile_dir(), from_pipeline_result(), EvalContext
@@ -391,6 +394,13 @@ These rules apply to all code interacting with the Claude API. Consult
   deterministically from portfolio data and runs the same renderer; no API
   call is made. Prefer `static` over hand-rolled scripts that wrap the
   renderer.
+- **Default page budget is 2** for both `curator curate` and `curator static`.
+  Pass `--pages 1` for short-form output. Downstream automation that
+  relied on 1-page output should pass `--pages 1` explicitly. The renderer
+  scales `work_position_floors` (graduated per-position tuple) and
+  `certificate_floor` with the page budget via `_caps_for_pages` (in
+  `page_caps.py`); per-project bullet cap stays at 2 across all modes
+  (the AI does not rank highlights within a project).
 
 ## External Dependencies
 

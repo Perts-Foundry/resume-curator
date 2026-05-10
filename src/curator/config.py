@@ -42,6 +42,18 @@ class CuratorSettings(BaseSettings):
     # `curator curate` invocation. Forks that want reproducibility against
     # a specific model release should override `CURATOR_MODEL` with the
     # snapshot ID once one is published.
+    #
+    # The 2026-05-09 cross-model evaluation (testing/results/haiku-eval/
+    # findings.md) tested Haiku 4.5 on this path through four prompt and
+    # schema iterations. Haiku produced acceptable resumes but failed on
+    # the cover letter at every level: prose validator trips,
+    # paragraph-count drift, and (after the v4 exemplar attempt)
+    # confident wrong-company outputs that would silently ship to the
+    # wrong recruiter. Sonnet 4.6 ran 3 of 3 clean. Until retry-with-
+    # feedback (TODO Curation Reliability) is implemented to amortize
+    # Haiku's failure rate, the curate path stays on Sonnet for
+    # reliability. Judge path remains on Haiku (clean separation;
+    # judge had no analogous capability gap).
     model: str = Field(
         default="claude-sonnet-4-6",
         description=(
@@ -76,13 +88,14 @@ class CuratorSettings(BaseSettings):
 
     # Page count enforcement
     max_pages: int = Field(
-        default=1,
+        default=2,
         ge=1,
         le=5,
         description=(
-            "Maximum PDF page count (renderer trims if exceeded). "
-            "Values 1-3 are typical for curate (JD-tailored); 4-5 supports "
-            "static-mode multi-page resumes (executive/academic profiles)."
+            "Maximum PDF page count (renderer trims if exceeded). Default 2 "
+            "is the typical submission shape for both curate and static; "
+            "pass --pages 1 (CLI) or set CURATOR_MAX_PAGES=1 for short-form "
+            "output. 3-5 supports executive/academic CVs."
         ),
     )
     max_trim_iterations: int = Field(
@@ -145,8 +158,16 @@ class CuratorSettings(BaseSettings):
         return v
 
     # Tier 2 LLM judge settings
+    #
+    # Default flipped 2026-05-09 from `claude-sonnet-4-6` to `claude-haiku-4-5`.
+    # Cross-model calibration against 28 goldens showed Haiku judge scores
+    # within `_JUDGE_DIMENSION_TOLERANCES` on 7 of 8 dimensions at 100% and
+    # the 8th (`section_selection`) at 100% after the matching tolerance
+    # widening landed in the same PR. Haiku judge cost is ~37% of Sonnet's
+    # per call. See `testing/results/haiku-eval/findings.md`. Haiku 4.5
+    # errors on the `effort` parameter -- leave CURATOR_JUDGE_EFFORT unset.
     judge_model: str = Field(
-        default="claude-sonnet-4-6",
+        default="claude-haiku-4-5",
         description="Claude model for Tier 2 LLM judge evaluation",
     )
     judge_effort: Literal["low", "medium", "high", "max"] | None = Field(

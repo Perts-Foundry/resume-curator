@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal
 
 from loguru import logger
 from pydantic import (
@@ -12,6 +12,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    computed_field,
     field_validator,
     model_validator,
 )
@@ -19,9 +20,9 @@ from pydantic import (
 from curator.exceptions import CurationValidationError
 from curator.rules import (
     COVER_LETTER_BODY_MAX_COUNT,
-    COVER_LETTER_BODY_MIN_COUNT,
     COVER_LETTER_FORBIDDEN_PHRASES,
     COVER_LETTER_FORBIDDEN_WORDS,
+    COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX,
     COVER_LETTER_PARAGRAPH_WORD_MAX,
     COVER_LETTER_PARAGRAPH_WORD_MIN,
     COVER_LETTER_PLACEHOLDER_PATTERN,
@@ -706,6 +707,17 @@ class CoverLetterCuration(BaseModel):
 
     Length, per-paragraph word counts, forbidden phrases, and grounding
     rules live in ``validate_cover_letter`` and are enforced after parse.
+
+    Body paragraphs are split into two distinct fields rather than a
+    ``list[str]`` of length 2 because Anthropic's structured-output
+    grammar strips array length constraints (``min_length`` /
+    ``max_length`` are advisory, not enforced at decode time). The
+    tuple shape forces the model to emit exactly two paragraphs at
+    grammar level, eliminating the "got 4 paragraphs" failure mode
+    observed in the 2026-05-09 Haiku 4.5 cross-model evaluation.
+    Downstream consumers (renderer, validator, Typst template) keep
+    accessing ``cover_letter.body_paragraphs`` via the computed_field
+    below; the tuple shape is purely an API-surface decision.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -729,20 +741,26 @@ class CoverLetterCuration(BaseModel):
             "opener."
         ),
     )
-    body_paragraphs: list[Annotated[str, Field(max_length=2000)]] = Field(
+    body_paragraph_1: str = Field(
+        max_length=2000,
         description=(
-            f"Must be exactly {COVER_LETTER_BODY_MAX_COUNT} STAR-shaped "
-            f"paragraphs ordered by JD relevance; not 1, not 3. Each "
-            f"paragraph is 80 to {COVER_LETTER_PARAGRAPH_WORD_MAX} words, "
-            f"3-4 sentences, single topic. Every claim must trace to "
-            "portfolio data; include at least one number, specific name, "
-            "or concrete artifact per paragraph. Arithmetic with opening "
-            "(55-65) and closing (35-45): floor "
-            f"55 + 2*80 + 35 = {COVER_LETTER_WORD_MIN}, ceiling "
-            f"65 + 2*{COVER_LETTER_PARAGRAPH_WORD_MAX} + 45 = "
-            f"{65 + 2 * COVER_LETTER_PARAGRAPH_WORD_MAX + 45}, both inside "
-            f"the [{COVER_LETTER_WORD_MIN}, {COVER_LETTER_WORD_MAX}] "
-            "total word count target."
+            "First STAR-shaped body paragraph, ordered by JD relevance "
+            "(the strongest match goes here). 80 to "
+            f"{COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX} words, 3-4 "
+            "sentences, single topic. Every claim must trace "
+            "to portfolio data; include at least one number, specific "
+            "name, or concrete artifact."
+        ),
+    )
+    body_paragraph_2: str = Field(
+        max_length=2000,
+        description=(
+            "Second STAR-shaped body paragraph, ordered by JD relevance "
+            "(the second-strongest match goes here). Same shape as "
+            "body_paragraph_1: 80 to "
+            f"{COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX} words, 3-4 sentences, "
+            "single topic, every claim grounded in portfolio data. Cover "
+            "a different topic than body_paragraph_1."
         ),
     )
     closing: str = Field(
@@ -765,7 +783,46 @@ class CoverLetterCuration(BaseModel):
 
     # -- Structural class validators ---------------------------------------
 
-    @field_validator("salutation", "opening", "closing", "sign_off")
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_body_paragraphs(cls, data: Any) -> Any:
+        """Accept legacy ``body_paragraphs: [p1, p2]`` and convert to tuple shape.
+
+        On-disk artifacts (``data/cover_letter.yaml`` in profile dirs and
+        portfolio cover-letter files) and existing tests construct the
+        model with ``body_paragraphs`` as a list. The schema-facing API
+        uses the tuple shape (``body_paragraph_1`` / ``body_paragraph_2``)
+        for grammar-level enforcement of the exactly-2 constraint. This
+        validator bridges the two: legacy callers stay valid, the AI
+        sees the tuple shape.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "body_paragraphs" not in data:
+            return data
+        paras = data["body_paragraphs"]
+        if not isinstance(paras, list):
+            msg = f"legacy body_paragraphs must be a list; got {type(paras).__name__}"
+            raise ValueError(msg)
+        if len(paras) != COVER_LETTER_BODY_MAX_COUNT:
+            msg = (
+                f"legacy body_paragraphs must have exactly "
+                f"{COVER_LETTER_BODY_MAX_COUNT} entries; got {len(paras)}"
+            )
+            raise ValueError(msg)
+        new_data = {k: v for k, v in data.items() if k != "body_paragraphs"}
+        new_data["body_paragraph_1"] = paras[0]
+        new_data["body_paragraph_2"] = paras[1]
+        return new_data
+
+    @field_validator(
+        "salutation",
+        "opening",
+        "body_paragraph_1",
+        "body_paragraph_2",
+        "closing",
+        "sign_off",
+    )
     @classmethod
     def _no_control_chars(cls, v: str) -> str:
         if _CONTROL_CHAR_RE.search(v):
@@ -773,16 +830,7 @@ class CoverLetterCuration(BaseModel):
             raise ValueError(msg)
         return v
 
-    @field_validator("body_paragraphs")
-    @classmethod
-    def _paragraphs_no_control_chars(cls, v: list[str]) -> list[str]:
-        for p in v:
-            if _CONTROL_CHAR_RE.search(p):
-                msg = "body paragraph contains control characters"
-                raise ValueError(msg)
-        return v
-
-    @field_validator("opening", "closing")
+    @field_validator("opening", "body_paragraph_1", "body_paragraph_2", "closing")
     @classmethod
     def _no_em_dashes_in_prose(cls, v: str) -> str:
         if _EM_DASH_RE.search(v):
@@ -791,27 +839,6 @@ class CoverLetterCuration(BaseModel):
                 "parentheses, or periods"
             )
             raise ValueError(msg)
-        return v
-
-    @field_validator("body_paragraphs")
-    @classmethod
-    def _body_paragraphs_count_and_em_dash(cls, v: list[str]) -> list[str]:
-        if not (COVER_LETTER_BODY_MIN_COUNT <= len(v) <= COVER_LETTER_BODY_MAX_COUNT):
-            if COVER_LETTER_BODY_MIN_COUNT == COVER_LETTER_BODY_MAX_COUNT:
-                msg = (
-                    f"body_paragraphs must have exactly "
-                    f"{COVER_LETTER_BODY_MAX_COUNT} entries; got {len(v)}"
-                )
-            else:
-                msg = (
-                    f"body_paragraphs must have {COVER_LETTER_BODY_MIN_COUNT} to "
-                    f"{COVER_LETTER_BODY_MAX_COUNT} entries; got {len(v)}"
-                )
-            raise ValueError(msg)
-        for p in v:
-            if _EM_DASH_RE.search(p):
-                msg = "body paragraph contains em dash or en dash"
-                raise ValueError(msg)
         return v
 
     @field_validator("salutation")
@@ -836,20 +863,22 @@ class CoverLetterCuration(BaseModel):
             raise ValueError(msg)
         return v
 
-    @model_validator(mode="after")
-    def _total_paragraph_count_in_band(self) -> Self:
-        # Opening + body + closing. With body fixed at exactly
-        # COVER_LETTER_BODY_MAX_COUNT (== _MIN_COUNT), total is always 4.
-        total = 1 + len(self.body_paragraphs) + 1
-        lo = COVER_LETTER_BODY_MIN_COUNT + 2
-        hi = COVER_LETTER_BODY_MAX_COUNT + 2
-        if not (lo <= total <= hi):
-            msg = (
-                f"cover letter must total {lo} to {hi} paragraphs "
-                f"(opening + body + closing); got {total}"
-            )
-            raise ValueError(msg)
-        return self
+    # Tuple shape forces exactly 2 body paragraphs; with that fixed, the
+    # total is always 4 (opening + body_1 + body_2 + closing). Kept as a
+    # narrative invariant rather than a runtime check.
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def body_paragraphs(self) -> list[str]:
+        """Backwards-compat list view used by validator, renderer, Typst.
+
+        The schema-facing fields are ``body_paragraph_1`` and
+        ``body_paragraph_2`` (tuple shape, grammar-enforced count). Every
+        downstream consumer (``validate_cover_letter``, ``renderer.py``
+        cover-letter writer, the Typst template's
+        ``letter.body_paragraphs``) reads from this property.
+        """
+        return [self.body_paragraph_1, self.body_paragraph_2]
 
 
 class ResumeCurationWithCoverLetter(BaseModel):

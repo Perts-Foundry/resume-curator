@@ -59,15 +59,28 @@ def _main() -> None:
             "failed cover-letter validation. Renders only the resume."
         ),
     )
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=2,
+        choices=[1, 2, 3, 4, 5],
+        help=(
+            "Target page count (1..5). Default 2 matches the global "
+            "CuratorSettings default; pass --pages 1 to re-render at "
+            "short-form caps. Useful for iterating on a 2-page layout "
+            "from an existing 1-page curation without a paid API call."
+        ),
+    )
     args = parser.parse_args()
 
     curated_path: Path = args.curated_path
     partial: bool = args.partial
+    pages: int = args.pages
 
     if partial:
         curated_data = yaml.safe_load(curated_path.read_text(encoding="utf-8"))
         curation = ResumeCuration.model_validate(curated_data)
-        settings = CuratorSettings()
+        settings = CuratorSettings(max_pages=pages)
         portfolio = load_portfolio(settings.portfolio_data_path)
         result = CurationResult(
             curation=curation,
@@ -99,7 +112,7 @@ def _main() -> None:
         cover_letter=cover_letter,
     )
 
-    settings = CuratorSettings()
+    settings = CuratorSettings(max_pages=pages)
     portfolio = load_portfolio(settings.portfolio_data_path)
     jd_path = profile_dir / "job_description.txt"
     jd_text: str | None = None

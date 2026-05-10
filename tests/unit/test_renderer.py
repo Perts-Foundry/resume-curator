@@ -29,11 +29,26 @@ from curator.renderer import (
     _make_output_dir,
     _reorder_with_safety_net,
     _sort_work_chronologically,
-    _write_audit_artifacts,
     _write_data_files,
     _write_layout,
     render,
 )
+from curator.renderer import (
+    _write_audit_artifacts as _real_write_audit_artifacts,
+)
+
+
+def _write_audit_artifacts(*args: Any, **kwargs: Any) -> Any:
+    """Test wrapper that binds ``max_pages=1`` by default.
+
+    Production ``_write_audit_artifacts`` now requires an explicit
+    ``max_pages`` kwarg (no default; production callers in ``render()``
+    pass ``settings.max_pages`` explicitly). These short-form tests opt
+    in to ``max_pages=1`` once at module load.
+    """
+    kwargs.setdefault("max_pages", 1)
+    return _real_write_audit_artifacts(*args, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -441,9 +456,10 @@ class TestWriteAuditArtifacts:
         # presence and shape only.
         from curator.prompt import PROMPT_HASH
 
-        assert log_data["format_version"] == "2.2"
+        assert log_data["format_version"] == "2.3"
+        assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
-        assert log_data["prompt_version"] == "2026-04-28"
+        assert log_data["prompt_version"] == "2026-05-09"
         assert log_data["prompt_hash"] == PROMPT_HASH
         assert isinstance(log_data["prompt_hash"], str)
         assert len(log_data["prompt_hash"]) == 12
@@ -1591,7 +1607,7 @@ class TestGenerateNextTrim:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None, recent_role_soft_floor=3)
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
         assert step is not None
         assert step.description == "Removed highlight: h2_4 from work entry: w2"
         assert step.target_id == "w2"
@@ -1622,7 +1638,7 @@ class TestGenerateNextTrim:
         # soft_floor=3 and w2 already at 3: tier 7 must NOT fire. Falls
         # through to tier 9 (no skill keywords), tier 10 (no certs),
         # then tier 11 which bypasses the soft floor as a last resort.
-        step = _generate_next_trim(sections, None, recent_role_soft_floor=3)
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
         assert step is not None
         assert "from work entry: w2" in step.description
         # Below-floor flag MUST be set so _trim_to_fit logs a WARNING.
@@ -1643,7 +1659,7 @@ class TestGenerateNextTrim:
         }
         # Tier 8 fires first (position 0 highlights above soft floor);
         # not a last-resort tier.
-        step = _generate_next_trim(sections, None, recent_role_soft_floor=3)
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
         assert step is not None
         assert step.below_floor is False
 
@@ -1668,7 +1684,7 @@ class TestGenerateNextTrim:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None, recent_role_soft_floor=3)
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
         assert step is not None
         assert step.description == "Removed highlight: h1_4 from work entry: w1"
         assert step.target_id == "w1"
@@ -1693,7 +1709,9 @@ class TestGenerateNextTrim:
         }
         removed: list[str] = []
         while True:
-            step = _generate_next_trim(sections, None, recent_role_soft_floor=3)
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(3, 3, 0, 0, 0)
+            )
             if step is None:
                 break
             removed.append(step.description)
@@ -1944,7 +1962,13 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=1),
         ):
-            final_sections, _final_interests, trim_log, pages = _trim_to_fit(
+            (
+                final_sections,
+                _final_interests,
+                trim_log,
+                pages,
+                safety_valve_fired,
+            ) = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -1958,6 +1982,8 @@ class TestTrimToFit:
         assert trim_log == []
         assert final_sections == sections
         assert pages == 1
+        # Convergent immediate fit → safety valve did NOT fire.
+        assert safety_valve_fired is False
 
     def test_trims_until_fits(self, tmp_path: Path) -> None:
         """Trims content iteratively until page count is within budget."""
@@ -1997,7 +2023,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", side_effect=page_counts),
         ):
-            final_sections, final_interests, trim_log, pages = _trim_to_fit(
+            final_sections, final_interests, trim_log, pages, _safety = _trim_to_fit(
                 sections,
                 basics,
                 interests,
@@ -2053,7 +2079,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages = _trim_to_fit(
+            _, _, trim_log, _pages, safety_valve_fired = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -2065,6 +2091,8 @@ class TestTrimToFit:
             )
 
         assert len(trim_log) == 3
+        # Iteration cap exhausted while still over-page → safety valve fired.
+        assert safety_valve_fired is True
 
     def test_nothing_to_trim(self, tmp_path: Path) -> None:
         """When nothing left to trim, returns immediately."""
@@ -2094,7 +2122,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages = _trim_to_fit(
+            _, _, trim_log, _pages, _safety = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -2136,7 +2164,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages = _trim_to_fit(
+            _, _, trim_log, _pages, _safety = _trim_to_fit(
                 sections,
                 basics,
                 interests,
@@ -2208,7 +2236,7 @@ class TestTrimToFit:
                 patch("curator.renderer.subprocess.run", side_effect=fake_run),
                 patch("curator.renderer.get_page_count", side_effect=page_counts),
             ):
-                final_sections, _, trim_log, pages = _trim_to_fit(
+                final_sections, _, trim_log, pages, _safety = _trim_to_fit(
                     sections,
                     basics,
                     None,
@@ -2217,7 +2245,7 @@ class TestTrimToFit:
                     ["work", "skills", "projects", "certificates", "education"],
                     max_pages=1,
                     max_trim_iterations=15,
-                    recent_role_soft_floor=3,
+                    work_position_floors=(3, 3, 0, 0, 0),
                 )
         finally:
             logger.remove(sink_id)
@@ -2237,9 +2265,7 @@ class TestTrimToFit:
         assert pages == 1
 
         # _trim_to_fit must emit the below_floor WARNING for tiers 11/12.
-        below_floor_warnings = [
-            m for m in log_messages if "recent_role_soft_floor" in m
-        ]
+        below_floor_warnings = [m for m in log_messages if "work_position_floors" in m]
         assert len(below_floor_warnings) >= 1, (
             f"expected below_floor WARNING, got: {log_messages}"
         )
@@ -2300,12 +2326,20 @@ class TestTrimToFit:
 class TestGenerateNextTrimEdgeCases:
     """Additional edge case tests for _generate_next_trim()."""
 
-    def test_tier5_scans_past_single_highlight_entries(self) -> None:
-        """Tier 5 skips positions 2+ with 1 highlight and trims the next."""
+    def test_tier6_drains_oldest_position_first_under_default_floors(self) -> None:
+        """Tier 6 (per-position floor, bottom-up scan) trims the oldest
+        position first under the default 1-page floors ``(3, 3, 0, 0, 0)``.
+
+        Under the new cascade, positions 2+ have floor 0 by default, so
+        ``len(highlights) > 0`` is True for w4 (1 highlight) and the
+        cascade trims w4 before w3. This is a deliberate inversion of
+        the prior tier 5/6 behavior (which kept positions 2+ at >=1
+        across the row before draining any to 0): the new design lets
+        each older position drain to its floor in sequence, scanning
+        bottom-up.
+        """
         from curator.renderer import _generate_next_trim
 
-        # Positions 0 and 1 (w1, w2) are protected. Within positions 2+,
-        # tier 5 iterates bottom-up: w4 has 1 (skip), w3 has 2 (trim).
         sections: dict[str, Any] = {
             "work": [
                 {"id": "w1", "highlights": [{"id": "h1"}, {"id": "h2"}]},
@@ -2320,9 +2354,9 @@ class TestGenerateNextTrimEdgeCases:
         }
         step = _generate_next_trim(sections, None)
         assert step is not None
-        # w4 has 1 highlight (skip), w3 has 2 (trim from here)
-        assert step.description == "Removed highlight: h6 from work entry: w3"
-        assert step.target_id == "w3"
+        # w4 (pos 3, floor 0): len 1 > 0, trim h7 first.
+        assert step.description == "Removed highlight: h7 from work entry: w4"
+        assert step.target_id == "w4"
 
     def test_tier3_preserves_sole_certificate(self) -> None:
         """The cascade never removes a certificate that would leave the
@@ -2395,11 +2429,17 @@ class TestGenerateNextTrimEdgeCases:
         assert step.description == "Removed skill group: s2"
 
     def test_full_trim_sequence(self) -> None:
-        """Walk through a full trim sequence verifying tier ordering."""
+        """Walk through a full trim sequence verifying the new 8-tier ordering.
+
+        With default floors ``(3, 3, 0, 0, 0)`` (1-page profile), tier 6
+        scans positions N-1..0 and drains each position to its floor
+        before advancing. Older positions (floor 0) drain fully before
+        positions 0/1 (floor 3) are touched. Once tier 6 is exhausted,
+        skill groups go (tier 7), then below-floor last resort drains
+        positions 1 and 0 from the bottom up (tier 8).
+        """
         from curator.renderer import _apply_trim, _generate_next_trim
 
-        # Four work entries: positions 0-1 protected by recent-role floor
-        # (default 3), positions 2-3 eligible for tier 6/8 removal.
         sections: dict[str, Any] = {
             "work": [
                 {
@@ -2447,30 +2487,33 @@ class TestGenerateNextTrimEdgeCases:
             descriptions.append(step.description)
             sections, interests = _apply_trim(sections, interests, step)
 
-        # Expected 12-tier progression (work entries and projects of
+        # Expected 8-tier progression (work entries and projects of
         # count <= 2 are never removed wholesale; top CERTIFICATE_FLOOR
         # certs are preserved; skill groups removed atomically at
-        # tier 10 lowest-priority first):
+        # tier 7 lowest-priority first):
         #  1: interests
         #  2: project highlights, lowest project first: p2 -> ph2, ph1
         #  3: projects wholesale -- only 2 remain -> skip
         #  4: certs bottom-up down to floor: c5, c4 (c1-c3 survive)
         #  5: education keeps >=1 -> skip
-        #  6: work pos 2+ with >1 highlights: w3 has 2 -> trim h8
-        #  7: work pos 2+ to 0: w4 has 1 -> h9; w3 has 1 -> h7
-        #  8: pos 1 floor 3: w2 has 3 -> skip
-        #  9: pos 0 floor 3: w1 has 3 -> skip
-        # 10: skill groups bottom-up: s2, then s1
-        # 11: last resort pos 1 below floor: w2 -> h6, h5, h4
-        # 12: absolute last resort pos 0 below floor: w1 -> h3, h2, h1
+        #  6: work to per-position floor, bottom-up:
+        #     - w4 (pos 3, floor 0): len 1>0 -> h9
+        #     - w3 (pos 2, floor 0): len 2>0 -> h8, then h7
+        #     - w2 (pos 1, floor 3): len 3>3 false -> skip
+        #     - w1 (pos 0, floor 3): len 3>3 false -> skip
+        #  7: skill groups bottom-up: s2, then s1
+        #  8: below-floor last resort, scan N-1..0 for first non-empty:
+        #     - w4 empty, w3 empty
+        #     - w2 -> h6, h5, h4 (3 below-floor steps)
+        #     - w1 -> h3, h2, h1 (3 below-floor steps)
         expected = [
             "Removed interests section",
             "Removed highlight: ph2 from project: p2",
             "Removed highlight: ph1 from project: p2",
             "Removed certificate: c5",
             "Removed certificate: c4",
-            "Removed highlight: h8 from work entry: w3",
             "Removed highlight: h9 from work entry: w4",
+            "Removed highlight: h8 from work entry: w3",
             "Removed highlight: h7 from work entry: w3",
             "Removed skill group: s2",
             "Removed skill group: s1",
@@ -2484,7 +2527,7 @@ class TestGenerateNextTrimEdgeCases:
         assert descriptions == expected
         # Top 3 certs survived through the entire cascade.
         assert [c["id"] for c in sections["certificates"]] == ["c1", "c2", "c3"]
-        # Skill groups fully removed (atomic tier 10).
+        # Skill groups fully removed (atomic tier 7).
         assert sections["skills"] == []
 
     def test_project_description_never_trimmed_alone(self) -> None:
@@ -2726,7 +2769,7 @@ class TestGenerateNextTrimEdgeCases:
         }
 
         # First trim: the bottom cert (tier 4, above the floor).
-        step = _generate_next_trim(sections, None, recent_role_soft_floor=3)
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
         assert step is not None
         assert step.kind is TrimKind.CERTIFICATE
         assert step.description == "Removed certificate: removable"
@@ -2736,7 +2779,7 @@ class TestGenerateNextTrimEdgeCases:
 
         # Second trim: cert floor blocks further cert drain, so we fall
         # through to tier 11 (below-floor on position 1).
-        step = _generate_next_trim(sections, None, recent_role_soft_floor=3)
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
         assert step is not None
         assert step.kind is TrimKind.HIGHLIGHT
         assert step.below_floor is True
@@ -2890,3 +2933,317 @@ class TestTemplateTypography:
             f"{template_path.name} contains hyphenate: true in active code. "
             "See the rationale comment above the #set text(...) block."
         )
+
+
+class TestCapsForPages:
+    """Pin _PageCaps profile values + per-position monotonicity invariant.
+
+    Page-budget-aware floors (``work_position_floors`` per-position
+    tuple, plus ``certificate_floor``) must rise non-strictly with
+    ``max_pages`` so larger budgets never reduce floor protection.
+    Per-project bullet cap is intentionally NOT in _PageCaps -- it
+    stays at 2 across all modes (see ProjectRanking schema follow-up
+    TODO).
+    """
+
+    def test_short_form_caps_match_pre_refactor_constants(self) -> None:
+        from curator.renderer import _caps_for_pages
+
+        caps = _caps_for_pages(1)
+        assert caps.work_position_floors == (3, 3, 0, 0, 0)
+        assert caps.certificate_floor == 3
+
+    def test_two_page_caps(self) -> None:
+        from curator.renderer import _caps_for_pages
+
+        caps = _caps_for_pages(2)
+        assert caps.work_position_floors == (8, 6, 6, 2, 2)
+        assert caps.certificate_floor == 3
+
+    def test_plateau_at_three_or_more_pages(self) -> None:
+        from curator.renderer import _caps_for_pages
+
+        caps_3 = _caps_for_pages(3)
+        caps_5 = _caps_for_pages(5)
+        assert caps_3.work_position_floors == (10, 8, 8, 4, 4)
+        assert caps_3.certificate_floor == 5
+        # Plateau: 4-5 page configs use the same profile as 3-page.
+        assert caps_5 == caps_3
+
+    @pytest.mark.parametrize("n", [2, 3, 4, 5])
+    def test_caps_monotonic(self, n: int) -> None:
+        """Floors never decrease as max_pages grows.
+
+        Per-position monotonicity: each index in ``work_position_floors``
+        is non-decreasing across page budgets. Iterates to the longer of
+        the two tuples and falls through to the last value so future
+        tuple-length divergence does not silently skip indices.
+        """
+        from curator.renderer import _caps_for_pages
+
+        prev = _caps_for_pages(n - 1)
+        cur = _caps_for_pages(n)
+        prev_floors = prev.work_position_floors
+        cur_floors = cur.work_position_floors
+        max_len = max(len(prev_floors), len(cur_floors))
+        for i in range(max_len):
+            prev_val = prev_floors[i] if i < len(prev_floors) else prev_floors[-1]
+            cur_val = cur_floors[i] if i < len(cur_floors) else cur_floors[-1]
+            assert cur_val >= prev_val, (
+                f"position {i}: pages {n} floor {cur_val} < pages {n - 1} {prev_val}"
+            )
+        assert cur.certificate_floor >= prev.certificate_floor
+
+    def test_zero_pages_treated_as_short_form(self) -> None:
+        """Defensive: pages <= 1 returns the short-form profile."""
+        from curator.renderer import _caps_for_pages
+
+        assert _caps_for_pages(0) == _caps_for_pages(1)
+
+
+class TestPageCapsValidation:
+    """``_PageCaps.__post_init__`` rejects invalid construction.
+
+    Caps are normally constructed only via ``_caps_for_pages``, but
+    direct construction (e.g., test scaffolding or future callers)
+    should fail loud rather than silently produce broken behavior.
+    """
+
+    def test_rejects_empty_work_position_floors(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        with pytest.raises(ValueError, match="work_position_floors must be non-empty"):
+            _PageCaps(work_position_floors=(), certificate_floor=3)
+
+    def test_rejects_negative_floor_values(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        with pytest.raises(ValueError, match=">= 0"):
+            _PageCaps(work_position_floors=(3, -1, 0), certificate_floor=3)
+
+    def test_rejects_negative_certificate_floor(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        with pytest.raises(ValueError, match="certificate_floor must be >= 0"):
+            _PageCaps(work_position_floors=(3, 3), certificate_floor=-1)
+
+    def test_floor_for_position_falls_through_to_last_value(self) -> None:
+        """Positions beyond the tuple length receive the last value."""
+        from curator.page_caps import _PageCaps
+
+        caps = _PageCaps(work_position_floors=(8, 6, 6, 2, 2), certificate_floor=4)
+        assert caps.floor_for_position(0) == 8
+        assert caps.floor_for_position(4) == 2
+        assert caps.floor_for_position(7) == 2  # falls through to last
+
+    def test_floor_for_position_rejects_negative(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        caps = _PageCaps(work_position_floors=(3,), certificate_floor=3)
+        with pytest.raises(ValueError, match="position must be non-negative"):
+            caps.floor_for_position(-1)
+
+
+class TestCascadeDefaultFloors:
+    """Pin the default ``work_position_floors`` on cascade entry points.
+
+    Both ``_generate_next_trim`` and ``_trim_to_fit`` accept the floor
+    tuple as a keyword arg. The default value is critical because many
+    tests rely on it; a future drift to a 2-page-friendly default
+    would silently flip behavior for every direct caller that omits
+    the kwarg.
+    """
+
+    def test_generate_next_trim_default(self) -> None:
+        import inspect
+
+        from curator.renderer import _generate_next_trim
+
+        sig = inspect.signature(_generate_next_trim)
+        assert sig.parameters["work_position_floors"].default == (3, 3, 0, 0, 0)
+
+    def test_trim_to_fit_default(self) -> None:
+        import inspect
+
+        from curator.renderer import _trim_to_fit
+
+        sig = inspect.signature(_trim_to_fit)
+        assert sig.parameters["work_position_floors"].default == (3, 3, 0, 0, 0)
+
+
+class TestPerPositionFloorEdgeCases:
+    """Edge cases for the new per-position floor cascade (tier 6)."""
+
+    def test_three_work_entries_with_5_tuple_floor(self) -> None:
+        """3 work entries against a 5-element floor tuple use indices 0-2."""
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": f"h1_{i}"} for i in range(20)]},
+                {"id": "w2", "highlights": [{"id": f"h2_{i}"} for i in range(20)]},
+                {"id": "w3", "highlights": [{"id": f"h3_{i}"} for i in range(20)]},
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # 2-page floors (8, 6, 6, 2, 2): w1=8, w2=6, w3=6.
+        while True:
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(8, 6, 6, 2, 2)
+            )
+            if step is None or step.below_floor:
+                break
+            sections, _ = _apply_trim(sections, None, step)
+        assert len(sections["work"][0]["highlights"]) == 8
+        assert len(sections["work"][1]["highlights"]) == 6
+        assert len(sections["work"][2]["highlights"]) == 6
+
+    def test_seven_work_entries_falls_through_to_last_value(self) -> None:
+        """7 entries against a 5-element floor tuple: positions 5,6 use last value."""
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": f"w{i}", "highlights": [{"id": f"h{i}_{j}"} for j in range(20)]}
+                for i in range(7)
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # 2-page floors (8, 6, 6, 2, 2): positions 0-4 use tuple values
+        # directly; positions 5, 6 fall through to last value (2).
+        while True:
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(8, 6, 6, 2, 2)
+            )
+            if step is None or step.below_floor:
+                break
+            sections, _ = _apply_trim(sections, None, step)
+        sizes = [len(e["highlights"]) for e in sections["work"]]
+        assert sizes == [8, 6, 6, 2, 2, 2, 2]
+
+    def test_empty_work_entries_skip_tier6(self) -> None:
+        """``len(highlights) > floor`` is False when ``len == 0 == floor``.
+
+        Pins the off-by-one: tier 6 must NOT fire on entries already at
+        floor 0 with empty highlights, even though the cascade scans
+        them. Otherwise the loop would never terminate.
+        """
+        from curator.renderer import _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [{"id": f"w{i}", "highlights": []} for i in range(5)],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
+        assert step is None  # nothing to trim, no infinite loop
+
+    def test_below_floor_tier_skips_empty_positions(self) -> None:
+        """Tier 8 (below-floor) scans bottom-up for first non-empty position.
+
+        Positions already at 0 are skipped; the first non-empty
+        position bottom-up is the trim target.
+        """
+        from curator.renderer import _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": "h1_0"}, {"id": "h1_1"}]},
+                {"id": "w2", "highlights": []},  # pos 1 empty
+                {"id": "w3", "highlights": [{"id": "h3_0"}]},  # pos 2
+                {"id": "w4", "highlights": []},  # pos 3 empty
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # All work positions already <= floor (or empty). Skill groups
+        # empty too. Only tier 8 (below_floor) can fire. Bottom-up
+        # scan: w4 empty (skip), w3 has 1 (trim with below_floor=True).
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 3, 3, 3))
+        assert step is not None
+        assert step.target_id == "w3"
+        assert step.below_floor is True
+
+
+class TestCascadeCliffRegression:
+    """Regression tests for the cascade-cliff problem the rebalance fixed.
+
+    Synthetic high-density 5-entry distributions exercise the corner
+    case where the prior cascade drained positions 2+ to zero before
+    trimming positions 0/1, producing 11/4/0/0/0-style "ghost row"
+    output. Pinned here so future cascade tweaks cannot regress.
+    """
+
+    def test_high_density_5entry_no_ghost_rows_on_2page(self) -> None:
+        """5-entry portfolio with skewed-high counts (32/24/12/17/4)
+        under 2-page floors produces no empty work entries (positions 2+
+        render content).
+        """
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": f"h1_{i}"} for i in range(32)]},
+                {"id": "w2", "highlights": [{"id": f"h2_{i}"} for i in range(24)]},
+                {"id": "w3", "highlights": [{"id": f"h3_{i}"} for i in range(12)]},
+                {"id": "w4", "highlights": [{"id": f"h4_{i}"} for i in range(17)]},
+                {"id": "w5", "highlights": [{"id": f"h5_{i}"} for i in range(4)]},
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # Drain through tier 6 only (no skill groups, certs, etc).
+        while True:
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(8, 6, 6, 2, 2)
+            )
+            if step is None or step.below_floor:
+                break
+            sections, _ = _apply_trim(sections, None, step)
+        sizes = [len(e["highlights"]) for e in sections["work"]]
+        # Each position lands at-or-above its floor; no zero ghost rows.
+        assert sizes == [8, 6, 6, 2, 2]
+        assert all(s >= 1 for s in sizes), f"ghost row regression: {sizes}"
+
+    def test_1page_preserves_ghost_row_behavior(self) -> None:
+        """1-page floor (3, 3, 0, 0, 0) drains positions 2+ to 0.
+
+        The "ghost row" (header-only) policy is intentional on 1-page
+        because page space is too constrained to support a non-zero
+        older-role floor. Pinned so a future calibration that touches
+        2-page floors does not accidentally widen the 1-page profile.
+        """
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": f"h1_{i}"} for i in range(10)]},
+                {"id": "w2", "highlights": [{"id": f"h2_{i}"} for i in range(10)]},
+                {"id": "w3", "highlights": [{"id": f"h3_{i}"} for i in range(10)]},
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        while True:
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(3, 3, 0, 0, 0)
+            )
+            if step is None or step.below_floor:
+                break
+            sections, _ = _apply_trim(sections, None, step)
+        sizes = [len(e["highlights"]) for e in sections["work"]]
+        assert sizes == [3, 3, 0]

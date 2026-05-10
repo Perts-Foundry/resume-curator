@@ -1,0 +1,384 @@
+meta:
+  id: good-cloud-architect-2page
+  name: Cloud Solutions Architect at Pinnacle Labs (long-form variant)
+  eval_schema_version: 4
+  tier: good
+  max_pages: 2
+job_description: 'Cloud Solutions Architect — Pinnacle Labs (Seattle, WA)
+
+  Pinnacle Labs is a product-led consultancy helping enterprises modernize
+
+  their cloud infrastructure. We are hiring a Cloud Solutions Architect to
+
+  lead design reviews, cost modeling, and migration planning for AWS-native
+
+  workloads.
+
+  Responsibilities:
+
+  - Conduct AWS Well-Architected Framework reviews for client environments
+
+  - Design multi-account landing zone architectures with guardrails
+
+  - Build reference architectures for high-availability, multi-region deployments
+
+  - Develop cost models and TCO analyses for cloud migration proposals
+
+  - Author infrastructure decision records and present to executive stakeholders
+
+  - Evaluate service selection trade-offs (RDS vs Aurora, ECS vs EKS, Lambda vs Fargate)
+
+  - Collaborate with security and compliance teams on shared responsibility models
+
+  Requirements:
+
+  - 6+ years in cloud architecture or infrastructure engineering
+
+  - AWS Solutions Architect Professional certification (required)
+
+  - Deep expertise in VPC design, IAM policy authoring, and multi-account strategies
+
+  - Experience with cost optimization (Reserved Instances, Savings Plans, rightsizing)
+
+  - Proficiency with Terraform or CloudFormation for large-scale IaC
+
+  - Strong written and verbal communication for client-facing deliverables
+
+  - Familiarity with the AWS Well-Architected Framework pillars
+
+  Nice to have:
+
+  - Experience with FinOps practices and cloud billing APIs
+
+  - Knowledge of compliance frameworks (SOC 2, HIPAA, FedRAMP)
+
+  - Background in system design interviews or architecture review boards
+
+  '
+expected:
+  must_include:
+    skills:
+    - skill-aws
+  must_exclude: {}
+baselines: {}
+# human_scores intentionally absent on long-form variants until the
+# calibration follow-up runs (see TODO.md AR-3 watch item).
+curation:
+  summary: Cloud Solutions Architect with 8+ years of experience designing multi-region
+    AWS architectures, leading infrastructure-as-code adoption, and delivering cost
+    optimization programs that reduced cloud spend by 28%. Holds AWS Solutions Architect
+    Professional certification with proven success in high-availability system design.
+  suggested_label: Cloud Solutions Architect
+  company_slug: pinnacle-labs
+  work_highlights:
+  - work_id: cloud-infra-senior
+    highlight_ids:
+    - infra-aws-architecture
+    - infra-terraform-modules
+    - infra-eks-cluster
+    - infra-disaster-recovery
+  - work_id: platform-eng-lead
+    highlight_ids:
+    - plat-cost-optimization
+    - plat-iac-adoption
+    - plat-monitoring
+  - work_id: consulting-founder
+    highlight_ids:
+    - consult-architecture-review
+    - consult-cost-analysis
+    - consult-migration-plan
+  skills:
+  - skill_id: skill-aws
+    keywords:
+    - EC2
+    - EKS
+    - RDS
+    - Aurora
+    - Lambda
+    - S3
+    - IAM
+    - CloudFormation
+    - Route 53
+    - VPC
+  - skill_id: skill-devops
+    keywords:
+    - Terraform
+    - Infrastructure as Code
+    - GitHub Actions
+  - skill_id: skill-containers
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+  - skill_id: skill-networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+    - Load Balancing
+    - VPN
+  - skill_id: skill-security
+    keywords:
+    - IAM Policies
+    - Compliance Automation
+    - RBAC
+  - skill_id: skill-databases
+    keywords:
+    - Aurora
+    - PostgreSQL
+    - DynamoDB
+  - skill_id: skill-monitoring
+    keywords:
+    - CloudWatch
+    - Grafana
+    - Datadog
+  projects:
+  - proj-iac-framework
+section_data:
+  work:
+  - id: cloud-infra-senior
+    name: Stratos Inc
+    position: Senior Cloud Infrastructure Engineer
+    start_date: 2019-06
+    end_date: 2022-02
+    highlights:
+    - id: infra-aws-architecture
+      text: Designed multi-region AWS architecture supporting 10 million daily API
+        requests with automatic failover, achieving 99.99% availability across 3 regions
+        using Route 53 health checks and Aurora Global Database
+      tags:
+      - aws
+      - architecture
+      technologies:
+      - AWS
+      - Route 53
+      - Aurora
+    - id: infra-terraform-modules
+      text: Built reusable Terraform module library of 40+ modules adopted by 6 product
+        teams, standardizing VPC layouts, security groups, and IAM policies while
+        cutting new environment provisioning from 2 days to 35 minutes
+      tags:
+      - terraform
+      - iac
+      technologies:
+      - Terraform
+      - AWS
+    - id: infra-eks-cluster
+      text: Deployed production EKS clusters across 3 environments with automated
+        node group scaling, pod security policies, and Istio service mesh, serving
+        120 pods with zero unplanned downtime over 14 months
+      tags:
+      - kubernetes
+      - eks
+      technologies:
+      - EKS
+      - Istio
+      - Kubernetes
+    - id: infra-disaster-recovery
+      text: Engineered automated disaster recovery pipeline using AWS Backup and cross-region
+        replication that reduced recovery time objective from 8 hours to 45 minutes,
+        validated through quarterly game day exercises
+      tags:
+      - disaster-recovery
+      - aws
+      technologies:
+      - AWS Backup
+      - S3
+      - Lambda
+  - id: platform-eng-lead
+    name: Cumulus Corp
+    position: Lead Platform Engineer
+    start_date: 2022-03
+    end_date: null
+    highlights:
+    - id: plat-cost-optimization
+      text: Implement cloud cost optimization program using reserved instances, spot
+        fleets, and resource tagging that reduced monthly AWS spend by $42,000 (28%
+        reduction) while supporting 3x traffic growth
+      tags:
+      - cost-optimization
+      - aws
+      technologies:
+      - AWS Cost Explorer
+      - Spot Instances
+    - id: plat-iac-adoption
+      text: Drive infrastructure-as-code adoption across the organization, converting
+        200+ manually provisioned resources to Terraform modules with automated drift
+        detection that reduced configuration incidents by 85%
+      tags:
+      - iac
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+    - id: plat-monitoring
+      text: Design observability platform integrating Prometheus, Grafana, and PagerDuty
+        that decreased mean time to detection from 25 minutes to under 3 minutes for
+        P1 incidents
+      tags:
+      - monitoring
+      - observability
+      technologies:
+      - Prometheus
+      - Grafana
+      - PagerDuty
+  - id: consulting-founder
+    name: Apex Consulting
+    position: Founder & Principal Consultant
+    start_date: 2023-06
+    end_date: null
+    highlights:
+    - id: consult-architecture-review
+      text: Conduct Well-Architected Framework reviews for 8 enterprise clients, identifying
+        120+ remediation items that improved reliability pillar scores by an average
+        of 35%
+      tags:
+      - architecture
+      - consulting
+      technologies:
+      - AWS
+      - Well-Architected Tool
+    - id: consult-cost-analysis
+      text: Deliver TCO analyses for 5 cloud migration proposals totaling $4.2 million
+        in projected annual savings through rightsizing, reserved instance planning,
+        and workload consolidation
+      tags:
+      - cost-optimization
+      - consulting
+      technologies:
+      - AWS Cost Explorer
+      - Savings Plans
+    - id: consult-migration-plan
+      text: Architect landing zone designs for 3 Fortune 500 clients, deploying multi-account
+        structures with AWS Organizations and Service Control Policies that passed
+        SOC 2 audit on first review
+      tags:
+      - migration
+      - architecture
+      technologies:
+      - AWS Organizations
+      - Control Tower
+  skills:
+  - id: skill-aws
+    name: Amazon Web Services
+    keywords:
+    - EC2
+    - EKS
+    - RDS
+    - Aurora
+    - Lambda
+    - S3
+    - IAM
+    - CloudFormation
+    - Route 53
+    - VPC
+    - CloudWatch
+    - Organizations
+  - id: skill-devops
+    name: CI/CD & Automation
+    keywords:
+    - Terraform
+    - Infrastructure as Code
+    - GitHub Actions
+    - CloudFormation
+  - id: skill-containers
+    name: Container Orchestration
+    keywords:
+    - Kubernetes
+    - Docker
+    - Helm
+    - ECS
+    - Istio
+  - id: skill-networking
+    name: Networking
+    keywords:
+    - TCP/IP
+    - DNS
+    - TLS
+    - Load Balancing
+    - VPN
+    - VPC Peering
+  - id: skill-security
+    name: Security & Compliance
+    keywords:
+    - IAM Policies
+    - Compliance Automation
+    - RBAC
+    - SOC 2
+  - id: skill-databases
+    name: Databases
+    keywords:
+    - Aurora
+    - PostgreSQL
+    - DynamoDB
+    - RDS
+  - id: skill-monitoring
+    name: Observability
+    keywords:
+    - CloudWatch
+    - Grafana
+    - Datadog
+    - Prometheus
+  projects:
+  - id: proj-iac-framework
+    name: Terraform Module Framework
+    description: Open source Terraform module framework for standardized AWS infrastructure
+      provisioning with built-in security policies and cost estimation
+    start_date: 2021-01
+    end_date: 2023-06
+    keywords:
+    - Terraform
+    - AWS
+    - Open Source
+    highlights:
+    - id: proj-iac-adoption
+      text: Created modular Terraform framework adopted by 12 organizations on GitHub
+        with 500+ stars, providing pre-built modules for VPC, EKS, and RDS deployment
+        patterns
+      tags:
+      - open-source
+      - terraform
+      technologies:
+      - Terraform
+      - AWS
+      - GitHub
+  certificates:
+  - id: cert-aws-solutions-architect
+    name: AWS Certified Solutions Architect - Professional
+    date: 2023-04
+    type: professional
+    issuer: Amazon Web Services
+    tags:
+    - aws
+    - cloud
+    technologies:
+    - AWS
+  education:
+  - id: edu-cs-bachelors
+    institution: State University
+    area: Computer Science
+    study_type: Bachelor of Science
+    start_date: 2011-08
+    end_date: 2015-05
+    tags:
+    - cs
+    - degree
+basics:
+  name: Alex Morgan
+  label: Cloud Solutions Architect
+  email: alex@example.com
+  phone: (555) 555-0100
+  url: https://alexmorgan.example.com
+  summary: Cloud Solutions Architect with 8+ years of experience designing multi-region
+    AWS architectures, leading infrastructure-as-code adoption, and delivering cost
+    optimization programs that reduced cloud spend by 28%. Holds AWS Solutions Architect
+    Professional certification with proven success in high-availability system design.
+  location:
+    city: Seattle
+    region: Washington
+    country_code: US
+  profiles:
+  - network: GitHub
+    username: alexmorgan
+    url: https://github.example.com/alexmorgan

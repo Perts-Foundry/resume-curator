@@ -88,6 +88,11 @@ class GoldenMeta(BaseModel):
     eval_schema_version: int
     tier: GoldenTier
     judge_version: str | None = None
+    max_pages: int = Field(default=1, ge=1, le=5)
+    """Page budget the case was authored against. Selects SHORT_FORM_BANDS
+    (1) or LONG_FORM_BANDS (>=2) when the case is loaded via
+    ``from_golden_case``. Threaded into ``materialize_profile`` so the
+    audit log carries the same value the case meta declares."""
 
 
 BaselineStatus = Literal["PASS", "WARN", "FAIL"]
@@ -294,9 +299,14 @@ def materialize_profile(golden: GoldenCase, target_dir: Path) -> Path:
     atomic_text_write(target_dir / "job_description.txt", golden.job_description)
 
     # Write curation_log.json (required by from_profile_dir for schema check).
+    # Format 2.3 carries max_pages so band-selection on materialized
+    # goldens picks the rubric the case was authored against.
     atomic_json_write(
         target_dir / "curation_log.json",
-        {"format_version": "2.0"},
+        {
+            "format_version": "2.3",
+            "max_pages": golden.meta.max_pages,
+        },
     )
 
     # Write basics.
@@ -595,11 +605,19 @@ _JUDGE_DEFAULT_WARN_TOLERANCE: int = 1
 _JUDGE_DEFAULT_ERROR_TOLERANCE: int = 2
 
 #: Per-dimension tolerance overrides as ``(warn, error)`` tuples.
-#: ``section_selection`` is structural (selected vs not) and shouldn't
-#: drift much across runs; ``overall_impression`` is holistic and noisier
-#: by nature, so a wider band reduces false-positive ERRORs.
+#: ``overall_impression`` is holistic and noisier by nature, so a wider
+#: band reduces false-positive ERRORs.
+#:
+#: ``section_selection`` was historically tightened to ``(0, 1)`` on the
+#: theory that section choice is structural (selected vs not) and
+#: shouldn't drift much across runs. The 2026-05-09 cross-model
+#: calibration (Sonnet 4.6 vs Haiku 4.5 on 28 goldens) showed 4 of 28
+#: cases drifting to ±2 on this dimension, all driven by model variance
+#: rather than curation regression. Loosened to the default ``(1, 2)``
+#: shape to absorb that variance without making the dimension noisier
+#: than the others.
 _JUDGE_DIMENSION_TOLERANCES: dict[str, tuple[int, int]] = {
-    "section_selection": (0, 1),
+    "section_selection": (1, 2),
     "overall_impression": (1, 3),
 }
 

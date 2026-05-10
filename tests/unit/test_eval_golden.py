@@ -539,7 +539,8 @@ class TestMaterializeProfile:
         log_data = json.loads(
             (target / "curation_log.json").read_text(encoding="utf-8"),
         )
-        assert log_data["format_version"] == "2.0"
+        assert log_data["format_version"] == "2.3"
+        assert log_data["max_pages"] == 1
 
     def test_validates_resume_curation_schema(self, tmp_path: Path) -> None:
         golden = _make_golden()
@@ -1454,3 +1455,31 @@ class TestFromGoldenCase:
         case = _make_golden(curation={"summary": "too short"})
         with pytest.raises(EvalError, match="stale curation schema"):
             from_golden_case(case)
+
+    def test_meta_max_pages_default_threaded_through(self) -> None:
+        """Default ``meta.max_pages: 1`` lands on EvalContext.
+
+        Without this round-trip, a future regression that drops the
+        ``case.meta.max_pages`` read in ``from_golden_case`` would
+        silently re-rate every long-form golden against SHORT_FORM_BANDS.
+        """
+        case = _make_golden()
+        ctx = from_golden_case(case)
+        assert case.meta.max_pages == 1  # default value pinned
+        assert ctx.max_pages == 1
+
+    def test_meta_max_pages_long_form_threaded_through(self) -> None:
+        """Explicit ``meta.max_pages: 2`` lands on EvalContext."""
+        meta = _minimal_golden_dict()["meta"] | {"max_pages": 2}
+        case = _make_golden(meta=meta)
+        ctx = from_golden_case(case)
+        assert case.meta.max_pages == 2
+        assert ctx.max_pages == 2
+
+    @pytest.mark.parametrize("max_pages", [1, 2, 3, 4, 5])
+    def test_meta_max_pages_round_trip(self, max_pages: int) -> None:
+        """Every supported page budget round-trips correctly."""
+        meta = _minimal_golden_dict()["meta"] | {"max_pages": max_pages}
+        case = _make_golden(meta=meta)
+        ctx = from_golden_case(case)
+        assert ctx.max_pages == max_pages

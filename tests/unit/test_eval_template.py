@@ -91,12 +91,23 @@ class TestRealTemplateParsing:
         assert m.value == 14.0
         assert m.status == EvalMetricStatus.PASS
 
-    def test_margins_0_3in(self) -> None:
+    def test_margins_asymmetric_bottom_tight(self) -> None:
+        """Top + sides at 0.3in; bottom tightened to 0.15in.
+
+        Asymmetric margins absorb ~1 line of trim-cascade convergence
+        dead space at the bottom of the last page (the cascade stops as
+        soon as ``pages <= max_pages`` and cannot backfill). Side and
+        top margins stay at 0.3in to preserve the standard header /
+        contact-line layout. The eval's PASS band tolerates the tighter
+        bottom (0.15-1.0in for bottom, 0.3-1.0in for top/sides).
+        """
         results = evaluate_template(_REAL_TEMPLATE)
         m = find_metric(results, "template_margins")
         assert isinstance(m.value, dict)
-        for side in ("top", "right", "bottom", "left"):
-            assert m.value[side] == 0.3
+        assert m.value["top"] == 0.3
+        assert m.value["left"] == 0.3
+        assert m.value["right"] == 0.3
+        assert m.value["bottom"] == 0.15
         assert m.status == EvalMetricStatus.PASS
 
     def test_font_families_3_pass(self) -> None:

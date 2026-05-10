@@ -26,7 +26,18 @@
 // Page setup — best practices §2.2, §2.3, §2.6
 // ---------------------------------------------------------------------------
 
-#set page(paper: "us-letter", margin: 0.3in)
+// Asymmetric margins: 0.3in top/sides, 0.15in bottom. The trim cascade
+// converges as soon as content fits the page budget and cannot backfill,
+// so the last page often ends with unfilled real estate. Tightening the
+// bottom margin specifically absorbs ~1 line of visible dead space
+// without affecting the top header/contact block layout. 0.15in is below
+// standard resume practice (0.5-0.75in is typical) but the trade-off
+// favors visual completeness over conventional spacing for a tool whose
+// output is read on screen as often as printed.
+#set page(
+  paper: "us-letter",
+  margin: (top: 0.3in, bottom: 0.15in, left: 0.3in, right: 0.3in),
+)
 // hyphenate: false  Typst's auto-hyphenation wraps line-break hyphens in
 // /ActualText <FEFF00AD>, so clipboard copy emits U+00AD (SOFT HYPHEN).
 // Web-form fonts that lack a U+00AD glyph render those as .notdef boxes.
@@ -287,8 +298,11 @@
         // future relaxation of the data contract doesn't render a
         // bare " · " separator.
         if edu.at("institution", default: "") != "" [ #sym.dot.c #edu.institution]
-        if yr != "" [ #sym.dot.c #yr]
         if honors != "" [ #sym.dot.c #honors]
+        // Year is right-aligned via #h(1fr), mirroring the
+        // certificates layout (line 302) so degree dates and credential
+        // dates anchor to the same visual column.
+        if yr != "" [#h(1fr)#yr]
       }
     ]
   ]

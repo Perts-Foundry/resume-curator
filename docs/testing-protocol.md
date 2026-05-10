@@ -192,7 +192,8 @@ For each of the 10 JDs, observe and record:
 
 ### Pipeline Behavior
 - Did it complete without errors?
-- How many trim steps? Did it converge to 1 page?
+- How many trim steps? Did it converge to the target page count
+  (`max_pages`, default 2)?
 - Any warnings in the output?
 
 ### Tier 1 Eval Scores
@@ -299,7 +300,8 @@ cache. Keep flag state constant across back-to-back runs to verify cache reuse.
 ## Success Criteria
 
 ### Hard Requirements (all must pass)
-1. All 4 strong-fit JDs produce a 1-page PDF with no layout defects
+1. All 4 strong-fit JDs produce a PDF at the requested page budget
+   (`--pages`, default 2) with no layout defects
 2. **No fabricated content** in any of the 10 test cases (resume or cover letter)
 3. No pipeline crashes or unhandled errors on any well-formed JD
 4. Human "would send" resume score >= 4/5 for at least 3 of 4 strong-fit JDs
@@ -311,7 +313,7 @@ cache. Keep flag state constant across back-to-back runs to verify cache reuse.
 8. Tier 2 overall_impression >= 4/5 for strong-fit JDs
 9. Moderate-fit JDs produce coherent resumes (Tier 1 aggregate >= 60)
 10. Poor-fit JDs complete without crashing and do not fabricate
-11. Convergence to 1 page with minimal trim steps for most JDs
+11. Convergence to the requested `max_pages` with minimal trim steps for most JDs
 12. `keyword_coverage` passes for strong-fit JDs (requires `--portfolio` flag)
 13. Human "would send" cover-letter score >= 4/5 on at least 3 of 4 Strong cases
 
@@ -323,7 +325,7 @@ cache. Keep flag state constant across back-to-back runs to verify cache reuse.
 ### Blockers (stop real use until fixed)
 - Any fabrication in any test case (resume or cover letter)
 - Pipeline crash on well-formed input
-- PDF exceeds 1 page after max trim iterations on a strong-fit JD
+- PDF exceeds the requested `max_pages` after max trim iterations on a strong-fit JD
 - Tier 1 aggregate below 60 on a strong-fit JD
 - Summary contains claims not in portfolio data
 - Any cover letter containing a literal `[UPPERCASE]` bracketed placeholder

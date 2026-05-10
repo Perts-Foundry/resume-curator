@@ -56,16 +56,23 @@ class TestCuratorSettings:
 
     def test_defaults(self) -> None:
         settings = _settings()
+        # judge_model default flipped 2026-05-09 from claude-sonnet-4-6 to
+        # claude-haiku-4-5 after the cross-model A/B (tolerances hold,
+        # ~37% of Sonnet's per-call cost). curate `model` was likewise
+        # flipped briefly that day but reverted in the same PR after the
+        # v4 retest produced confident wrong-company cover letters; see
+        # testing/results/haiku-eval/findings.md and the same-day design
+        # log entry.
         assert settings.model == "claude-sonnet-4-6"
         assert settings.max_tokens == 4096
         assert settings.portfolio_path == Path("../professional-portfolio-source")
         assert settings.output_dir == Path("profiles")
-        assert settings.max_pages == 1
+        assert settings.max_pages == 2
         assert settings.max_trim_iterations == 150
         assert settings.api_max_retries == 5
         assert settings.effort is None
         assert settings.allow_api_spend is False
-        assert settings.judge_model == "claude-sonnet-4-6"
+        assert settings.judge_model == "claude-haiku-4-5"
         assert settings.judge_effort is None
 
     def test_env_var_override(self, monkeypatch: pytest.MonkeyPatch) -> None:

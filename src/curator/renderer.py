@@ -30,8 +30,21 @@ from curator.io_utils import (
     priority_sort_key,
 )
 from curator.models import EMPTY_INTERESTS, RENDERER_MANAGED_SECTIONS, RENDERER_SECTIONS
+from curator.page_caps import (  # noqa: F401 (re-exported for back-compat)
+    CERTIFICATE_FLOOR,
+    _caps_for_pages,
+    _PageCaps,
+)
 from curator.prompt import PROMPT_HASH, PROMPT_VERSION
 from curator.rules import COVER_LETTER_WORD_MAX
+
+# ``_PageCaps``, ``_caps_for_pages``, and ``CERTIFICATE_FLOOR`` are imported
+# above and live in :mod:`curator.page_caps` so :mod:`curator.eval.report`
+# can consume them without importing the renderer (avoids a circular
+# dependency). The imports are re-exported via a ruff F401 suppression on
+# the import statement rather than ``__all__`` so the module's true public
+# API (``render``, ``RenderOutput``, ``TrimKind``, ``TrimStep``) stays
+# exportable via ``from x import *``.
 
 if TYPE_CHECKING:
     from curator.client import CurationResult
@@ -67,9 +80,9 @@ class TrimStep:
         target_id: Work or project entry ID for highlight removal
             (identifies which entry to trim within its parent list).
             None for non-highlight operations.
-        below_floor: True for tiers 11-12 (last-resort work-highlight
-            removal on positions 0 or 1 that crosses the
-            ``recent_role_soft_floor`` protection). The trim loop logs a
+        below_floor: True for the below-floor last-resort tier 8
+            (highlight removal on any work position that crosses its
+            ``work_position_floors`` entry). The trim loop logs a
             WARNING when one fires so the bypassed protection is
             observable.
     """
@@ -106,6 +119,14 @@ class RenderOutput:
     mode_path: Path | None = None
     cover_letter_yaml_path: Path | None = None
     cover_letter_pdf_path: Path | None = None
+    safety_valve_fired: bool = False
+    """True when the trim cascade exhausted ``max_trim_iterations`` without
+    converging, meaning the rendered PDF may exceed ``max_pages``. Distinct
+    from the convergence/page-count signal: a 2-page render under a 2-page
+    budget reads ``safety_valve_fired=False``; a 2-page render under a
+    1-page budget where the cascade gave up reads ``True``. Surfaces the
+    "shipped what we could fit" path so downstream eval / dashboards can
+    distinguish intentional 2-page output from non-converged output."""
 
 
 # ---------------------------------------------------------------------------
@@ -358,22 +379,21 @@ def _apply_selections(
 # the judge convention block in lockstep AND bump JUDGE_VERSION; bump
 # PROMPT_VERSION too if curator-prompt language refers to it.
 
-# Minimum number of certificates the cascade will never trim below. The
-# top ``CERTIFICATE_FLOOR`` portfolio certificates are treated as
-# load-bearing credentials that should survive any page pressure.
-CERTIFICATE_FLOOR = 3
+# ``CERTIFICATE_FLOOR``, ``_PageCaps``, and ``_caps_for_pages`` live in
+# :mod:`curator.page_caps` (imported and re-exported above) so
+# :mod:`curator.eval.report` can consume them without a circular import.
 
 
 def _generate_next_trim(
     sections: dict[str, Any],
     interests: dict[str, Any] | None,
     *,
-    recent_role_soft_floor: int = 3,
+    work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
 ) -> TrimStep | None:
     """Return the next trim operation, or None if nothing left to cut.
 
-    Evaluates from tier 1 (lowest-value) through the last-resort tiers,
+    Evaluates from tier 1 (lowest-value) through the last-resort tier,
     returning the first applicable operation. Operations self-exhaust
     as data is removed.
 
@@ -382,7 +402,7 @@ def _generate_next_trim(
     its highlight list is drained to zero. Only highlights, not entries
     themselves, are cut.
 
-    Skill groups are removed wholesale at tier 10, one group per
+    Skill groups are removed wholesale at tier 7, one group per
     iteration, lowest-priority group last-first. This is faster to
     converge than draining keywords one-by-one: each iteration frees a
     whole section's worth of vertical space rather than a single line
@@ -399,19 +419,33 @@ def _generate_next_trim(
     cuts the whole entry.
 
     Certificates are trimmed bottom-up early in the cascade (tier 4)
-    but ``CERTIFICATE_FLOOR`` entries are always preserved: the top 3
-    are treated as load-bearing credentials and never cut regardless of
-    page pressure. There is no late-stage cert drain to break this
-    floor -- if page pressure persists after tier 10 skill-group
-    removal, the below-floor work-highlight tiers (11-12) fire as the
-    final escape hatch rather than removing the top 3 certs.
+    but ``certificate_floor`` entries are always preserved as
+    load-bearing credentials. The floor is page-budget-aware: 3 on
+    1-page renders, 4 on 2-page, 5 on 3+-page (see
+    :func:`_caps_for_pages`). There is no late-stage cert drain to
+    break this floor -- if page pressure persists after tier 7
+    skill-group removal, the below-floor tier 8 fires as the final
+    escape hatch rather than removing the top ``certificate_floor``
+    certs.
 
-    The two most recent work entries (positions 0 and 1 after reverse
-    chronological sort) are protected by ``recent_role_soft_floor``: they
-    keep at least that many highlights until every other trim avenue has
-    been exhausted. "Soft" because tiers 11-12 are a last-resort cascade
-    that CAN trim below the floor once tiers 1-10 have nothing left to
-    cut; the trim loop emits a WARNING when that happens.
+    Tier 6 trims work highlights to ``work_position_floors[i]`` per
+    position, scanning N-1..0 (oldest-first) so older roles drain
+    toward their floor before the top role loses any content. The
+    tuple is page-budget-aware; positions beyond its length receive
+    the last value (a 6-entry portfolio under a 5-element floor tuple
+    gets the last value applied to position 5). For 1-page profiles
+    where positions 2+ have floor 0, tier 6 drains them fully (the
+    timeline still renders as header-only rows; "ghost rows" are
+    intentional on 1-page where page space cannot support a non-zero
+    older-role floor). For 2+-page profiles with non-zero older-role
+    floors, tier 6 stops at the floor and the cascade falls through to
+    tier 7 (skill groups) before tier 8 (below-floor) breaks the floor.
+
+    "Soft" floors: tier 8 is a last-resort cascade that CAN trim below
+    any per-position floor once tiers 1-7 have nothing left to cut.
+    Scanned bottom-up (older positions first) so the most-recent role
+    is the absolute last to lose content. Each tier 8 step emits a
+    WARNING via the trim loop with ``below_floor=True``.
     """
     # Tier 1: Remove interests section.
     if interests is not None:
@@ -474,13 +508,20 @@ def _generate_next_trim(
             description=f"Removed education: {eid}",
         )
 
-    # Tier 6: Remove last highlight from positions 2..N-1 (keep >=1 each).
-    # Positions 0 and 1 are protected from tiers 6 and 7 so the two
-    # most recent roles retain their highlights longest.
+    # Tier 6: Trim work to per-position floor. Scan positions N-1..0
+    # bottom-up; first position with ``len(highlights) > floors[i]``
+    # loses last highlight. Positions beyond ``work_position_floors``
+    # length fall through to the last tuple value. Bottom-up scanning
+    # preserves the "protect recent content" intent: older roles trim
+    # toward their floor first; the top role only loses content once
+    # everyone else is at floor.
     work = sections.get("work", [])
-    for i in range(len(work) - 1, 1, -1):
+    floors_len = len(work_position_floors)
+    last_floor = work_position_floors[-1] if floors_len > 0 else 0
+    for i in range(len(work) - 1, -1, -1):
+        floor = work_position_floors[i] if i < floors_len else last_floor
         highlights = work[i].get("highlights", [])
-        if len(highlights) > 1:
+        if len(highlights) > floor:
             wid = work[i].get("id", "unknown")
             hid = highlights[-1].get("id", "unknown")
             return TrimStep(
@@ -489,48 +530,12 @@ def _generate_next_trim(
                 target_id=wid,
             )
 
-    # Tier 7: Continue removing highlights from positions 2..N-1 (allows 0).
-    for i in range(len(work) - 1, 1, -1):
-        highlights = work[i].get("highlights", [])
-        if len(highlights) > 0:
-            wid = work[i].get("id", "unknown")
-            hid = highlights[-1].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.HIGHLIGHT,
-                description=f"Removed highlight: {hid} from work entry: {wid}",
-                target_id=wid,
-            )
-
-    # Tier 8: Trim position 1 (prior role) down to recent_role_soft_floor.
-    if len(work) > 1:
-        highlights_1 = work[1].get("highlights", [])
-        if len(highlights_1) > recent_role_soft_floor:
-            wid = work[1].get("id", "unknown")
-            hid = highlights_1[-1].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.HIGHLIGHT,
-                description=f"Removed highlight: {hid} from work entry: {wid}",
-                target_id=wid,
-            )
-
-    # Tier 9: Trim position 0 (current role) down to recent_role_soft_floor.
-    if len(work) > 0:
-        highlights_0 = work[0].get("highlights", [])
-        if len(highlights_0) > recent_role_soft_floor:
-            wid = work[0].get("id", "unknown")
-            hid = highlights_0[-1].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.HIGHLIGHT,
-                description=f"Removed highlight: {hid} from work entry: {wid}",
-                target_id=wid,
-            )
-
-    # Tier 10: Remove the lowest-priority skill group wholesale
+    # Tier 7: Remove the lowest-priority skill group wholesale
     # (lowest priority is the last entry in ``skills``). Dropping a
     # whole group per iteration frees far more vertical space than
     # one-keyword-at-a-time drain and converges the page-fit loop in
-    # dramatically fewer passes. Tier runs after recent-role floor
-    # trims so skill breadth is preserved until the cascade is running
+    # dramatically fewer passes. Runs after the per-position floor
+    # tier so skill breadth is preserved until the cascade is running
     # low on options. Groups with zero keywords are skipped here (they
     # don't take page space, and ``_prune_empty_sections`` removes them).
     skills = sections.get("skills", [])
@@ -543,25 +548,16 @@ def _generate_next_trim(
                 target_id=sid,
             )
 
-    # Tier 11: Last resort — trim position 1 below the soft floor.
-    if len(work) > 1:
-        highlights_1 = work[1].get("highlights", [])
-        if len(highlights_1) > 0:
-            wid = work[1].get("id", "unknown")
-            hid = highlights_1[-1].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.HIGHLIGHT,
-                description=f"Removed highlight: {hid} from work entry: {wid}",
-                target_id=wid,
-                below_floor=True,
-            )
-
-    # Tier 12: Absolute last resort — trim position 0 below the soft floor.
-    if len(work) > 0:
-        highlights_0 = work[0].get("highlights", [])
-        if len(highlights_0) > 0:
-            wid = work[0].get("id", "unknown")
-            hid = highlights_0[-1].get("id", "unknown")
+    # Tier 8: Below-floor last resort. Scan positions N-1..0
+    # (oldest-first) and trim the first position with any remaining
+    # highlights. Sets ``below_floor=True`` so the trim loop emits a
+    # WARNING. Generalized over all positions because older positions
+    # may now have non-zero floors that tier 6 respected.
+    for i in range(len(work) - 1, -1, -1):
+        highlights = work[i].get("highlights", [])
+        if len(highlights) > 0:
+            wid = work[i].get("id", "unknown")
+            hid = highlights[-1].get("id", "unknown")
             return TrimStep(
                 kind=TrimKind.HIGHLIGHT,
                 description=f"Removed highlight: {hid} from work entry: {wid}",
@@ -608,6 +604,9 @@ def _apply_trim(
             sections["education"] = sections["education"][:-1]
 
         case TrimKind.HIGHLIGHT:
+            # Invariant: ``work[*].id`` is unique (enforced upstream by
+            # the portfolio loader). The bottom-up scan finds the single
+            # entry matching ``target_id`` regardless of direction.
             work = sections["work"]
             for i in range(len(work) - 1, -1, -1):
                 wid = work[i].get("id", "unknown")
@@ -631,7 +630,7 @@ def _prune_empty_sections(
 
     Cleans up defects the trim cascade can leave behind:
 
-    - Skill groups whose ``keywords`` list is empty. Tier 10 now
+    - Skill groups whose ``keywords`` list is empty. Tier 7 now
       removes whole groups atomically so the cascade itself never
       produces an empty-keyword group, but this guard still runs
       defensively in case upstream construction leaves one behind.
@@ -670,9 +669,9 @@ def _trim_to_fit(
     *,
     max_pages: int,
     max_trim_iterations: int,
-    recent_role_soft_floor: int = 3,
+    work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
-) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int, bool]:
     """Iteratively trim content until the PDF fits within max_pages.
 
     Writes data files, compiles Typst, checks page count, and applies
@@ -688,16 +687,20 @@ def _trim_to_fit(
         section_order: Section order from settings.
         max_pages: Target page count.
         max_trim_iterations: Safety valve for trim loop.
-        recent_role_soft_floor: Soft minimum highlights retained on
-            positions 0 and 1 (the two most recent roles). Tiers 8-9
-            respect this floor; tiers 11-12 bypass it as a last resort
-            and emit a WARNING when they do.
+        work_position_floors: Per-position soft minimum highlights
+            retained on each work entry, indexed by reverse-chronological
+            position (0 = most recent). Tier 6 respects these floors;
+            tier 8 bypasses them as a last resort and emits a WARNING
+            when it does. Positions beyond the tuple length receive the
+            last value. Defaults to short-form ``(3, 3, 0, 0, 0)``.
         certificate_floor: Hard minimum certificates preserved (top
             entries). Tier 4 never trims below this count; there is no
             bypass path. Defaults to ``CERTIFICATE_FLOOR``.
 
     Returns:
-        Tuple of (final_sections, final_interests, trim_log, page_count).
+        Tuple of (final_sections, final_interests, trim_log,
+        page_count, safety_valve_fired). The boolean is True if the
+        cascade exhausted ``max_trim_iterations`` without converging.
     """
     trim_log: list[str] = []
     pages = 0
@@ -724,13 +727,13 @@ def _trim_to_fit(
                     pages,
                     len(trim_log),
                 )
-            return sections, interests, trim_log, pages
+            return sections, interests, trim_log, pages, False
 
         # Generate next trim operation.
         step = _generate_next_trim(
             sections,
             interests,
-            recent_role_soft_floor=recent_role_soft_floor,
+            work_position_floors=work_position_floors,
             certificate_floor=certificate_floor,
         )
         if step is None:
@@ -739,7 +742,11 @@ def _trim_to_fit(
                 pages,
                 max_pages,
             )
-            return sections, interests, trim_log, pages
+            # Treat "nothing left to trim" as a safety-valve event for
+            # downstream observability: the rendered PDF exceeds the
+            # budget and the cascade has no remaining moves, which is
+            # the same operational concern as iteration exhaustion.
+            return sections, interests, trim_log, pages, True
 
         # Observability: warn if we cross the prior default iteration
         # count (15) so pathological convergence cases surface even while
@@ -754,7 +761,7 @@ def _trim_to_fit(
             )
         if step.below_floor:
             logger.warning(
-                "Trim crossed recent_role_soft_floor (tier 11/12 last resort): {}",
+                "Trim crossed work_position_floors (below-floor last resort): {}",
                 step.description,
             )
 
@@ -770,7 +777,7 @@ def _trim_to_fit(
     _invoke_typst(output_dir, template_path)
     pages = get_page_count(output_dir / "resume.pdf")
 
-    return sections, interests, trim_log, pages
+    return sections, interests, trim_log, pages, True
 
 
 # ---------------------------------------------------------------------------
@@ -872,6 +879,7 @@ def _write_audit_artifacts(
     jd_text: str | None,
     *,
     trim_log: list[str] | None = None,
+    max_pages: int,
 ) -> tuple[Path, Path, Path | None, Path | None]:
     """Write curated.yaml, curation_log.json, and per-source descriptor.
 
@@ -892,9 +900,13 @@ def _write_audit_artifacts(
     atomic_yaml_write(curated_path, curation.curation.model_dump())
 
     # Curation log — provenance, API metadata, and trim history.
+    # ``format_version`` 2.3 adds ``max_pages`` for downstream eval band
+    # selection (``bands_for_pages``). Renderer caps are deterministic from
+    # ``max_pages`` via ``_caps_for_pages`` and are intentionally not
+    # persisted; storing both invites drift.
     log_path = output_dir / "curation_log.json"
     log_data: dict[str, Any] = {
-        "format_version": "2.2",
+        "format_version": "2.3",
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "source": curation.source,
@@ -903,6 +915,7 @@ def _write_audit_artifacts(
         "output_tokens": curation.output_tokens,
         "cache_creation_input_tokens": curation.cache_creation_input_tokens,
         "cache_read_input_tokens": curation.cache_read_input_tokens,
+        "max_pages": max_pages,
         "timestamp": datetime.now(tz=UTC).isoformat(),
     }
     if trim_log is not None:
@@ -1170,11 +1183,19 @@ def render(
             interests_dict = portfolio.interests.model_dump(exclude_none=True)
 
         # Compile PDF with page-fitting trim loop.
+        caps = _caps_for_pages(settings.max_pages)
         pdf_path: Path | None = None
         trim_log: list[str] = []
         final_page_count: int | None = None
+        safety_valve_fired = False
         if not skip_pdf:
-            sections, interests_dict, trim_log, final_page_count = _trim_to_fit(
+            (
+                sections,
+                interests_dict,
+                trim_log,
+                final_page_count,
+                safety_valve_fired,
+            ) = _trim_to_fit(
                 sections,
                 basics_dict,
                 interests_dict,
@@ -1183,6 +1204,8 @@ def render(
                 list(settings.section_order),
                 max_pages=settings.max_pages,
                 max_trim_iterations=settings.max_trim_iterations,
+                work_position_floors=caps.work_position_floors,
+                certificate_floor=caps.certificate_floor,
             )
             pdf_path = output_dir / "resume.pdf"
         else:
@@ -1192,7 +1215,11 @@ def render(
 
         # Write audit artifacts (after trimming so trim_log is persisted).
         curated_path, log_path, jd_path, mode_path = _write_audit_artifacts(
-            output_dir, curation, jd_text, trim_log=trim_log or None
+            output_dir,
+            curation,
+            jd_text,
+            trim_log=trim_log or None,
+            max_pages=settings.max_pages,
         )
 
         # Cover letter (if present on the curation result). Runs after the
@@ -1239,4 +1266,5 @@ def render(
         mode_path=mode_path,
         cover_letter_yaml_path=cover_letter_yaml_path,
         cover_letter_pdf_path=cover_letter_pdf_path,
+        safety_valve_fired=safety_valve_fired,
     )
