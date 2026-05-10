@@ -194,7 +194,7 @@ def resume_curation_dict() -> dict[str, object]:
     """
     return {
         "summary": "Experienced SRE and founder of Perts Foundry LLC "
-        "(a consulting company) with focus on reliability.",
+        "with focus on reliability.",
         "suggested_label": "Senior DevOps Engineer",
         "company_slug": "acme-corp",
         "work_highlights": [

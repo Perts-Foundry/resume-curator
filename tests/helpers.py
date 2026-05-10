@@ -116,7 +116,7 @@ def make_curation_dict(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "summary": (
             "A seasoned platform engineer and founder of Perts Foundry LLC "
-            "(a consulting company) with 10 years of experience in cloud "
+            "with 10 years of experience in cloud "
             "infrastructure, DevOps, and site reliability engineering. "
             "Delivered 99.9% uptime across distributed Kubernetes clusters "
             "serving 50k requests per second, reduced deployment cycle time "
