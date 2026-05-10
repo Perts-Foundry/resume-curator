@@ -246,6 +246,54 @@ expanding scope. Each is independently shippable.
   correctly to a future contributor. (doc-sync-checker 2026-05-09
   review.)
 
+## Trim Cascade Rebalance Follow-ups (from 2026-05-10 work)
+
+- [ ] **Calibrate `work_position_floors` from real runs**: the
+  `(8, 6, 6, 2, 2)` 2-page profile is a starting point. After N>=10
+  2-page renders ship under the new profile, review the `trim_log`
+  pattern + on-page bullet distribution and tighten or relax the
+  per-position floors. Particular concerns: 6-bullet position-1 floor
+  may be too generous for short-content roles; 2-bullet position 3-4
+  floor may be too low for substantive older roles when the page
+  budget allows.
+
+- [ ] **EXEC_FORM_BANDS for `max_pages >= 4`**: the renderer now
+  scales 2-vs-3+ asymmetrically (`(8,6,6,2,2)` vs `(10,8,8,4,4)`)
+  while `bands_for_pages` still treats `max_pages >= 2` as one
+  profile (`LONG_FORM_BANDS = caps(2)`). On 3+-page renders the eval
+  scores against 2-page bands. Add a third `EvalBands` profile keyed
+  on `max_pages >= 3` once 3+-page output becomes a real workflow
+  target (touches `bands_for_pages`, `EvalBands` field defaults, and
+  `test_eval_bands_share_caps_floors` parametrize range). Subsumes
+  the AR-7 follow-up above on the eval side.
+
+- [ ] **Validator hard-vs-soft on per-paragraph cover-letter
+  over-max**: today's API path soft-warns on per-paragraph word
+  count over `COVER_LETTER_PARAGRAPH_WORD_MAX=90`; the static path
+  hard-rejects. Original rationale ("paid calls are expensive") was
+  sound but the cost asymmetry has shifted now that the
+  partial-recovery flow is built out (per CLAUDE.md "Failure
+  recovery (API path only)"). Reconsider promoting per-paragraph
+  over-max to a hard reject on the API path. Would have caught the
+  Roadie 311-word output before it shipped. (prompt-reviewer
+  CRIT-1 follow-up.)
+
+- [ ] **Cover-letter prompt block hash pin**: today's
+  `EXPECTED_SHA256` test pin in `tests/unit/test_prompt.py:655`
+  covers `_SYSTEM_PROMPT_TEXT` only. The cover-letter block
+  (`_COVER_LETTER_PROMPT_BLOCK`) is interpolated and only audited
+  via `PROMPT_HASH`. Adding a parallel byte-identity pin for the
+  cover-letter block would catch silent edits at test time
+  (parallel to the system-prompt pin). Defer until an unrelated
+  cover-letter prompt edit warrants the cache-rotation cost.
+
+- [ ] **Aggressive cover-letter band tightening (escalation
+  trigger)**: if the conservative target+body-band change shipped
+  2026-05-10 still produces >20% drift over the 300-word soft cap
+  on the next 5+ paid `--cover-letter` runs, tighten body band
+  prose further from `80-87` to `80-85` (achievable upper bound
+  becomes `65 + 2*85 + 45 = 280`). Validator constants stay at 90.
+
 ---
 
 ## Cover Letter
