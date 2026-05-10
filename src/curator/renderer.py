@@ -30,8 +30,15 @@ from curator.io_utils import (
     priority_sort_key,
 )
 from curator.models import EMPTY_INTERESTS, RENDERER_MANAGED_SECTIONS, RENDERER_SECTIONS
+from curator.page_caps import CERTIFICATE_FLOOR, _caps_for_pages, _PageCaps
 from curator.prompt import PROMPT_HASH, PROMPT_VERSION
 from curator.rules import COVER_LETTER_WORD_MAX
+
+# Re-export so existing call sites (`from curator.renderer import _PageCaps`,
+# etc.) keep working. ``_PageCaps`` and ``_caps_for_pages`` now live in
+# :mod:`curator.page_caps` so :mod:`curator.eval.report` can consume them
+# without importing the renderer (avoids a circular dependency).
+__all__ = ["CERTIFICATE_FLOOR", "_PageCaps", "_caps_for_pages"]
 
 if TYPE_CHECKING:
     from curator.client import CurationResult
@@ -366,47 +373,9 @@ def _apply_selections(
 # the judge convention block in lockstep AND bump JUDGE_VERSION; bump
 # PROMPT_VERSION too if curator-prompt language refers to it.
 
-# Default certificate floor for 1-page resumes; 2+-page renders use
-# ``_caps_for_pages(max_pages).certificate_floor``. Load-bearing
-# credentials are preserved under page pressure within the budget-aware
-# floor. The constant is retained for test-import compatibility.
-CERTIFICATE_FLOOR = 3
-
-
-@dataclass(frozen=True)
-class _PageCaps:
-    """Internal renderer cap profile keyed on ``max_pages``.
-
-    Consumers should pass ``max_pages`` and let :func:`render` derive the
-    caps via :func:`_caps_for_pages`; do not construct directly.
-
-    Per-project bullet cap is intentionally NOT in this profile:
-    ``ResumeCuration.projects`` is an ordered list of project IDs only,
-    so the AI does not rank highlights *within* a project. Per-project
-    highlight order comes from the portfolio. Raising the cap above the
-    constant 2 would surface portfolio-position-2 content rather than
-    JD-relevance content. The constant 2 is enforced in
-    :func:`_apply_selections`; see ``TODO.md`` for the ``ProjectRanking``
-    schema follow-up that would unblock a higher cap.
-    """
-
-    recent_role_soft_floor: int
-    certificate_floor: int
-
-
-def _caps_for_pages(max_pages: int) -> _PageCaps:
-    """Return the renderer cap profile for a given page budget.
-
-    Floors rise modestly with the page budget: positions 0-1 keep more
-    bullet depth, and the top-N certificates carried as load-bearing grow
-    in lockstep. Plateaus at ``max_pages >= 3``; future executive-CV
-    calibration may add a finer profile for ``max_pages >= 4``.
-    """
-    if max_pages <= 1:
-        return _PageCaps(recent_role_soft_floor=3, certificate_floor=3)
-    if max_pages == 2:
-        return _PageCaps(recent_role_soft_floor=4, certificate_floor=4)
-    return _PageCaps(recent_role_soft_floor=5, certificate_floor=5)
+# ``CERTIFICATE_FLOOR``, ``_PageCaps``, and ``_caps_for_pages`` live in
+# :mod:`curator.page_caps` (imported and re-exported above) so
+# :mod:`curator.eval.report` can consume them without a circular import.
 
 
 def _generate_next_trim(
