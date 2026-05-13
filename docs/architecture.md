@@ -473,6 +473,10 @@ profiles/
 
 ## Structured Output Schema
 
+The Pydantic types remain the canonical domain shape used by the
+renderer, validator, static-mode synthesizer, and on-disk
+`curation.yaml` artifacts:
+
 ```python
 class WorkHighlightRanking(BaseModel):
     work_id: str                     # Portfolio work entry ID
@@ -492,6 +496,85 @@ class ResumeCuration(BaseModel):
     skills: list[SkillRanking]                   # Relevant groups, JD-ordered
     projects: list[str]                           # 3-5 project IDs ordered by (JD fit x weight)
 ```
+
+### Dynamic schema construction (API path)
+
+On the API path, the JSON schema sent to Anthropic is **NOT** generated
+from the Pydantic class. Instead `curator.output_schema.build_curation_schema(portfolio, *, with_cover_letter)`
+constructs a per-call dict schema from `PortfolioData` and the client
+injects it via `output_config.format` on `messages.stream`. The wire
+shape differs from the domain shape on two fields:
+
+| Domain field (Pydantic)                       | Wire field (schema)                   |
+|-----------------------------------------------|----------------------------------------|
+| `work_highlights: list[WorkHighlightRanking]` | `work_highlights_by_id: object`        |
+| `skills: list[SkillRanking]`                  | `skills_by_id: object`                 |
+
+The wire `*_by_id` objects are keyed by portfolio IDs (work entry IDs
+and skill group IDs respectively). Each property's value is an array
+with `items.enum` scoped to that parent's children. This makes cross-
+parent emission (a highlight ID emitted under
+a different parent work entry) decode-time-impossible: the grammar
+literally cannot sample a token sequence the schema forbids.
+
+`projects` carries `items.enum` over portfolio project IDs at the top
+level; no nested object needed.
+
+Decision history:
+
+- The original design used `oneOf` (or `anyOf+const`) over work entries
+  with each branch's `highlight_ids.items.enum` scoped to that branch.
+  Anthropic's structured-output keyword subset does NOT include
+  `oneOf`, and `anyOf` appears to be union-flattened at compile time
+  (no decode-time branch narrowing under prefix constraints; the docs'
+  explicit "exponential compilation cost" warning is the signature of
+  branch-flattening). The object-with-fixed-keys design sidesteps the
+  union question entirely.
+- Confirmed empirically against `claude-haiku-4-5` on 2026-05-13 with
+  9 probe calls (adversarial, benign-confusion, cover-letter wrapper,
+  empty-enum edge, field-order). All ENFORCED; full results in the
+  plan file referenced by `TODO.md`.
+- The same constrained-decoding mechanism powers the
+  `CoverLetterCuration.body_paragraph_1` / `body_paragraph_2`
+  tuple-shape (AR-2026-05-09) and the cover-letter `sign_off` enum;
+  the object-with-fixed-keys pattern here is the same lever applied to
+  parent-child ID scoping.
+
+**Edge cases handled by the builder:**
+
+- Work entries with zero highlights and skill groups with zero
+  keywords are **omitted** from the schema (Anthropic returns 400 on
+  empty `enum`). The client adapter synthesizes an empty
+  `WorkHighlightRanking` for each omitted work entry to satisfy the
+  validator's "every portfolio work entry has a ranking" invariant.
+- Skill groups the model returned with an empty array (the grammar's
+  "skip this group" signal) are filtered out before validation since
+  `SkillRanking.keywords` has `min_length=1`. The filter emits one
+  INFO log naming the dropped group IDs.
+- Portfolio with zero projects: `projects.items` falls back to an
+  unconstrained string array (since `items.enum: []` would 400). The
+  application-level validator catches any bogus ID.
+
+**Cache impact:** the schema is part of the prompt-cache key
+(`tools → system → messages`). Because the ~85K-token system prompt
+already embeds portfolio content, both the schema and the prompt
+invalidate on the same axis (portfolio change). JD-only changes (the
+dominant axis in real workflows) keep both stable and the cache warm.
+
+**Determinism:** `build_curation_schema` iterates portfolio collections
+in YAML insertion order via `loader.py`; no `set` is used in schema
+construction. Two calls with the same `PortfolioData` produce
+byte-identical schemas. A test in `tests/unit/test_output_schema.py`
+pins this invariant.
+
+**Validator retention:** `validate_curation_ids` runs unchanged on the
+adapted curation. After this change, the hard-fail rows for unknown
+`work_id`, unknown `skill_group_id`, unknown `project_id`, duplicate
+`work_id`, and missing rankings all become grammar-unreachable on the
+API path. They remain reachable on the **static** path (which builds
+`ResumeCuration` directly from portfolio data without grammar
+enforcement) and they remain reachable on the API path if Anthropic's
+grammar compiler regresses. Defense-in-depth is justified.
 
 ### Portfolio signal fields
 

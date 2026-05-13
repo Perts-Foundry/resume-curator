@@ -7,16 +7,23 @@ files point here; `docs/architecture.md` describes current state only.
 
 ## Curation Reliability
 
-Two classes of Layer-3 failure are now recoverable in-place without retry:
-hallucinated skill keywords inside a known group (since 2026-04-11) and
-hallucinated `highlight_id` inside a known `work_id` (since 2026-05-12,
-after two paid calls in 24 hours hit the cross-entry attribution failure
-mode). Cover-letter word-count overshoots ship via the existing soft-warn
-on the API path. Items below address the remaining hard-fail rows
-(unknown `work_id`, duplicate `work_id`, missing rankings, unknown
-`skill_group_id`, unknown `project_id`) which still raise and abort,
-plus the durable schema-level fix that would make ID hallucination
-grammar-impossible.
+ID hallucination on the API path is now **grammar-impossible** as of
+2026-05-13: the structured-output schema is built per-call from
+`PortfolioData` and encodes `work_highlights_by_id` /
+`skills_by_id` / `projects` with `items.enum` scoped to each parent's
+children. Cross-parent attribution, unknown `work_id`, unknown
+`skill_group_id`, unknown `project_id`, duplicate `work_id`, and
+missing rankings all became decode-time-unreachable (`required` plus
+`additionalProperties: false` plus per-property `items.enum`).
+`validate_curation_ids` stays as defense-in-depth on both paths;
+the soft-drop behavior for hallucinated keywords/highlights (since
+2026-04-11 / 2026-05-12) is now load-bearing only against a future
+Anthropic-side grammar regression or on the static path.
+
+Cover-letter word-count overshoots ship via the existing soft-warn
+on the API path. Items below address validation cases that grammar
+cannot reach (cover-letter validator policy, prose-level constraints
+on `summary` length, etc.) plus observability gaps.
 
 ### Retry-with-feedback loop
 
@@ -65,18 +72,28 @@ grammar-impossible.
 - [ ] Structured INFO log on every semantic retry (attempt number,
   invalid-ID count, request_id), WARNING on final failure.
 
-### Schema-level elimination (long-term)
+### Schema-level elimination (done 2026-05-13)
 
-- [ ] Build per-call JSON schema dynamically in `client.py` that
-  replaces `keywords: list[str]` in `SkillRanking` with a `oneOf`
-  discriminated on `skill_id` where each branch's keywords field is
-  `{"type": "array", "items": {"type": "string", "enum": [<that
-  group's keywords>]}}`. Grammar-impossible to hallucinate under
-  constrained decoding. Schema currently built once at import time
-  from the Pydantic class; would need to move to runtime construction
-  from `PortfolioData`. Measure schema compile latency against
-  Anthropic limits before shipping. Also eliminates highlight-belongs-
-  to-parent-work-entry hallucinations.
+- [x] Build per-call JSON schema dynamically in `client.py` from
+  `PortfolioData`. Landed as `src/curator/output_schema.py` with
+  `build_curation_schema()`. `oneOf`-discriminator design was
+  abandoned after research established Anthropic's grammar likely
+  union-flattens `anyOf` branches with no decode-time narrowing
+  (`oneOf` isn't supported at all). Replaced with an object-with-
+  fixed-keys form: `work_highlights_by_id` and `skills_by_id` are
+  objects keyed by portfolio IDs, each value carrying its own
+  `items.enum`. No `anyOf`, no unions, fully flat. Empirically
+  verified against `claude-haiku-4-5` 2026-05-13 (9 probe calls
+  across adversarial, benign-confusion, cover-letter wrapper, and
+  field-order cases; all ENFORCED). Schema-compile latency
+  unobservable on probe-sized schemas; will be re-measured on the
+  real portfolio during first warm run.
+- [ ] Add a `highlight_ids` dedup pass to `validate_curation_ids`.
+  Grammar enforces membership of `items.enum`, not uniqueness or
+  count, so the model could in principle emit `[pf-a-h1, pf-a-h1,
+  pf-a-h1]` even with the new schema. Validator should dedup
+  in-place before returning. Independent of the schema fix; small
+  and self-contained.
 
 ### Defense-in-depth
 

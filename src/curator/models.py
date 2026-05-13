@@ -531,34 +531,47 @@ def validate_curation_ids(
 ) -> ResumeCuration:
     """Verify curation IDs against the portfolio; return a sanitized copy.
 
-    Applies the same checks to both API-sourced and statically-synthesized
-    curations. Accumulates hard errors into a single message for
-    debuggability. Returns a new ``ResumeCuration`` with hallucinated
-    highlight IDs and skill keywords dropped (soft warn) so callers
-    don't silently keep invalid output.
+    Defense-in-depth on the API path; primary defense on the static path.
 
-    Work highlights: one ranking per portfolio work entry is required
-    (hard fail on missing or unknown work entries). Unknown ``highlight_id``
-    inside a known ``work_id`` is a SOFT warning: the bogus ID is dropped
-    from the returned curation, the rest of the ranking is preserved, and
-    a WARNING line names every drop. The renderer safety-net at
-    ``renderer._reorder_with_safety_net`` then fills omitted IDs in
-    portfolio order. This mirrors the skill-keyword precedent below and
-    addresses the recurring cross-entry attribution failure (the model
-    emits ``pf-*`` IDs that belong to other work entries under
-    ``aws-cloud-support-engineer``, since both namespaces mention AWS).
-    Hard-rejecting on these burned paid calls with no recoverable output;
-    soft-drop ships a usable resume in every case.
+    As of 2026-05-13 the API-path curation arrives via a grammar-enforced
+    structured-output schema built by ``curator.output_schema.build_curation_schema``.
+    Per-property ``items.enum`` makes the following rows decode-time
+    unreachable on the API path: unknown ``work_id``, unknown
+    ``highlight_id`` inside a known ``work_id`` (the cross-entry
+    attribution failure), unknown ``skill_group_id``, non-verbatim
+    keywords inside a known ``skill_group_id``, unknown ``project_id``,
+    duplicate ``work_id``, and missing rankings. They remain reachable
+    on the **static** path (which builds ``ResumeCuration`` directly
+    from portfolio data without grammar enforcement) and on the API
+    path only if Anthropic's grammar compiler regresses.
 
-    Skills: unknown group IDs are still a hard failure (model invented a
-    section that doesn't exist). Non-verbatim keywords inside a known
-    group are a SOFT warning: the bogus keyword is dropped from the
-    returned curation, the rest of the group is preserved, and a
-    WARNING line names every drop. This was the right trade after
-    repeated runs where the model emitted JD-listed AWS services
-    (e.g., RDS, Route53) under ``cloud-aws`` despite the verbatim-only
-    rule; hard-rejecting on hallucinated keywords burned paid calls
-    without producing a usable resume on the next attempt.
+    Soft-drop behavior (still used on the static path; safety-net on
+    the API path):
+
+    - Unknown ``highlight_id`` inside a known ``work_id`` is a SOFT
+      warning: the bogus ID is dropped, the rest of the ranking is
+      preserved, a WARNING line names every drop. The renderer
+      safety-net at ``renderer._reorder_with_safety_net`` fills
+      omitted IDs in portfolio order.
+    - Non-verbatim keywords inside a known ``skill_group_id`` are a
+      SOFT warning: the bogus keyword is dropped, the rest of the
+      group is preserved, a WARNING line names every drop.
+
+    Hard failures (still raise ``CurationValidationError``):
+
+    - Unknown ``work_id``: model invented a work entry that does not
+      exist. (Grammar-unreachable on the API path, possible on static.)
+    - Duplicate ``work_id`` across rankings: same entry returned more
+      than once. (Grammar-unreachable; an object schema cannot have
+      duplicate keys.)
+    - Missing ranking for a portfolio work entry. (Grammar-unreachable;
+      the client adapter synthesizes empty rankings for entries the
+      schema omitted, which keeps this invariant satisfied.)
+    - Unknown ``skill_group_id``. (Grammar-unreachable on API path.)
+    - Unknown ``project_id``. (Grammar-unreachable on API path when the
+      portfolio has at least one project. Edge: an empty portfolio
+      projects list disables the enum constraint, so this row remains
+      reachable on the API path in that one degenerate case.)
 
     Projects: unknown IDs are hard failures; empty list is valid.
 
