@@ -124,7 +124,11 @@ def _extract_curation_dict(message: anthropic.types.Message) -> dict[str, Any]:
             f"(stop_reason={message.stop_reason}, request_id={message.id})"
         )
         raise APIResponseError(msg)
-    raw = text_blocks[0].text
+    # Concatenate all text blocks in order. With `effort` enabled or future
+    # SDK changes, the structured JSON could split across multiple text
+    # blocks (or trail a reasoning block); reading only `text_blocks[0]`
+    # would silently truncate the response.
+    raw = "".join(b.text for b in text_blocks)
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -476,7 +480,20 @@ class CuratorClient:
             # wire shape (object-keyed) to the domain shape (list-of-
             # rankings) so existing validators and downstream code
             # continue to work unchanged.
-            parsed_dict = _extract_curation_dict(message)
+            try:
+                parsed_dict = _extract_curation_dict(message)
+            except APIResponseError as exc:
+                if was_truncated:
+                    # Add the truncation hint so the user can act on it.
+                    msg = (
+                        f"Response truncated at max_tokens="
+                        f"{effective_max_tokens} and the partial JSON is "
+                        f"unparseable. Increase CURATOR_MAX_TOKENS "
+                        f"(current: {self._max_tokens}) and retry "
+                        f"(request_id={message.id}): {exc}"
+                    )
+                    raise APIResponseError(msg) from exc
+                raise
             curation, cover_letter = _adapt_curation_dict(
                 parsed_dict,
                 portfolio,

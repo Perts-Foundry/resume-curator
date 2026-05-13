@@ -593,6 +593,66 @@ class TestCurateStopReasons:
 
 
 class TestCurateGrammarSchemaAdapter:
+    def test_concatenates_multiple_text_blocks(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """If the SDK / model returns the structured JSON across two text
+        blocks (or after a reasoning block), the adapter must
+        concatenate them rather than reading only block[0]. Reading
+        only the first block would silently truncate the response and
+        surface as a generic JSON parse error."""
+        full_text = json.dumps(_curation_to_wire_dict(valid_curation))
+        # Split into two halves to simulate streaming or post-thinking
+        # text emission.
+        mid = len(full_text) // 2
+        block1 = MagicMock(spec=anthropic.types.TextBlock)
+        block1.type = "text"
+        block1.text = full_text[:mid]
+        block2 = MagicMock(spec=anthropic.types.TextBlock)
+        block2.type = "text"
+        block2.text = full_text[mid:]
+        message = MagicMock()
+        message.parsed_output = None
+        message.stop_reason = "end_turn"
+        message.model = "claude-sonnet-4-6-20260217"
+        message.id = "msg_test_123"
+        message.usage = _make_mock_usage()
+        message.content = [block1, block2]
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        assert result.curation == valid_curation
+
+    def test_truncation_with_unparseable_json_surfaces_truncation_hint(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """When --cover-letter is on and stop_reason=max_tokens, the
+        client soft-warns and tries to parse the partial response. If
+        the JSON is unparseable (truncated mid-object), the error
+        message must include the truncation hint so the user knows to
+        bump CURATOR_MAX_TOKENS rather than chasing a generic parse
+        error."""
+        message = _make_mock_message(
+            raw_text='{"resume": {"summary": "incomplete',
+            stop_reason="max_tokens",
+        )
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        with pytest.raises(APIResponseError, match="truncated at max_tokens"):
+            client.curate(
+                portfolio_data, "Job description.", with_cover_letter=True
+            )
+
     def test_synthesizes_empty_ranking_for_omitted_work_entry(
         self,
         mocker: Any,

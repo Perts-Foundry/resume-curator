@@ -426,7 +426,18 @@ class WorkHighlightRanking(BaseModel):
 
 
 class SkillRanking(BaseModel):
-    """A skill group with keyword-level filtering and ordering."""
+    """A skill group with keyword-level filtering and ordering.
+
+    Application-level domain model: ``keywords`` is required non-empty (a
+    present ranking by definition has at least one keyword). The wire-shape
+    JSON schema built by :func:`curator.output_schema.build_curation_schema`
+    lets the model emit an empty array under a skill group to mean "skip
+    this group"; the client adapter (``client._adapt_curation_dict``)
+    filters those out and emits one ``logger.info("Filtered ... empty
+    skill group(s)")`` line before constructing ``ResumeCuration``. Any
+    code that constructs ``SkillRanking`` directly (static path, tests)
+    must omit the group rather than pass ``keywords=[]``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
