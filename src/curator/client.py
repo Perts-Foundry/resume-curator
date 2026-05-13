@@ -362,11 +362,11 @@ class CuratorClient:
         structured output, validates the response, and returns a
         ``CurationResult`` with the curation and usage metadata.
 
-        When ``with_cover_letter`` is True, the output schema is
-        :class:`ResumeCurationWithCoverLetter` and the system prompt gains
-        a cover-letter rulebook block. The call itself remains a single
-        ``messages.stream(...)`` invocation; there is never a second paid
-        call.
+        When ``with_cover_letter`` is True, ``build_curation_schema`` wraps
+        the resume schema with a sibling ``cover_letter`` property and the
+        system prompt gains a cover-letter rulebook block. The call itself
+        remains a single ``messages.stream(...)`` invocation; there is never
+        a second paid call.
 
         Args:
             portfolio: Validated portfolio data from the loader.

@@ -236,7 +236,7 @@ Portfolio YAML + JD ──┤                                 ├──► Typst
 
 1. **Load** -- reads career data from your portfolio source directory (YAML files covering work, skills, projects, certificates, education, and more; see [`docs/portfolio-schema.md`](docs/portfolio-schema.md) for the schema)
 2. **Curate** -- either:
-   - `curate` sends portfolio + JD to the Claude API and gets back structured rankings (summary, label, work highlight order, skill filtering, project ranking) via Pydantic constrained decoding, or
+   - `curate` sends portfolio + JD to the Claude API and gets back structured rankings (summary, label, work highlight order, skill filtering, project ranking) via constrained decoding against a portfolio-derived JSON schema, or
    - `static` synthesizes the same `ResumeCuration` deterministically from portfolio data (no API call)
 3. **Render** -- writes per-section YAML and compiles a PDF using the Typst template at `templates/curated.typ`
 4. **Enforce** -- if the PDF exceeds the target page count, the renderer trims lowest-value content and re-compiles (up to `max_trim_iterations` passes; a WARNING logs at 15 as a convergence signal)

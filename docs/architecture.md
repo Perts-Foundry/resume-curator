@@ -3,7 +3,7 @@
 Current architecture for resume-curator. This document is kept up to date as the
 project evolves.
 
-Last updated: 2026-05-09
+Last updated: 2026-05-13
 
 ---
 
@@ -105,6 +105,12 @@ src/curator/
                       #   via scripts/rerender.py --partial. Total word count
                       #   above COVER_LETTER_WORD_MAX is a soft warning only;
                       #   the letter still ships and no partial is written.
+  output_schema.py    # Builds the per-call JSON schema from PortfolioData;
+                      #   grammar-enforces parent-child ID scoping
+                      #   (work_highlights_by_id, skills_by_id) so cross-parent
+                      #   ID hallucination becomes decode-time impossible.
+                      #   Pure function build_curation_schema(portfolio, *,
+                      #   with_cover_letter); deterministic, no I/O.
   renderer.py         # Curated YAML writer, Typst compilation, page-fitting trimmer.
                       #   _render_cover_letter writes data/cover_letter.yaml and
                       #   compiles cover_letter.pdf (single pass, no trim cascade).
@@ -205,9 +211,14 @@ pipeline.py
   └── exceptions.py    (RenderError)
 
 client.py
-  ├── models.py        (structured output types)
-  ├── prompt.py        (message construction)
+  ├── models.py         (structured output types)
+  ├── output_schema.py  (per-call JSON schema construction)
+  ├── prompt.py         (message construction)
   └── exceptions.py
+
+output_schema.py
+  ├── models.py         (PortfolioData; TYPE_CHECKING only)
+  └── rules.py          (sign-off enum, summary length constants)
 
 loader.py
   ├── io_utils.py      (YAML safe loading)
@@ -334,13 +345,22 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
 3. If --dry-run: display preview (portfolio stats, JD length, cost estimate) and exit (no API call)
 4. cli.py calls pipeline.run_pipeline(settings, jd_text, skip_pdf=...)
 5. pipeline.py: loader.py reads all YAML from portfolio-source directory
-6. pipeline.py: client.py calls Claude once via messages.stream() with ResumeCuration schema
+6. pipeline.py: client.py calls Claude once via messages.stream() with a
+   per-call JSON schema built by output_schema.build_curation_schema(portfolio)
    - prompt.py constructs system prompt (with portfolio data) + user message (with JD)
-   - Streaming prevents timeouts; get_final_message() returns ParsedMessage
-   - Portfolio data is prompt-cached (stable across requests)
+   - output_schema.py builds the wire schema (work_highlights_by_id /
+     skills_by_id object-keyed-by-portfolio-ID with items.enum scoping)
+   - Streaming prevents timeouts; get_final_message() returns the message
+   - Portfolio data is prompt-cached (stable across requests); schema is
+     part of the cache prefix and invalidates on the same axis
    - Job description varies per request
-7. Claude returns structured ResumeCuration (summary, label, slug, work highlight rankings, skill rankings, project rankings)
-8. client.py validates response (all IDs exist in portfolio, all work entries covered, keywords verbatim-match portfolio)
+7. Claude returns structured JSON conforming to the schema; client.py extracts
+   from message.content[0].text and adapts the wire shape (object-keyed)
+   into the domain shape (list[WorkHighlightRanking], list[SkillRanking])
+   before constructing ResumeCuration
+8. client.py runs validate_curation_ids as defense-in-depth; the schema
+   already made cross-parent/unknown-ID emission decode-time-impossible,
+   so this layer mainly catches grammar regressions and static-path issues
 9. pipeline.py: renderer.py applies selections, writes per-section YAML, compiles PDF
 10. renderer.py: if PDF exceeds max_pages, trims content deterministically and re-compiles
     - 8-tier trim cascade: interests > project highlights (lowest project first,
@@ -628,20 +648,27 @@ Optional cover-letter generation is gated by `--cover-letter` on both the
 ```python
 class CoverLetterCuration(BaseModel):
     salutation: str          # "Dear ...,". Always ends with a comma.
-    opening: str             # 2-3 sentence company-specific hook.
-    body_paragraphs: list[str]   # 2-3 STAR paragraphs, JD-ordered.
+    opening: str             # 2 sentence company-specific hook.
+    body_paragraph_1: str    # First STAR-shaped body paragraph.
+    body_paragraph_2: str    # Second STAR-shaped body paragraph.
     closing: str             # Value recap + subtle CTA.
     sign_off: str            # Sincerely | Best regards | ... (no comma).
+    # `body_paragraphs: list[str]` is exposed as a computed_field for
+    # downstream consumers (renderer, validator, Typst template); the
+    # tuple shape is the schema-facing contract that lets the grammar
+    # enforce "exactly 2" (2026-05-09 design log entry).
 
 class ResumeCurationWithCoverLetter(BaseModel):
     resume: ResumeCuration
     cover_letter: CoverLetterCuration
 ```
 
-`ResumeCuration` is unchanged. The wrapper is used as `output_format` only
-when `with_cover_letter=True`; otherwise the existing `ResumeCuration` schema
-is used. This keeps every existing consumer working without modification and
-preserves prompt-cache hits on the off path.
+`ResumeCuration` is unchanged. When `with_cover_letter=True`,
+`build_curation_schema` produces a wrapper object schema with `resume` and
+`cover_letter` properties (matching the `ResumeCurationWithCoverLetter` shape)
+and injects it via `output_config.format`; otherwise it produces the resume
+schema only. The Pydantic wrapper class survives for static-mode parity but
+is no longer used as `output_format` on the API path.
 
 The same `CoverLetterCuration` also serves as the portfolio-boundary model:
 `PortfolioData.cover_letter: CoverLetterCuration | None` is populated by
@@ -737,36 +764,49 @@ Setup: Console → Settings → API Keys → Create Key → store in `.env` as
 Structured outputs are GA on Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5. No beta
 header required.
 
-`client.messages.stream()` with `output_format` is the primary integration point:
+`client.messages.stream()` with `output_config.format` is the integration point:
 
-1. Define a Pydantic `BaseModel` (e.g. `ResumeCuration`)
-2. Pass it as `output_format` to `messages.stream()`
-3. Claude's token sampling is **constrained at generation time** to match the schema —
-   output is guaranteed valid, not "ask nicely and hope"
-4. The SDK auto-transforms the schema before sending (strips unsupported constraints
-   like `minimum`/`maximum`/`pattern`, adds `additionalProperties: false`, moves
-   constraints into field descriptions)
-5. The SDK validates the response against the **original** Pydantic model post-response,
-   catching anything the JSON Schema couldn't express
-6. `get_final_message()` returns a `ParsedMessage[ResumeCuration]` — access the result
-   via `response.parsed_output`, a typed Python object, no JSON parsing
+1. Build the JSON schema **per call** from `PortfolioData` via
+   `curator.output_schema.build_curation_schema()`. The schema encodes
+   `work_highlights_by_id` and `skills_by_id` as objects keyed by portfolio IDs,
+   with each property's value carrying `items.enum` scoped to that parent's
+   children. See **Dynamic schema construction (API path)** earlier in this
+   document for the full design rationale.
+2. Pass the dict via `output_config={"format": {"type": "json_schema", "schema":
+   schema}}` to `messages.stream()`. `output_format=PydanticClass` is the
+   legacy convenience wrapper and is not used: a Pydantic class can't express
+   the parent-child enum scoping we need.
+3. Claude's token sampling is **constrained at generation time** to match the
+   schema. Cross-parent ID emission, unknown work/skill/project IDs, and
+   non-verbatim skill keywords all become decode-time-impossible.
+4. The grammar guarantees the response is schema-valid JSON. The client extracts
+   the text from `message.content[0].text` (`parsed_output` is None when a raw
+   dict schema is used) and converts the wire shape (object-keyed) to the
+   domain shape (`list[WorkHighlightRanking]`, `list[SkillRanking]`) via the
+   adapter in `client._adapt_curation_dict`.
+5. `ResumeCuration.model_validate()` runs as the final post-parse check, plus
+   `validate_curation_ids` as defense-in-depth against any grammar regression.
 
 ```python
+schema = build_curation_schema(portfolio, with_cover_letter=with_cover_letter)
+output_config = {"format": {"type": "json_schema", "schema": schema}}
+if effort is not None:
+    output_config["effort"] = effort
 with client.messages.stream(
-    model="claude-sonnet-4-6-20260217",
+    model="claude-sonnet-4-6",
     max_tokens=4096,
     system=[...],
     messages=[...],
-    output_format=ResumeCuration,
+    output_config=output_config,
 ) as stream:
     response = stream.get_final_message()
-curation: ResumeCuration = response.parsed_output
+parsed = json.loads(response.content[0].text)
+curation, cover_letter = _adapt_curation_dict(parsed, portfolio, ...)
 ```
 
-**Parameter migration:** `output_format` is moving to `output_config.format`. Both work
-during the transition period. We use `output_format` for now (simpler, SDK handles it).
-The `effort` parameter is passed via `output_config={"effort": value}` alongside
-`output_format` — the SDK merges them internally.
+**Effort tuning:** `effort` is passed via `output_config={"effort": value}`
+alongside the schema. Both keys live in the same `output_config` dict; the SDK
+sends them together.
 
 ### Prompt Architecture
 

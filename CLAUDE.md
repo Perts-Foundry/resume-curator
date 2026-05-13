@@ -291,7 +291,13 @@ resume-curator/
       loader.py                     # YAML loading from portfolio-source
                                     #   (incl. optional data/cover-letter.yaml)
       client.py                     # Anthropic API wrapper; CurationResult.source
-                                    #   ("api" | "static")
+                                    #   ("api" | "static"); injects the per-call
+                                    #   schema built by output_schema.py via
+                                    #   output_config.format
+      output_schema.py              # Per-call JSON schema construction from
+                                    #   PortfolioData; grammar-enforces
+                                    #   parent-child ID scoping
+                                    #   (work_highlights_by_id, skills_by_id)
       renderer.py                   # Curated YAML writer, Typst compilation, page-fitting trimmer;
                                     #   writes mode.txt for static runs
       static_mode.py                # Zero-API curation synthesis (synthesize_curation,
