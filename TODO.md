@@ -7,11 +7,16 @@ files point here; `docs/architecture.md` describes current state only.
 
 ## Curation Reliability
 
-The `_validate_curation_ids` Layer-3 check today raises and aborts the
-run. The S1 rerun and TEST-1 walk both demonstrated that recoverable
-failures (hallucinated skill keywords, cover-letter word-count
-overshoots) are paid spend that ends up at the user as a traceback.
-Items below address the underlying class, not specific incidents.
+Two classes of Layer-3 failure are now recoverable in-place without retry:
+hallucinated skill keywords inside a known group (since 2026-04-11) and
+hallucinated `highlight_id` inside a known `work_id` (since 2026-05-12,
+after two paid calls in 24 hours hit the cross-entry attribution failure
+mode). Cover-letter word-count overshoots ship via the existing soft-warn
+on the API path. Items below address the remaining hard-fail rows
+(unknown `work_id`, duplicate `work_id`, missing rankings, unknown
+`skill_group_id`, unknown `project_id`) which still raise and abort,
+plus the durable schema-level fix that would make ID hallucination
+grammar-impossible.
 
 ### Retry-with-feedback loop
 

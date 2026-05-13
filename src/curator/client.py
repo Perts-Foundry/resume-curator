@@ -82,11 +82,14 @@ def _validate_curation_ids(
 ) -> ResumeCuration:
     """API-path adapter around ``models.validate_curation_ids``.
 
-    Returns the sanitized curation (with hallucinated keywords dropped).
-    Hard ID-mismatch failures (unknown work/highlight/skill_group/project
-    IDs, missing rankings, duplicates) still surface as
-    ``APIResponseError`` to keep the API call path's exception taxonomy
-    intact.
+    Returns the sanitized curation (with hallucinated highlight IDs
+    inside known work entries AND hallucinated skill keywords inside
+    known skill groups dropped + WARN-logged).
+
+    Hard ID-mismatch failures (unknown ``work_id``, missing rankings,
+    duplicate ``work_id`` across rankings, unknown ``skill_group_id``,
+    unknown ``project_id``) still surface as ``APIResponseError`` to
+    keep the API call path's exception taxonomy intact.
     """
     try:
         return validate_curation_ids(curation, portfolio)
