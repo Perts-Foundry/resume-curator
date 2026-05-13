@@ -707,6 +707,10 @@ class TestValidateCurationIds:
         assert "bogus-one" in drop_lines[0]
         assert "bogus-two" in drop_lines[0]
         assert "bogus-three" in drop_lines[0]
+        # Pin the consolidated WARN format: "Kept N/M." where N is the
+        # post-sanitize count and M is the model-emitted count. Catches a
+        # future refactor that reorders or removes the counts.
+        assert "Kept 1/4" in drop_lines[0]
         _logger.remove()
 
     def test_unknown_highlight_ids_across_multiple_work_entries_each_warn_independently(
@@ -879,6 +883,181 @@ class TestValidateCurationIds:
 
         assert sanitized.work_highlights[0].work_id == "acme-senior-engineer"
         assert sanitized.work_highlights[0].highlight_ids == []
+
+    def test_cross_entry_attribution_drops_real_id_from_wrong_parent(
+        self,
+        valid_curation_dict: dict[str, object],
+        portfolio_data: PortfolioData,
+    ) -> None:
+        # Reproduces the real-world cross-entry attribution failure: the
+        # model emits a REAL highlight_id that exists in the portfolio
+        # but belongs to a DIFFERENT work entry than the one being ranked.
+        # The validator must drop it from the wrong parent regardless of
+        # whether it's a real ID elsewhere in the portfolio.
+        from curator.models import WorkEntry
+
+        beta_work = WorkEntry.model_validate(
+            {
+                "id": "beta-staff-engineer",
+                "name": "Beta Inc",
+                "position": "Staff Engineer",
+                "startDate": "2021-01",
+                "endDate": "2023-05",
+                "location": "Remote",
+                "summary": "Beta work.",
+                "highlights": [
+                    {
+                        "id": "beta-launched-feature",
+                        "text": "Launched feature serving 1M users.",
+                        "tags": ["product"],
+                        "resume_variants": ["general"],
+                        "technologies": ["Python"],
+                    },
+                ],
+                "tags": ["product"],
+                "resume_variants": ["general"],
+                "technologies": ["Python"],
+            },
+        )
+        portfolio = replace(
+            portfolio_data,
+            work=[portfolio_data.work[0], beta_work],
+        )
+
+        # Place beta-launched-feature (a REAL id, but belongs to beta) under
+        # acme-senior-engineer. This is the cross-entry attribution shape.
+        valid_curation_dict["work_highlights"] = [
+            {
+                "work_id": "acme-senior-engineer",
+                "highlight_ids": ["acme-deployed-k8s", "beta-launched-feature"],
+            },
+            {
+                "work_id": "beta-staff-engineer",
+                "highlight_ids": ["beta-launched-feature"],
+            },
+        ]
+        curation = ResumeCuration.model_validate(valid_curation_dict)
+
+        sanitized = _validate_curation_ids(curation, portfolio)
+
+        acme_ranking = next(
+            wh
+            for wh in sanitized.work_highlights
+            if wh.work_id == "acme-senior-engineer"
+        )
+        beta_ranking = next(
+            wh
+            for wh in sanitized.work_highlights
+            if wh.work_id == "beta-staff-engineer"
+        )
+        # acme loses the cross-attributed beta ID.
+        assert acme_ranking.highlight_ids == ["acme-deployed-k8s"]
+        # beta keeps its own ID untouched.
+        assert beta_ranking.highlight_ids == ["beta-launched-feature"]
+
+    def test_kept_highlight_ids_preserve_ai_emitted_order(
+        self,
+        valid_curation_dict: dict[str, object],
+        portfolio_data: PortfolioData,
+    ) -> None:
+        # The renderer respects the ranking the AI emitted; the safety-net
+        # appends omitted IDs in portfolio order AFTER the kept ones. So
+        # the validator's filter must preserve AI emission order across
+        # surviving IDs (not re-sort by portfolio order).
+        from curator.models import WorkEntry
+
+        work = WorkEntry.model_validate(
+            {
+                "id": "acme-senior-engineer",
+                "name": "Acme Corp",
+                "position": "Senior Engineer",
+                "startDate": "2023-06",
+                "endDate": "",
+                "location": "Remote",
+                "summary": "Led platform engineering.",
+                "highlights": [
+                    {
+                        "id": "acme-deployed-k8s",
+                        "text": "Deployed Kubernetes cluster.",
+                        "tags": [],
+                        "resume_variants": ["general"],
+                        "technologies": [],
+                    },
+                    {
+                        "id": "acme-built-pipeline",
+                        "text": "Built CI/CD pipeline.",
+                        "tags": [],
+                        "resume_variants": ["general"],
+                        "technologies": [],
+                    },
+                    {
+                        "id": "acme-launched-platform",
+                        "text": "Launched platform.",
+                        "tags": [],
+                        "resume_variants": ["general"],
+                        "technologies": [],
+                    },
+                ],
+                "tags": [],
+                "resume_variants": ["general"],
+                "technologies": [],
+            },
+        )
+        portfolio = replace(portfolio_data, work=[work])
+
+        # AI emits: real-3 (last in portfolio order), bogus, real-1 (first
+        # in portfolio order). Kept order must be [real-3, real-1].
+        valid_curation_dict["work_highlights"] = [
+            {
+                "work_id": "acme-senior-engineer",
+                "highlight_ids": [
+                    "acme-launched-platform",
+                    "bogus-highlight",
+                    "acme-deployed-k8s",
+                ],
+            },
+        ]
+        curation = ResumeCuration.model_validate(valid_curation_dict)
+
+        sanitized = _validate_curation_ids(curation, portfolio)
+
+        assert sanitized.work_highlights[0].highlight_ids == [
+            "acme-launched-platform",
+            "acme-deployed-k8s",
+        ]
+
+    def test_no_drops_returns_same_curation_instance(
+        self,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        # Identity-preservation contract (models.py docstring): when the
+        # validator drops nothing, the returned curation IS the input
+        # object, not a copy. Locks the contract against future refactors
+        # of the return path.
+        sanitized = _validate_curation_ids(valid_curation, portfolio_data)
+        assert sanitized is valid_curation
+
+    def test_drops_return_new_instance(
+        self,
+        portfolio_data: PortfolioData,
+        valid_curation_dict: dict[str, object],
+    ) -> None:
+        # Companion to the no-drops identity test: when a drop occurs, the
+        # returned curation MUST be a copy (frozen model semantics, and so
+        # callers that compare by `is` notice the change).
+        valid_curation_dict["work_highlights"] = [
+            {
+                "work_id": "acme-senior-engineer",
+                "highlight_ids": ["acme-deployed-k8s", "bogus"],
+            },
+        ]
+        curation = ResumeCuration.model_validate(valid_curation_dict)
+
+        sanitized = _validate_curation_ids(curation, portfolio_data)
+
+        assert sanitized is not curation
+        assert sanitized.work_highlights[0] is not curation.work_highlights[0]
 
     def test_invalid_project_id_fails(
         self,
