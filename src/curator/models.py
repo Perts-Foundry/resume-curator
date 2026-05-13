@@ -534,13 +534,21 @@ def validate_curation_ids(
     Applies the same checks to both API-sourced and statically-synthesized
     curations. Accumulates hard errors into a single message for
     debuggability. Returns a new ``ResumeCuration`` with hallucinated
-    skill keywords dropped (soft warn) so callers don't silently keep
-    invalid output.
+    highlight IDs and skill keywords dropped (soft warn) so callers
+    don't silently keep invalid output.
 
     Work highlights: one ranking per portfolio work entry is required
-    (hard fail on missing or unknown entries, hard fail on unknown
-    highlight IDs). Partial highlight lists are allowed and logged as
-    WARNING; the renderer safety-net appends omitted IDs in portfolio order.
+    (hard fail on missing or unknown work entries). Unknown ``highlight_id``
+    inside a known ``work_id`` is a SOFT warning: the bogus ID is dropped
+    from the returned curation, the rest of the ranking is preserved, and
+    a WARNING line names every drop. The renderer safety-net at
+    ``renderer._reorder_with_safety_net`` then fills omitted IDs in
+    portfolio order. This mirrors the skill-keyword precedent below and
+    addresses the recurring cross-entry attribution failure (the model
+    emits ``pf-*`` IDs that belong to other work entries under
+    ``aws-cloud-support-engineer``, since both namespaces mention AWS).
+    Hard-rejecting on these burned paid calls with no recoverable output;
+    soft-drop ships a usable resume in every case.
 
     Skills: unknown group IDs are still a hard failure (model invented a
     section that doesn't exist). Non-verbatim keywords inside a known
@@ -559,17 +567,17 @@ def validate_curation_ids(
         portfolio: Loaded portfolio to validate against.
 
     Returns:
-        A ``ResumeCuration`` with hallucinated skill keywords removed.
-        Other fields are unchanged. Callers MUST use this return value
-        instead of the original ``curation`` so dropped keywords don't
-        leak into the renderer.
+        A ``ResumeCuration`` with hallucinated highlight IDs and skill
+        keywords removed. Other fields are unchanged. Callers MUST use
+        this return value instead of the original ``curation`` so dropped
+        items don't leak into the renderer.
 
     Raises:
         CurationValidationError: On any HARD ID mismatch (unknown
-            work/highlight/skill_group/project IDs, missing rankings,
-            duplicates). Callers that want the historical
-            ``APIResponseError`` behavior (e.g., ``CuratorClient``)
-            should catch this and re-wrap.
+            work_id, missing rankings, duplicate work_ids, unknown
+            skill_group_id, unknown project_id). Callers that want the
+            historical ``APIResponseError`` behavior (e.g.,
+            ``CuratorClient``) should catch this and re-wrap.
     """
     valid_work_ids = {w.id for w in portfolio.work}
     valid_highlight_ids: dict[str, set[str]] = {
@@ -582,6 +590,7 @@ def validate_curation_ids(
 
     seen_work_ids: set[str] = set()
     duplicate_work_ids: list[str] = []
+    sanitized_work_highlights: list[WorkHighlightRanking] = []
     for wh in curation.work_highlights:
         if wh.work_id in seen_work_ids:
             duplicate_work_ids.append(wh.work_id)
@@ -589,23 +598,38 @@ def validate_curation_ids(
 
         if wh.work_id not in valid_work_ids:
             errors.append(f"unknown work_id: '{wh.work_id}'")
-        else:
-            entry_highlights = valid_highlight_ids[wh.work_id]
-            errors.extend(
-                f"unknown highlight_id '{hid}' in work entry '{wh.work_id}'"
-                for hid in wh.highlight_ids
-                if hid not in entry_highlights
+            sanitized_work_highlights.append(wh)
+            continue
+
+        entry_highlights = valid_highlight_ids[wh.work_id]
+        kept_hids = [hid for hid in wh.highlight_ids if hid in entry_highlights]
+        dropped_hids = [hid for hid in wh.highlight_ids if hid not in entry_highlights]
+
+        if dropped_hids:
+            logger.warning(
+                "Work entry '{}': dropped {} hallucinated highlight_id(s) "
+                "not in portfolio: {}. Kept {}/{}.",
+                wh.work_id,
+                len(dropped_hids),
+                dropped_hids,
+                len(kept_hids),
+                len(wh.highlight_ids),
             )
-            omitted = entry_highlights - set(wh.highlight_ids)
-            if omitted:
-                logger.warning(
-                    "Work entry '{}': {}/{} highlights ranked, "
-                    "{} will be appended by safety net",
-                    wh.work_id,
-                    len(wh.highlight_ids),
-                    len(entry_highlights),
-                    len(omitted),
-                )
+
+        omitted = entry_highlights - set(kept_hids)
+        if omitted:
+            logger.warning(
+                "Work entry '{}': {}/{} highlights ranked, "
+                "{} will be appended by safety net",
+                wh.work_id,
+                len(kept_hids),
+                len(entry_highlights),
+                len(omitted),
+            )
+
+        sanitized_work_highlights.append(
+            wh.model_copy(update={"highlight_ids": kept_hids}) if dropped_hids else wh
+        )
 
     if duplicate_work_ids:
         errors.append(f"duplicate work_ids: {sorted(set(duplicate_work_ids))}")
@@ -654,15 +678,27 @@ def validate_curation_ids(
         raise CurationValidationError(msg)
 
     # All hard checks passed. Return the original instance unchanged when
-    # no keywords were dropped (preserves object identity for callers that
-    # rely on it); otherwise return a copy with sanitized skills.
-    any_dropped = any(
+    # nothing was dropped (preserves object identity for callers that rely
+    # on it); otherwise return a copy with sanitized work_highlights and/or
+    # sanitized skills.
+    any_work_dropped = any(
+        new is not old
+        for new, old in zip(
+            sanitized_work_highlights, curation.work_highlights, strict=False
+        )
+    )
+    any_skill_dropped = any(
         new is not old
         for new, old in zip(sanitized_skills, curation.skills, strict=False)
     )
-    if not any_dropped:
+    if not any_work_dropped and not any_skill_dropped:
         return curation
-    return curation.model_copy(update={"skills": sanitized_skills})
+    update: dict[str, Any] = {}
+    if any_work_dropped:
+        update["work_highlights"] = sanitized_work_highlights
+    if any_skill_dropped:
+        update["skills"] = sanitized_skills
+    return curation.model_copy(update=update)
 
 
 # ---------------------------------------------------------------------------
