@@ -139,9 +139,10 @@ def _build_work_highlights_by_id_schema(portfolio: PortfolioData) -> dict[str, A
             "description": (
                 f"Highlights belonging to work entry '{wid}', ordered "
                 f"strongest-first for the JD. Every emitted string "
-                f"must be one of this entry's highlight IDs. Return all "
-                f"relevant highlights; the renderer trims from the "
-                f"bottom based on page fit."
+                f"must be one of this entry's highlight IDs. Return ALL "
+                f"of this entry's highlight IDs in ranked order; do not "
+                f"omit highlights. The renderer trims from the bottom "
+                f"based on page fit."
             ),
             "items": {"type": "string", "enum": highlight_ids},
         }

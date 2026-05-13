@@ -404,23 +404,34 @@ _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f­​-‏﻿]")
 
 
 class WorkHighlightRanking(BaseModel):
-    """Highlight ordering for a single work entry."""
+    """Highlight ordering for a single work entry.
+
+    Application-level domain model. The API wire shape is an object
+    keyed by portfolio work entry ID (``work_highlights_by_id`` in the
+    schema built by :func:`curator.output_schema.build_curation_schema`);
+    the client adapter converts to a list of these instances before
+    Pydantic validation. ``Field.description`` strings here are no
+    longer sent to the API (the JSON schema carries its own per-property
+    descriptions written by ``build_curation_schema``); they remain for
+    reader documentation and Pydantic ``model_validate`` error context.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     work_id: str = Field(
         description=(
-            "ID of a portfolio work entry. You MUST return one "
-            "WorkHighlightRanking per portfolio work entry; the validator "
-            "hard-rejects curations missing any portfolio work entry."
+            "ID of a portfolio work entry. On the wire, this value is "
+            "the parent property key under work_highlights_by_id."
         ),
     )
     highlight_ids: list[str] = Field(
         description=(
-            "Portfolio highlight IDs from this work entry, ordered "
-            "strongest-first for the target JD. Return ALL highlights from "
-            "the portfolio entry in ranked order; do not omit highlights. "
-            "The renderer trims from the bottom based on page fit."
+            "Portfolio highlight IDs belonging to this work entry, "
+            "ordered strongest-first for the JD. Empty list is valid: "
+            "the client adapter synthesizes one when a portfolio entry "
+            "has zero highlights and was therefore omitted from the "
+            "wire schema. The renderer trims from the bottom based on "
+            "page fit."
         ),
     )
 

@@ -109,7 +109,10 @@ class TestBuildSystemPrompt:
         constraints_start = text.index("<constraints>")
         constraints_end = text.index("</constraints>")
         constraints_block = text[constraints_start:constraints_end]
-        assert "skills.keywords" in constraints_block
+        # Field renamed from ``skills.keywords`` (legacy domain-path
+        # notation) to ``skills_by_id`` skill group when the schema
+        # moved to object-with-fixed-keys.
+        assert "skills_by_id" in constraints_block
         assert "verbatim" in constraints_block
         assert "case-sensitive" in constraints_block
 
@@ -134,7 +137,9 @@ class TestBuildSystemPrompt:
         strategy_block = text[strategy_start : strategy_start + 800]
         assert "summary" in strategy_block
         assert "does NOT apply to" in strategy_block
-        assert "skills.keywords" in strategy_block
+        # Field reference renamed; the exclusion still applies to
+        # skill-group keywords (now scoped under skills_by_id).
+        assert "skills_by_id" in strategy_block
 
     def test_rank_every_work_entry_rule_in_constraints(
         self, portfolio_data: PortfolioData
@@ -287,7 +292,13 @@ class TestBuildSystemPrompt:
         text = result[0]["text"]
         assert "verbatim-keyword rule and" in text
         assert "no-fabrication rule take precedence" in text
-        assert "never add a JD term to ``skills.keywords`` to satisfy this rule" in text
+        # Field reference renamed; the precedence clause now phrases
+        # the exclusion as "JD term under ``skills_by_id``" since the
+        # wire field is the object, not a dotted path.
+        assert "never add" in text
+        assert "JD term" in text
+        assert "skills_by_id" in text
+        assert "to satisfy this rule" in text
 
     def test_acronym_prompt_subset_of_rules_constants(
         self, portfolio_data: PortfolioData
@@ -661,7 +672,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "d1ea5bd60f74c269ca0dadafd1fd84929c32b65c94009847feebdc06bbc303cb"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "5e4227c8f88da224e14c5fe7be26a2a6193db68bfb495ba775e0d3de91a946c2"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()

@@ -1689,6 +1689,15 @@ class TestCurationResultCoverLetterField:
 
 
 class TestCurateSingleCallInvariant:
+    # The retry-with-feedback feature tracked in TODO.md "Curation
+    # Reliability > Retry-with-feedback loop" would bump the call count
+    # to 2+ when validation fails. When that lands, this class must be
+    # parametrized over a retry-budget flag and the assertion adjusted
+    # to `<= 1 + retry_budget`, NOT deleted. Removing this invariant
+    # would silently double the cost of every paid run on grammar
+    # regression.
+
+
     """Lock the 'no double paying' rule at the unit test layer.
 
     The assertion covers stream/create/count_tokens so a future refactor
