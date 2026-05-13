@@ -67,7 +67,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-10"
+PROMPT_VERSION: str = "2026-05-13"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -210,10 +210,11 @@ group's ``keywords`` list. Do NOT infer, paraphrase, translate, expand \
 acronyms, or copy keywords from the job description. If the JD mentions \
 a technology that is not in the portfolio skill group, leave it out; \
 the validator will reject the entire curation otherwise.
-- You MUST return one ``WorkHighlightRanking`` per portfolio work entry. \
-The validator hard-rejects curations missing any portfolio work entry. If \
-a work entry has no JD-relevant highlights, rank its highlights in \
-portfolio order anyway; the renderer handles trimming.
+- The ``work_highlights_by_id`` object has one property per portfolio \
+work entry, keyed by the entry's ID. You must populate every key; the \
+schema declares them all as required. If a work entry has no \
+JD-relevant highlights, return its highlights in portfolio order \
+anyway; the renderer handles trimming.
 - For highlights within a work entry, list the strongest ones first. The \
 renderer trims from the bottom when the page overflows.
 </constraints>
@@ -243,22 +244,25 @@ convert to kebab-case (for example, "Acme Corp" to "acme-corp", \
 For subsidiaries like "DataLabs (a Google company)" return the primary \
 subsidiary name ("datalabs"). Max 64 characters.
 
-``work_highlights``: return one ranking per portfolio work entry. You MUST \
-include every portfolio work entry; omission is rejected by the validator. \
-For each entry, list ALL highlight IDs from that portfolio entry ordered \
-strongest-first for the JD. The renderer trims from the bottom based on \
-page fit. Entry order does not matter (the renderer sorts reverse \
-chronologically).
+``work_highlights_by_id``: an object keyed by portfolio work entry ID. \
+For each key (one per portfolio work entry; the schema requires all of \
+them), the value is a list of highlight IDs from THAT work entry only, \
+ordered strongest-first for the JD. The grammar enforces this scoping: \
+you cannot emit a highlight ID under the wrong parent. List ALL of an \
+entry's highlights in ranked order; the renderer trims from the bottom \
+based on page fit. The order in which you populate the keys does not \
+affect the rendered resume (the renderer sorts reverse chronologically).
 
-``skills``: return a list of objects, each with a skill group ``skill_id`` \
-and ``keywords``. For each included group, ``keywords`` is a strict \
-subset of that group's keywords array in the portfolio. Copy strings \
-verbatim. Do NOT paraphrase, infer, or copy keywords from the JD into \
-this field. Do NOT include every keyword from a group; filter per group. \
-Pick as many skill groups as the JD genuinely calls for. Prefer fewer \
-well-aligned groups over padding with marginal ones. Order groups by \
-relevance. If a keyword appears in multiple groups, include it in the \
-single most relevant group only.
+``skills_by_id``: an object keyed by portfolio skill group ID. For each \
+key (one per portfolio skill group; the schema requires all of them), \
+the value is a list of that group's keywords ordered by JD fit. The \
+grammar enforces that every emitted keyword exists verbatim in that \
+group's portfolio keyword list. An empty array means \
+"skip this group in the rendered resume"; use empty arrays for groups \
+that are irrelevant to the JD. Do NOT pad with weak keywords to fill \
+a group. Prefer fewer well-aligned groups over padding. If a keyword \
+appears in multiple groups, include it in the single most relevant \
+group only.
 
 ``projects``: return **3 to 5** portfolio project IDs. Each project \
 entry carries a ``weight`` field (1 = highest portfolio preference). \

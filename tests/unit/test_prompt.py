@@ -118,9 +118,11 @@ class TestBuildSystemPrompt:
     ) -> None:
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
-        guidance_start = text.index("``skills``:")
+        # Field renamed from ``skills`` to ``skills_by_id`` when the
+        # schema switched to object-with-fixed-keys for grammar
+        # enforcement of cross-parent keyword scoping.
+        guidance_start = text.index("``skills_by_id``:")
         guidance_block = text[guidance_start : guidance_start + 2000]
-        assert "strict subset" in guidance_block
         assert "verbatim" in guidance_block.lower() or "Verbatim" in guidance_block
 
     def test_mirror_jd_rule_excludes_skill_keywords(
@@ -142,7 +144,11 @@ class TestBuildSystemPrompt:
         constraints_start = text.index("<constraints>")
         constraints_end = text.index("</constraints>")
         constraints_block = text[constraints_start:constraints_end]
-        assert "WorkHighlightRanking" in constraints_block
+        # Field renamed: work_highlights_by_id is an object with one
+        # required key per portfolio work entry. The legacy
+        # "WorkHighlightRanking" type name no longer appears on the
+        # wire so we assert the new field name instead.
+        assert "work_highlights_by_id" in constraints_block
         assert "portfolio work entry" in constraints_block.lower()
 
     def test_rank_every_work_entry_rule_in_output_guidance(
@@ -150,10 +156,13 @@ class TestBuildSystemPrompt:
     ) -> None:
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
-        guidance_start = text.index("``work_highlights``:")
+        guidance_start = text.index("``work_highlights_by_id``:")
         guidance_block = text[guidance_start : guidance_start + 1000]
-        assert "every portfolio work entry" in guidance_block.lower()
-        assert "MUST" in guidance_block
+        assert "portfolio work entry" in guidance_block.lower()
+        # "requires" / "required" replace the legacy "MUST" wording
+        # since the schema-level `required` array enforces it now.
+        lower = guidance_block.lower()
+        assert "required" in lower or "requires" in lower or "MUST" in guidance_block
 
     def test_injection_defense_present(self, portfolio_data: PortfolioData) -> None:
         result = build_system_prompt(portfolio_data)
@@ -635,7 +644,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-10"
+        assert PROMPT_VERSION == "2026-05-13"
 
 
 class TestSystemPromptByteIdentity:
@@ -652,7 +661,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "d8a0b00ee00199f090f6f109583c03c739f0284bbe24a10b463a9ba9fdfef4b3"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "d1ea5bd60f74c269ca0dadafd1fd84929c32b65c94009847feebdc06bbc303cb"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()
