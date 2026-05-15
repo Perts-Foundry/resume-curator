@@ -106,11 +106,22 @@ src/curator/
                       #   above COVER_LETTER_WORD_MAX is a soft warning only;
                       #   the letter still ships and no partial is written.
   output_schema.py    # Builds the per-call JSON schema from PortfolioData;
-                      #   grammar-enforces parent-child ID scoping
-                      #   (work_highlights_by_id, skills_by_id) so cross-parent
-                      #   ID hallucination becomes decode-time impossible.
-                      #   Pure function build_curation_schema(portfolio, *,
-                      #   with_cover_letter); deterministic, no I/O.
+                      #   grammar-enforces cross-parent highlight ID scoping
+                      #   under work_highlights_by_id (items.enum per work
+                      #   entry) and projects (items.enum top-level), so
+                      #   cross-parent highlight attribution is decode-time
+                      #   impossible. Skills ship as a flat top-level
+                      #   `skills: array[string]` with no items.enum: the
+                      #   354-string production enum surface exceeded
+                      #   Anthropic's compiled-grammar budget on 2026-05-13,
+                      #   and the 22-property object replacement (Option A)
+                      #   hit the same 400 on 2026-05-14 because the binding
+                      #   axis is inner-property count under required+
+                      #   additionalProperties:false. Skill keyword
+                      #   verbatim-match is reconstructed adapter-side in
+                      #   client.py. Pure function build_curation_schema(
+                      #   portfolio, *, with_cover_letter); deterministic,
+                      #   no I/O.
   renderer.py         # Curated YAML writer, Typst compilation, page-fitting trimmer.
                       #   _render_cover_letter writes data/cover_letter.yaml and
                       #   compiles cover_letter.pdf (single pass, no trim cascade).
@@ -348,19 +359,25 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
 6. pipeline.py: client.py calls Claude once via messages.stream() with a
    per-call JSON schema built by output_schema.build_curation_schema(portfolio)
    - prompt.py constructs system prompt (with portfolio data) + user message (with JD)
-   - output_schema.py builds the wire schema (work_highlights_by_id /
-     skills_by_id object-keyed-by-portfolio-ID with items.enum scoping)
+   - output_schema.py builds the wire schema (work_highlights_by_id
+     object-keyed-by-work-ID with items.enum scoping per entry; skills
+     as a flat top-level array of keyword strings with no items.enum;
+     projects with top-level items.enum)
    - Streaming prevents timeouts; get_final_message() returns the message
    - Portfolio data is prompt-cached (stable across requests); schema is
      part of the cache prefix and invalidates on the same axis
    - Job description varies per request
 7. Claude returns structured JSON conforming to the schema; client.py extracts
-   from message.content[0].text and adapts the wire shape (object-keyed)
-   into the domain shape (list[WorkHighlightRanking], list[SkillRanking])
-   before constructing ResumeCuration
+   from message.content[0].text and adapts the wire shape into the domain
+   shape (object-keyed work_highlights_by_id -> list[WorkHighlightRanking];
+   flat skills array -> list[SkillRanking] via first-match keyword->group
+   lookup against portfolio.skills; unknown/duplicate keywords logged and
+   dropped) before constructing ResumeCuration
 8. client.py runs validate_curation_ids as defense-in-depth; the schema
-   already made cross-parent/unknown-ID emission decode-time-impossible,
-   so this layer mainly catches grammar regressions and static-path issues
+   already made cross-parent highlight-ID emission decode-time-impossible,
+   and the adapter already filtered non-verbatim skill keywords, so this
+   layer mainly catches grammar regressions, adapter regressions, and
+   static-path issues
 9. pipeline.py: renderer.py applies selections, writes per-section YAML, compiles PDF
 10. renderer.py: if PDF exceeds max_pages, trims content deterministically and re-compiles
     - 8-tier trim cascade: interests > project highlights (lowest project first,
@@ -525,17 +542,24 @@ constructs a per-call dict schema from `PortfolioData` and the client
 injects it via `output_config.format` on `messages.stream`. The wire
 shape differs from the domain shape on two fields:
 
-| Domain field (Pydantic)                       | Wire field (schema)                   |
-|-----------------------------------------------|----------------------------------------|
-| `work_highlights: list[WorkHighlightRanking]` | `work_highlights_by_id: object`        |
-| `skills: list[SkillRanking]`                  | `skills_by_id: object`                 |
+| Domain field (Pydantic)                       | Wire field (schema)                       |
+|-----------------------------------------------|--------------------------------------------|
+| `work_highlights: list[WorkHighlightRanking]` | `work_highlights_by_id: object`            |
+| `skills: list[SkillRanking]`                  | `skills: array[string]` (flat keywords)    |
 
-The wire `*_by_id` objects are keyed by portfolio IDs (work entry IDs
-and skill group IDs respectively). Each property's value is an array
-with `items.enum` scoped to that parent's children. This makes cross-
-parent emission (a highlight ID emitted under
-a different parent work entry) decode-time-impossible: the grammar
-literally cannot sample a token sequence the schema forbids.
+`work_highlights_by_id` is keyed by portfolio work entry IDs; each
+property's value is an array whose `items.enum` is scoped to that
+entry's highlight IDs. This makes cross-parent emission (a highlight
+ID emitted under a different parent work entry) decode-time-impossible:
+the grammar literally cannot sample a token sequence the schema forbids.
+
+`skills` is a flat top-level array of keyword strings with no
+`items.enum`. The adapter at `client._adapt_curation_dict` walks each
+emitted keyword back to its parent portfolio group using a first-match
+lookup against `portfolio.skills` (preserving model emit order within
+and across groups; deduping within group; logging
+ambiguous-attribution decisions at INFO and unknown keywords at WARN)
+to reconstruct `list[SkillRanking]` for the domain model.
 
 `projects` carries `items.enum` over portfolio project IDs at the top
 level; no nested object needed.
@@ -552,25 +576,43 @@ Decision history:
   union question entirely.
 - Confirmed empirically against `claude-haiku-4-5` on 2026-05-13 with
   9 probe calls (adversarial, benign-confusion, cover-letter wrapper,
-  empty-enum edge, field-order). All ENFORCED; full results in the
-  plan file referenced by `TODO.md`.
+  empty-enum edge, field-order). All ENFORCED at small scale; full
+  results in the plan file referenced by `TODO.md`.
 - The same constrained-decoding mechanism powers the
   `CoverLetterCuration.body_paragraph_1` / `body_paragraph_2`
   tuple-shape (AR-2026-05-09) and the cover-letter `sign_off` enum;
   the object-with-fixed-keys pattern here is the same lever applied to
   parent-child ID scoping.
+- The original Option A design encoded `skills_by_id` as an object
+  keyed by skill group ID (mirror of `work_highlights_by_id`). The
+  354-keyword enum surface across 22 groups exceeded Anthropic's
+  compiled-grammar budget (HTTP 400 "compiled grammar is too large"
+  on 2026-05-13, request_id `req_011Cb1UJpKh9GB6pZEQVhZT8`). Dropping
+  `items.enum` from those property values (the documented Option A
+  retrenchment) was insufficient: the same 400 reproduced on
+  Sonnet 4.6 against the 22-property required-strict object on
+  2026-05-14 (request_id `req_011Cb1WssSd2jd2vCa1figYz`). A 6-probe
+  Haiku bisect localized the binding axis to *inner-property count
+  under `required` + `additionalProperties: false`*, not enum count
+  or description bytes: a probe with 8 enum strings across the same
+  27-property shape still 400'd, while collapsing `skills_by_id`
+  into a flat `skills: array[string]` (5 inner properties total)
+  passed cleanly. Option E ships that flat shape;
+  `work_highlights_by_id` and `projects` retain their grammar-level
+  enforcement (the load-bearing cross-parent-highlight bug fix).
+  Probe results live in the investigation plan referenced by `TODO.md`.
 
 **Edge cases handled by the builder:**
 
-- Work entries with zero highlights and skill groups with zero
-  keywords are **omitted** from the schema (Anthropic returns 400 on
-  empty `enum`). The client adapter synthesizes an empty
-  `WorkHighlightRanking` for each omitted work entry to satisfy the
-  validator's "every portfolio work entry has a ranking" invariant.
-- Skill groups the model returned with an empty array (the grammar's
-  "skip this group" signal) are filtered out before validation since
-  `SkillRanking.keywords` has `min_length=1`. The filter emits one
-  INFO log naming the dropped group IDs.
+- Work entries with zero highlights are omitted from
+  `work_highlights_by_id` (Anthropic returns 400 on empty `enum`).
+  The client adapter synthesizes an empty `WorkHighlightRanking` for
+  each omitted work entry to satisfy the validator's "every portfolio
+  work entry has a ranking" invariant.
+- `skills` is a flat unconstrained string array, so the empty-enum
+  rule does not apply to skill groups. The model expresses "skip this
+  group" by omitting all of its keywords from the array; empty
+  `skills` is valid when no portfolio group is JD-relevant.
 - Portfolio with zero projects: `projects.items` falls back to an
   unconstrained string array (since `items.enum: []` would 400). The
   application-level validator catches any bogus ID.
@@ -580,6 +622,9 @@ Decision history:
 already embeds portfolio content, both the schema and the prompt
 invalidate on the same axis (portfolio change). JD-only changes (the
 dominant axis in real workflows) keep both stable and the cache warm.
+The first run after the 2026-05-14 Option E landing is a cache miss
+for every existing portfolio prefix; subsequent runs against an
+unchanged portfolio rewarm the new cache.
 
 **Determinism:** `build_curation_schema` iterates portfolio collections
 in YAML insertion order via `loader.py`; no `set` is used in schema
@@ -588,13 +633,18 @@ byte-identical schemas. A test in `tests/unit/test_output_schema.py`
 pins this invariant.
 
 **Validator retention:** `validate_curation_ids` runs unchanged on the
-adapted curation. After this change, the hard-fail rows for unknown
-`work_id`, unknown `skill_group_id`, unknown `project_id`, duplicate
-`work_id`, and missing rankings all become grammar-unreachable on the
-API path. They remain reachable on the **static** path (which builds
-`ResumeCuration` directly from portfolio data without grammar
-enforcement) and they remain reachable on the API path if Anthropic's
-grammar compiler regresses. Defense-in-depth is justified.
+adapted curation. Under Option E the following rows are
+decode-time-unreachable on the API path: unknown `work_id`, unknown
+`highlight_id` inside a known `work_id`, unknown `project_id`,
+duplicate `work_id`, and missing rankings. Unknown `skill_group_id`
+and non-verbatim skill keywords are NOT decode-time-blocked (no enum
+on `skills`); the adapter's keyword→group lookup filters both before
+the validator runs, and `validate_curation_ids` keeps the same
+soft-drop branches as defense-in-depth against an adapter regression.
+All hard-fail rows remain reachable on the **static** path (which
+builds `ResumeCuration` directly from portfolio data without going
+through the adapter), so the validator is also the primary defense
+there. Defense-in-depth is justified.
 
 ### Portfolio signal fields
 
@@ -768,24 +818,35 @@ header required.
 
 1. Build the JSON schema **per call** from `PortfolioData` via
    `curator.output_schema.build_curation_schema()`. The schema encodes
-   `work_highlights_by_id` and `skills_by_id` as objects keyed by portfolio IDs,
-   with each property's value carrying `items.enum` scoped to that parent's
-   children. See **Dynamic schema construction (API path)** earlier in this
-   document for the full design rationale.
+   `work_highlights_by_id` as an object keyed by portfolio work entry ID
+   (each value's `items.enum` scoped to that entry's highlight IDs);
+   `skills` as a flat top-level array of keyword strings with no
+   `items.enum` (the by-skill-group object exceeded Anthropic's
+   compiled-grammar budget on 2026-05-13/14); and `projects` as an array
+   with top-level `items.enum` over portfolio project IDs. See **Dynamic
+   schema construction (API path)** earlier in this document for the
+   full design rationale.
 2. Pass the dict via `output_config={"format": {"type": "json_schema", "schema":
    schema}}` to `messages.stream()`. `output_format=PydanticClass` is the
    legacy convenience wrapper and is not used: a Pydantic class can't express
-   the parent-child enum scoping we need.
+   the parent-child enum scoping we need on work_highlights_by_id.
 3. Claude's token sampling is **constrained at generation time** to match the
-   schema. Cross-parent ID emission, unknown work/skill/project IDs, and
-   non-verbatim skill keywords all become decode-time-impossible.
+   schema. Cross-parent highlight ID emission, unknown work/project IDs,
+   duplicate work IDs, and missing work rankings all become
+   decode-time-impossible. Non-verbatim skill keywords and unknown skill
+   group identity are NOT decode-time-blocked under Option E; the client
+   adapter filters both (unknown keywords logged at WARN, ambiguous
+   first-match attribution logged at INFO) and `validate_curation_ids`
+   runs as defense-in-depth.
 4. The grammar guarantees the response is schema-valid JSON. The client extracts
    the text from `message.content[0].text` (`parsed_output` is None when a raw
-   dict schema is used) and converts the wire shape (object-keyed) to the
-   domain shape (`list[WorkHighlightRanking]`, `list[SkillRanking]`) via the
-   adapter in `client._adapt_curation_dict`.
+   dict schema is used) and converts the wire shape (object-keyed work
+   highlights + flat keyword array) to the domain shape
+   (`list[WorkHighlightRanking]`, `list[SkillRanking]`) via the adapter
+   in `client._adapt_curation_dict`.
 5. `ResumeCuration.model_validate()` runs as the final post-parse check, plus
-   `validate_curation_ids` as defense-in-depth against any grammar regression.
+   `validate_curation_ids` as defense-in-depth against grammar/adapter
+   regressions and as primary defense on the static path.
 
 ```python
 schema = build_curation_schema(portfolio, with_cover_letter=with_cover_letter)

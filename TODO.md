@@ -7,18 +7,36 @@ files point here; `docs/architecture.md` describes current state only.
 
 ## Curation Reliability
 
-ID hallucination on the API path is now **grammar-impossible** as of
-2026-05-13: the structured-output schema is built per-call from
-`PortfolioData` and encodes `work_highlights_by_id` /
-`skills_by_id` / `projects` with `items.enum` scoped to each parent's
-children. Cross-parent attribution, unknown `work_id`, unknown
-`skill_group_id`, unknown `project_id`, duplicate `work_id`, and
-missing rankings all became decode-time-unreachable (`required` plus
-`additionalProperties: false` plus per-property `items.enum`).
-`validate_curation_ids` stays as defense-in-depth on both paths;
-the soft-drop behavior for hallucinated keywords/highlights (since
-2026-04-11 / 2026-05-12) is now load-bearing only against a future
-Anthropic-side grammar regression or on the static path.
+Cross-parent highlight attribution and unknown work/project IDs are
+**grammar-impossible** on the API path as of 2026-05-15: the
+structured-output schema built per-call from `PortfolioData` encodes
+`work_highlights_by_id` and `projects` with `items.enum` scoped to
+each parent's children, plus `required` + `additionalProperties: false`
+on every nested object. Unknown `work_id`, unknown `highlight_id`
+inside a known `work_id`, unknown `project_id`, duplicate `work_id`,
+and missing work rankings all became decode-time-unreachable.
+
+Skill keywords and skill-group identity are NOT decode-time-enforced.
+The original design's `skills_by_id: object{group_id → array[items.enum]}`
+exceeded Anthropic's compiled-grammar budget (HTTP 400 "compiled
+grammar is too large" on 2026-05-13). Dropping the keyword enum
+(Option A) was insufficient: the 22-property required-strict object
+hit the same 400 on 2026-05-14, and a 6-probe Haiku bisect localized
+the binding axis to *inner-property count under `required` +
+`additionalProperties: false`* (not enum count, not description
+bytes). The wire shape collapsed to a flat top-level
+`skills: array[string]` (Option E, shipped 2026-05-15); the adapter
+at `client._adapt_curation_dict` walks each emitted keyword back to
+its parent portfolio group (first-match by portfolio order) and
+drops unknown keywords with a WARN log line.
+
+`validate_curation_ids` stays as defense-in-depth on the API path
+(the adapter catches non-verbatim keywords first) and as primary
+defense on the static path (which constructs `ResumeCuration`
+directly without going through the adapter). The soft-drop behavior
+for hallucinated keywords/highlights (since 2026-04-11 / 2026-05-12)
+remains load-bearing on the static path and as adapter-regression
+safety net on the API path.
 
 Cover-letter word-count overshoots ship via the existing soft-warn
 on the API path. Items below address validation cases that grammar
@@ -72,22 +90,31 @@ on `summary` length, etc.) plus observability gaps.
 - [ ] Structured INFO log on every semantic retry (attempt number,
   invalid-ID count, request_id), WARNING on final failure.
 
-### Schema-level elimination (done 2026-05-13)
+### Schema-level elimination (done 2026-05-13 / refined 2026-05-15)
 
 - [x] Build per-call JSON schema dynamically in `client.py` from
   `PortfolioData`. Landed as `src/curator/output_schema.py` with
   `build_curation_schema()`. `oneOf`-discriminator design was
   abandoned after research established Anthropic's grammar likely
   union-flattens `anyOf` branches with no decode-time narrowing
-  (`oneOf` isn't supported at all). Replaced with an object-with-
-  fixed-keys form: `work_highlights_by_id` and `skills_by_id` are
-  objects keyed by portfolio IDs, each value carrying its own
-  `items.enum`. No `anyOf`, no unions, fully flat. Empirically
-  verified against `claude-haiku-4-5` 2026-05-13 (9 probe calls
-  across adversarial, benign-confusion, cover-letter wrapper, and
-  field-order cases; all ENFORCED). Schema-compile latency
-  unobservable on probe-sized schemas; will be re-measured on the
-  real portfolio during first warm run.
+  (`oneOf` isn't supported at all). Initial design used an
+  object-with-fixed-keys form for both `work_highlights_by_id`
+  AND `skills_by_id`, each value carrying its own `items.enum`.
+  Empirically verified against `claude-haiku-4-5` on 2026-05-13
+  (9 probe calls; all ENFORCED at small scale). The full-portfolio
+  shape, however, exceeded Anthropic's compiled-grammar budget
+  (HTTP 400 "compiled grammar is too large"); a 6-probe Haiku bisect
+  on 2026-05-14 localized the binding axis to inner-property count
+  under `required` + `additionalProperties: false`. The shipped
+  shape (Option E, 2026-05-15) keeps `work_highlights_by_id` as
+  object-with-fixed-keys (the load-bearing cross-parent attribution
+  surface, 5 inner properties) but collapses skills into a flat
+  top-level `skills: array[string]` with no `items.enum`. The
+  adapter at `client._adapt_curation_dict` walks each emitted keyword
+  back to its parent portfolio group (first-match by portfolio order;
+  ambiguous attributions logged at INFO; unknown keywords dropped
+  with WARN). Full failure history and the 6-probe bisect live in
+  the investigation plan referenced from `docs/architecture.md`.
 - [ ] Add a `highlight_ids` dedup pass to `validate_curation_ids`.
   Grammar enforces membership of `items.enum`, not uniqueness or
   count, so the model could in principle emit `[pf-a-h1, pf-a-h1,
