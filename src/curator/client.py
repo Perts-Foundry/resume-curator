@@ -156,21 +156,34 @@ def _adapt_curation_dict(
 ) -> tuple[ResumeCuration, CoverLetterCuration | None]:
     """Convert the wire dict to ``ResumeCuration`` (+ optional cover letter).
 
-    The wire schema encodes ``work_highlights_by_id`` and ``skills_by_id``
-    as objects keyed by portfolio IDs (for grammar enforcement). The
-    domain model uses ``list[WorkHighlightRanking]`` and
-    ``list[SkillRanking]``. This adapter converts shapes:
+    The wire schema encodes ``work_highlights_by_id`` as an object keyed
+    by portfolio work entry IDs (for grammar enforcement of cross-parent
+    highlight attribution) and ``skills`` as a flat top-level array of
+    keyword strings. The domain model uses
+    ``list[WorkHighlightRanking]`` and ``list[SkillRanking]``. This
+    adapter converts shapes:
 
     - Work entries omitted from the schema (zero-highlight portfolios)
       are synthesized as empty ``WorkHighlightRanking`` instances so
       the validator's "every portfolio entry has a ranking" invariant
       continues to hold.
-    - Skill groups the model returned with an empty array (the grammar's
-      "skip this group" signal) are filtered out before validation
-      because ``SkillRanking.keywords`` has ``min_length=1``. The
-      filter emits an INFO log naming the dropped group IDs.
+    - Each emitted ``skills`` keyword is walked back to its parent
+      portfolio group via a precomputed first-match lookup
+      (``portfolio.skills`` iteration order). Within-group order
+      preserves model emit order; duplicates within a group are
+      de-duped. Unknown keywords (not present in any portfolio group)
+      are dropped with one WARN log per call. Keywords that exist in
+      multiple portfolio groups are attributed to the first one (the
+      prompt instructs the model to emit each keyword once); the
+      adapter logs one INFO per call listing every such tie-break
+      decision so the signal isn't lost.
     - JSON validation failures surface as :class:`APIResponseError` with
       the request_id and a brief shape description for debuggability.
+
+    See ``docs/architecture.md`` "Dynamic schema construction (API
+    path)" for why ``skills`` is flat rather than object-keyed (the
+    27-property required-strict object exceeded Anthropic's
+    compiled-grammar budget on 2026-05-13).
     """
     if with_cover_letter:
         resume_dict = parsed.get("resume")
@@ -185,14 +198,18 @@ def _adapt_curation_dict(
         resume_dict = parsed
         cover_letter_dict = None
 
-    # Resume: convert object-keyed shape -> list of rankings.
+    # Resume: convert object-keyed work_highlights and flat skills array
+    # into domain-shape ranking lists.
     raw_work = resume_dict.get("work_highlights_by_id", {})
-    raw_skills = resume_dict.get("skills_by_id", {})
-    if not isinstance(raw_work, dict) or not isinstance(raw_skills, dict):
+    raw_skills = resume_dict.get("skills", [])
+    if not isinstance(raw_work, dict):
         msg = (
-            f"work_highlights_by_id and skills_by_id must be objects in API "
-            f"response (request_id={request_id})"
+            f"work_highlights_by_id must be an object in API response "
+            f"(request_id={request_id})"
         )
+        raise APIResponseError(msg)
+    if not isinstance(raw_skills, list):
+        msg = f"skills must be an array in API response (request_id={request_id})"
         raise APIResponseError(msg)
 
     work_highlights: list[dict[str, Any]] = [
@@ -207,20 +224,53 @@ def _adapt_curation_dict(
         if w.id not in present_work_ids
     )
 
-    # Filter empty skill groups (grammar's "skip" signal).
-    skills: list[dict[str, Any]] = []
-    empty_groups: list[str] = []
-    for sid, kws in raw_skills.items():
-        if kws:
-            skills.append({"skill_id": sid, "keywords": kws})
-        else:
-            empty_groups.append(sid)
-    if empty_groups:
-        logger.info(
-            "Filtered {} empty skill group(s) from grammar response: {}",
-            len(empty_groups),
-            sorted(empty_groups),
+    # Skills: walk each flat keyword back to its parent portfolio group.
+    # Precompute two lookups in one pass:
+    #   keyword_to_group: first-match attribution (portfolio order)
+    #   keyword_to_all_groups: every group containing the keyword
+    #     (drives the ambiguous-attribution INFO log below)
+    keyword_to_group: dict[str, str] = {}
+    keyword_to_all_groups: dict[str, list[str]] = {}
+    for group in portfolio.skills:
+        for kw in group.keywords:
+            keyword_to_group.setdefault(kw, group.id)
+            keyword_to_all_groups.setdefault(kw, []).append(group.id)
+
+    group_keywords: dict[str, list[str]] = {}  # insertion-ordered
+    unknown_keywords: list[str] = []
+    ambiguous_attributions: list[tuple[str, str, list[str]]] = []
+    for kw in raw_skills:
+        gid = keyword_to_group.get(kw)
+        if gid is None:
+            unknown_keywords.append(kw)
+            continue
+        bucket = group_keywords.setdefault(gid, [])
+        if kw not in bucket:  # in-group dedupe
+            bucket.append(kw)
+        all_groups = keyword_to_all_groups[kw]
+        if len(all_groups) > 1:
+            alternatives = [g for g in all_groups if g != gid]
+            ambiguous_attributions.append((kw, gid, alternatives))
+
+    if unknown_keywords:
+        logger.warning(
+            "Adapter dropped {} keyword(s) not in any portfolio skill "
+            "group: {} (request_id={})",
+            len(unknown_keywords),
+            unknown_keywords,
+            request_id,
         )
+    if ambiguous_attributions:
+        logger.info(
+            "Adapter resolved {} ambiguous keyword attribution(s) via "
+            "first-match by portfolio order: {} (request_id={})",
+            len(ambiguous_attributions),
+            ambiguous_attributions,
+            request_id,
+        )
+    skills: list[dict[str, Any]] = [
+        {"skill_id": gid, "keywords": kws} for gid, kws in group_keywords.items()
+    ]
 
     resume_payload = {
         "summary": resume_dict.get("summary"),

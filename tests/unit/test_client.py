@@ -31,13 +31,18 @@ from curator.models import (
 
 
 def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
-    """Convert a Pydantic curation (or wrapper) to the new wire-shape dict.
+    """Convert a Pydantic curation (or wrapper) to the wire-shape dict.
 
-    The grammar-enforced schema groups highlights and skills by parent
-    ID rather than as lists of objects. Mock messages must reflect that
-    shape because the production code now extracts JSON from
-    ``message.content[0].text`` and adapts the wire dict back to the
-    domain list-of-rankings shape.
+    The wire schema keys highlights by parent work_id (for grammar-time
+    cross-parent attribution enforcement) and emits skills as a flat
+    top-level array of keyword strings (Option E, 2026-05-14: the
+    object-keyed-by-skill-group shape exceeded Anthropic's
+    compiled-grammar budget; see ``docs/architecture.md`` "Dynamic
+    schema construction (API path)"). Production code at
+    ``client._adapt_curation_dict`` walks each flat keyword back to its
+    parent portfolio group, so this helper must flatten in the order
+    the production model would emit (group-rank-major, then
+    keyword-rank-minor) to produce realistic round-trip fixtures.
     """
     if isinstance(obj, ResumeCurationWithCoverLetter):
         return {
@@ -45,6 +50,9 @@ def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
             "cover_letter": obj.cover_letter.model_dump(mode="json"),
         }
     if isinstance(obj, ResumeCuration):
+        skills_flat: list[str] = []
+        for sr in obj.skills:
+            skills_flat.extend(sr.keywords)
         return {
             "summary": obj.summary,
             "suggested_label": obj.suggested_label,
@@ -52,7 +60,7 @@ def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
             "work_highlights_by_id": {
                 wh.work_id: list(wh.highlight_ids) for wh in obj.work_highlights
             },
-            "skills_by_id": {sr.skill_id: list(sr.keywords) for sr in obj.skills},
+            "skills": skills_flat,
             "projects": list(obj.projects),
         }
     if isinstance(obj, dict):
@@ -649,9 +657,7 @@ class TestCurateGrammarSchemaAdapter:
         client = CuratorClient(mock_settings)
 
         with pytest.raises(APIResponseError, match="truncated at max_tokens"):
-            client.curate(
-                portfolio_data, "Job description.", with_cover_letter=True
-            )
+            client.curate(portfolio_data, "Job description.", with_cover_letter=True)
 
     def test_synthesizes_empty_ranking_for_omitted_work_entry(
         self,
@@ -690,92 +696,175 @@ class TestCurateGrammarSchemaAdapter:
         )
         assert synth.highlight_ids == []
 
-    def test_filters_empty_skill_group(
+    def test_adapter_groups_flat_skills_by_portfolio_lookup(
         self,
         mocker: Any,
         mock_settings: CuratorSettings,
         portfolio_data: PortfolioData,
         valid_curation: ResumeCuration,
     ) -> None:
-        """An empty array under a skill group is the grammar's 'skip'
-        signal. The adapter drops empty groups before model_validate
-        (SkillRanking.keywords requires min_length=1)."""
+        """Wire emits a flat ``skills`` array; the adapter reverse-looks
+        each keyword to its parent portfolio group and builds
+        ``list[SkillRanking]`` for the domain model."""
+        # Use a wire dict the production adapter sees: skills is a
+        # flat list of portfolio-verbatim keywords.
         wire = _curation_to_wire_dict(valid_curation)
-        wire["skills_by_id"]["empty-extra-group"] = []
         message = _make_mock_message(raw_text=json.dumps(wire))
         _wire_mock_stream(mocker, message)
         client = CuratorClient(mock_settings)
 
         result = client.curate(portfolio_data, "Job description.")
 
-        result_skill_ids = {s.skill_id for s in result.curation.skills}
-        assert "empty-extra-group" not in result_skill_ids
-        # Non-empty groups are preserved
-        for original in valid_curation.skills:
-            assert original.skill_id in result_skill_ids
+        # Every reconstructed SkillRanking references a real portfolio
+        # group, and every keyword belongs to its parent group's
+        # portfolio keyword list.
+        portfolio_keyword_to_group: dict[str, str] = {}
+        for g in portfolio_data.skills:
+            for kw in g.keywords:
+                portfolio_keyword_to_group.setdefault(kw, g.id)
+        for sr in result.curation.skills:
+            for kw in sr.keywords:
+                assert portfolio_keyword_to_group[kw] == sr.skill_id
 
-    def test_logs_info_when_filtering_empty_skill_groups(
+    def test_adapter_preserves_model_emit_order_for_skill_groups(
         self,
         mocker: Any,
         mock_settings: CuratorSettings,
         portfolio_data: PortfolioData,
         valid_curation: ResumeCuration,
     ) -> None:
-        """The empty-skill-group filter is silently load-bearing for the
-        SkillRanking.keywords min_length=1 invariant declared three
-        modules away. Observability is the mitigation: every drop
-        emits one INFO log naming the dropped group IDs."""
+        """Group order in the reconstructed list = first-appearance of
+        any keyword from that group in the wire array."""
+        # The default portfolio fixture has only one skill group; extend
+        # it with a second group so we can verify cross-group ordering.
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        extended = replace(
+            portfolio_data,
+            skills=[
+                *portfolio_data.skills,
+                SkillEntry(
+                    id="extra-group",
+                    name="Extra Group",
+                    keywords=["EXTRA-KW"],
+                ),
+            ],
+        )
+        g_a = portfolio_data.skills[0].id
+        g_b = "extra-group"
+        kw_a = portfolio_data.skills[0].keywords[0]
+        kw_b = "EXTRA-KW"
+
         wire = _curation_to_wire_dict(valid_curation)
-        wire["skills_by_id"]["drop-a"] = []
-        wire["skills_by_id"]["drop-b"] = []
+        # Emit b's keyword first, then a's: b should rank above a.
+        wire["skills"] = [kw_b, kw_a]
         message = _make_mock_message(raw_text=json.dumps(wire))
         _wire_mock_stream(mocker, message)
-
-        info_mock = mocker.patch("curator.client.logger.info")
         client = CuratorClient(mock_settings)
 
-        client.curate(portfolio_data, "Job description.")
+        result = client.curate(extended, "Job description.")
 
-        # Among the logger.info calls, one carries the "Filtered ... empty
-        # skill group(s)" message with both group IDs.
-        matching = [
-            call
-            for call in info_mock.call_args_list
-            if isinstance(call.args[0], str)
-            and "Filtered" in call.args[0]
-            and "empty skill group" in call.args[0]
-        ]
-        assert len(matching) == 1, info_mock.call_args_list
-        # The dropped IDs come through as the third positional arg
-        # (after the format-string, count); we just assert both are
-        # present somewhere in the call args.
-        flat_args = str(matching[0].args)
-        assert "drop-a" in flat_args
-        assert "drop-b" in flat_args
+        emitted_group_order = [sr.skill_id for sr in result.curation.skills]
+        assert emitted_group_order == [g_b, g_a], emitted_group_order
 
-    def test_does_not_log_filter_when_no_empty_groups(
+    def test_adapter_dedupes_keyword_repeated_in_emit_order(
         self,
         mocker: Any,
         mock_settings: CuratorSettings,
         portfolio_data: PortfolioData,
         valid_curation: ResumeCuration,
     ) -> None:
-        """Negative case: when every skill group has keywords, the
-        filter log line must NOT fire (avoid noise in the common path).
-        """
-        message = _make_mock_message(valid_curation)
+        """If the model emits the same keyword twice, the adapter keeps
+        only the first occurrence to prevent duplicate bullets on the
+        rendered PDF."""
+        first_group = next(g for g in portfolio_data.skills if g.keywords)
+        kw = first_group.keywords[0]
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [kw, kw]
+        message = _make_mock_message(raw_text=json.dumps(wire))
         _wire_mock_stream(mocker, message)
-        info_mock = mocker.patch("curator.client.logger.info")
         client = CuratorClient(mock_settings)
 
-        client.curate(portfolio_data, "Job description.")
+        result = client.curate(portfolio_data, "Job description.")
 
-        for call in info_mock.call_args_list:
-            assert not (
-                isinstance(call.args[0], str)
-                and "Filtered" in call.args[0]
-                and "empty skill group" in call.args[0]
-            ), f"unexpected empty-skill-group log line: {call}"
+        # Exactly one SkillRanking, exactly one keyword.
+        srs = [sr for sr in result.curation.skills if sr.skill_id == first_group.id]
+        assert len(srs) == 1
+        assert srs[0].keywords == [kw]
+
+    def test_adapter_drops_unknown_keyword_with_warn(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """An emitted keyword that doesn't exist in any portfolio skill
+        group is dropped by the adapter (not the validator), and a
+        single WARN log line names every drop."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [*wire["skills"], "this-is-not-a-portfolio-keyword"]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        warn_mock = mocker.patch("curator.client.logger.warning")
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # No SkillRanking contains the unknown keyword.
+        for sr in result.curation.skills:
+            assert "this-is-not-a-portfolio-keyword" not in sr.keywords
+        # Exactly one WARN log line names the drop.
+        matching = [
+            call
+            for call in warn_mock.call_args_list
+            if isinstance(call.args[0], str)
+            and "not in any portfolio skill group" in call.args[0]
+        ]
+        assert len(matching) == 1, warn_mock.call_args_list
+        assert "this-is-not-a-portfolio-keyword" in str(matching[0].args)
+
+    def test_adapter_empty_skills_array_emits_empty_list(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """``ResumeCuration.skills`` has no min_length; an empty wire
+        ``skills`` array (model decided no group is JD-relevant) must
+        round-trip to an empty domain list, not raise."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = []
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        assert result.curation.skills == []
+
+    def test_adapter_raises_apiresponseerror_when_skills_not_list(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Wire shape must be a list; an object (legacy by-id shape) or
+        anything else surfaces as APIResponseError carrying the
+        request_id."""
+        wire = _curation_to_wire_dict(valid_curation)
+        # Legacy by-id object shape — no longer accepted under Option E.
+        wire["skills"] = {"cloud-aws": ["EKS"]}
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        with pytest.raises(APIResponseError, match="skills must be an array"):
+            client.curate(portfolio_data, "Job description.")
 
     def test_json_parse_failure_raises_api_response_error(
         self,
@@ -807,16 +896,18 @@ class TestCurateGrammarSchemaAdapter:
         with pytest.raises(APIResponseError, match="not an object"):
             client.curate(portfolio_data, "Job description.")
 
-    def test_wrong_shape_for_containers_raises(
+    def test_wrong_shape_for_work_highlights_raises(
         self,
         mocker: Any,
         mock_settings: CuratorSettings,
         portfolio_data: PortfolioData,
     ) -> None:
         """If the grammar regressed and emitted a list instead of an
-        object for work_highlights_by_id or skills_by_id, the adapter
-        rejects with a diagnostic message rather than letting Pydantic
-        surface a confusing nested error."""
+        object for work_highlights_by_id, the adapter rejects with a
+        diagnostic message rather than letting Pydantic surface a
+        confusing nested error. The skills-array type guard is covered
+        by ``test_adapter_raises_apiresponseerror_when_skills_not_list``
+        in the adapter test class."""
         message = _make_mock_message(
             raw_text=json.dumps(
                 {
@@ -824,7 +915,7 @@ class TestCurateGrammarSchemaAdapter:
                     "suggested_label": "y",
                     "company_slug": "z",
                     "work_highlights_by_id": [],  # wrong: should be object
-                    "skills_by_id": {},
+                    "skills": [],
                     "projects": [],
                 }
             )
@@ -832,7 +923,9 @@ class TestCurateGrammarSchemaAdapter:
         _wire_mock_stream(mocker, message)
         client = CuratorClient(mock_settings)
 
-        with pytest.raises(APIResponseError, match="must be objects"):
+        with pytest.raises(
+            APIResponseError, match="work_highlights_by_id must be an object"
+        ):
             client.curate(portfolio_data, "Job description.")
 
 
@@ -1696,7 +1789,6 @@ class TestCurateSingleCallInvariant:
     # to `<= 1 + retry_budget`, NOT deleted. Removing this invariant
     # would silently double the cost of every paid run on grammar
     # regression.
-
 
     """Lock the 'no double paying' rule at the unit test layer.
 

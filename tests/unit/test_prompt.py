@@ -109,10 +109,12 @@ class TestBuildSystemPrompt:
         constraints_start = text.index("<constraints>")
         constraints_end = text.index("</constraints>")
         constraints_block = text[constraints_start:constraints_end]
-        # Field renamed from ``skills.keywords`` (legacy domain-path
-        # notation) to ``skills_by_id`` skill group when the schema
-        # moved to object-with-fixed-keys.
-        assert "skills_by_id" in constraints_block
+        # Field renamed across schema iterations:
+        # ``skills.keywords`` (legacy dotted-path) -> ``skills_by_id``
+        # (Option A object-with-fixed-keys, 2026-05-13) ->
+        # ``skills`` (Option E flat array, 2026-05-14). The rule
+        # invariant is what matters, not the field name.
+        assert "``skills``" in constraints_block
         assert "verbatim" in constraints_block
         assert "case-sensitive" in constraints_block
 
@@ -121,10 +123,9 @@ class TestBuildSystemPrompt:
     ) -> None:
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
-        # Field renamed from ``skills`` to ``skills_by_id`` when the
-        # schema switched to object-with-fixed-keys for grammar
-        # enforcement of cross-parent keyword scoping.
-        guidance_start = text.index("``skills_by_id``:")
+        # Field section header is ``skills`` under Option E (2026-05-14)
+        # after the by-id object shape was collapsed to a flat array.
+        guidance_start = text.index("``skills``:")
         guidance_block = text[guidance_start : guidance_start + 2000]
         assert "verbatim" in guidance_block.lower() or "Verbatim" in guidance_block
 
@@ -137,9 +138,9 @@ class TestBuildSystemPrompt:
         strategy_block = text[strategy_start : strategy_start + 800]
         assert "summary" in strategy_block
         assert "does NOT apply to" in strategy_block
-        # Field reference renamed; the exclusion still applies to
-        # skill-group keywords (now scoped under skills_by_id).
-        assert "skills_by_id" in strategy_block
+        # Field reference is ``skills`` (Option E flat array,
+        # 2026-05-14); the exclusion still applies to skill keywords.
+        assert "``skills``" in strategy_block
 
     def test_rank_every_work_entry_rule_in_constraints(
         self, portfolio_data: PortfolioData
@@ -292,12 +293,12 @@ class TestBuildSystemPrompt:
         text = result[0]["text"]
         assert "verbatim-keyword rule and" in text
         assert "no-fabrication rule take precedence" in text
-        # Field reference renamed; the precedence clause now phrases
-        # the exclusion as "JD term under ``skills_by_id``" since the
-        # wire field is the object, not a dotted path.
+        # Field reference is ``skills`` under Option E (2026-05-14);
+        # the precedence clause phrases the exclusion as "JD term to
+        # ``skills``" matching the flat-array wire shape.
         assert "never add" in text
         assert "JD term" in text
-        assert "skills_by_id" in text
+        assert "``skills``" in text
         assert "to satisfy this rule" in text
 
     def test_acronym_prompt_subset_of_rules_constants(
@@ -672,7 +673,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "5e4227c8f88da224e14c5fe7be26a2a6193db68bfb495ba775e0d3de91a946c2"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "89e1afccb1a984e1e0c63b66573e5001f100d85c3737c0cbcd377e7b19b4e8f3"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()

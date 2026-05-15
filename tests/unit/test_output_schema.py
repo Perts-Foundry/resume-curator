@@ -103,7 +103,7 @@ class TestTopLevelShape:
             "suggested_label",
             "company_slug",
             "work_highlights_by_id",
-            "skills_by_id",
+            "skills",
             "projects",
         ]
 
@@ -116,7 +116,7 @@ class TestTopLevelShape:
             "suggested_label",
             "company_slug",
             "work_highlights_by_id",
-            "skills_by_id",
+            "skills",
             "projects",
         }
 
@@ -206,37 +206,84 @@ class TestWorkHighlightsByID:
 
 
 # ---------------------------------------------------------------------------
-# skills_by_id
+# skills (flat top-level array, no items.enum)
 # ---------------------------------------------------------------------------
 
 
-class TestSkillsByID:
-    def test_key_per_skill_group_in_portfolio_order(
+class TestSkills:
+    """Skills wire shape under Option E (2026-05-14).
+
+    The schema MUST emit a flat top-level ``skills: array[string]``. Any
+    future addition of nested per-group properties or ``items.enum``
+    here will re-trigger the 2026-05-13/14 "compiled grammar is too
+    large" 400. See ``docs/architecture.md`` "Dynamic schema
+    construction (API path)" for the design rationale.
+    """
+
+    def test_skills_is_top_level_array_with_string_items(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        sk = build_curation_schema(realistic_portfolio)["properties"]["skills_by_id"]
-        assert list(sk["properties"].keys()) == ["cloud-aws", "cicd"]
+        schema = build_curation_schema(realistic_portfolio)
+        sk = schema["properties"]["skills"]
+        assert sk["type"] == "array"
+        assert sk["items"]["type"] == "string"
 
-    def test_each_value_enum_scoped_to_that_groups_keywords(
+    def test_skills_items_have_no_enum(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        sk = build_curation_schema(realistic_portfolio)["properties"]["skills_by_id"]
-        assert sk["properties"]["cloud-aws"]["items"]["enum"] == ["EC2", "S3", "RDS"]
-        assert sk["properties"]["cicd"]["items"]["enum"] == [
-            "GitHub Actions",
-            "Terraform",
-        ]
+        # Lock-in: the 354-keyword production enum surface 400'd in
+        # production on 2026-05-13. Any future enum here is a regression.
+        sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
+        assert "enum" not in sk["items"]
 
-    def test_zero_keyword_skill_group_omitted(self) -> None:
+    def test_skills_items_dict_is_structural_only(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # Beyond no-enum: items must be exactly {"type": "string"} so a
+        # future drive-by adding pattern/minLength/etc. also trips this
+        # test rather than silently shrinking the grammar budget.
+        sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
+        assert sk["items"] == {"type": "string"}
+
+    def test_skills_in_required_list(self, realistic_portfolio: PortfolioData) -> None:
+        schema = build_curation_schema(realistic_portfolio)
+        assert "skills" in schema["required"]
+
+    def test_skills_field_order_between_work_highlights_and_projects(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # Under constrained decoding, field order matters: skills
+        # must come after work_highlights_by_id (so the model commits
+        # to highlight ranking first) and before projects.
+        keys = list(build_curation_schema(realistic_portfolio)["properties"].keys())
+        assert keys.index("skills") == keys.index("work_highlights_by_id") + 1
+        assert keys.index("projects") == keys.index("skills") + 1
+
+    def test_schema_has_no_skills_by_id_anywhere(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # Defense against a partial revert: the by-id shape must not
+        # exist anywhere under the resume schema.
+        schema = build_curation_schema(realistic_portfolio)
+        assert "skills_by_id" not in schema["properties"]
+        assert "skills_by_id" not in schema.get("required", [])
+
+    def test_zero_keyword_portfolio_still_emits_flat_skills(self) -> None:
+        # Under Option A's by-id shape, zero-keyword groups had to be
+        # omitted (Anthropic rejected empty enums). Option E has no
+        # nested structure, so even a portfolio with every group at
+        # zero keywords still emits a flat ``skills`` field.
         portfolio = _portfolio(
             skills=[
-                _skill("group-with-kw", ["A", "B"]),
-                _skill("group-no-kw", []),
+                _skill("group-no-kw-a", []),
+                _skill("group-no-kw-b", []),
             ]
         )
-        sk = build_curation_schema(portfolio)["properties"]["skills_by_id"]
-        assert list(sk["properties"].keys()) == ["group-with-kw"]
-        assert sk["required"] == ["group-with-kw"]
+        schema = build_curation_schema(portfolio)
+        sk = schema["properties"]["skills"]
+        assert sk["type"] == "array"
+        assert sk["items"] == {"type": "string"}
+        assert "skills" in schema["required"]
 
 
 # ---------------------------------------------------------------------------
@@ -467,12 +514,16 @@ class TestDescriptions:
         desc = wh["properties"]["pf-senior-engineer"]["description"]
         assert "pf-senior-engineer" in desc
 
-    def test_skill_property_description_mentions_skip_semantics(
+    def test_skills_description_mentions_verbatim_and_omission(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        sk = build_curation_schema(realistic_portfolio)["properties"]["skills_by_id"]
-        desc = sk["properties"]["cloud-aws"]["description"]
-        # Empty-array-means-skip is the contract the prompt also
-        # communicates; redundant in two places to keep the model
-        # aligned.
-        assert "skip" in desc.lower() or "empty" in desc.lower()
+        # The flat `skills` field has no per-group descriptions under
+        # Option E. The top-level description carries two load-bearing
+        # signals to the model: (1) verbatim-match against portfolio
+        # keywords, (2) omit keywords from JD-irrelevant groups rather
+        # than padding. Both reinforce prompt content; pin them here
+        # so a future doc-tweak doesn't quietly drop either.
+        sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
+        desc = sk["description"].lower()
+        assert "verbatim" in desc
+        assert "omit" in desc or "irrelevant" in desc

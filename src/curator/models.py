@@ -555,20 +555,35 @@ def validate_curation_ids(
 
     Defense-in-depth on the API path; primary defense on the static path.
 
-    As of 2026-05-13 the API-path curation arrives via a grammar-enforced
-    structured-output schema built by ``curator.output_schema.build_curation_schema``.
-    Per-property ``items.enum`` makes the following rows decode-time
-    unreachable on the API path: unknown ``work_id``, unknown
-    ``highlight_id`` inside a known ``work_id`` (the cross-entry
-    attribution failure), unknown ``skill_group_id``, non-verbatim
-    keywords inside a known ``skill_group_id``, unknown ``project_id``,
+    As of 2026-05-14 the API-path curation arrives via a partially
+    grammar-enforced structured-output schema built by
+    ``curator.output_schema.build_curation_schema``. ``items.enum`` on
+    ``work_highlights_by_id`` and ``projects``, plus ``required`` and
+    ``additionalProperties: false`` on every nested object, make the
+    following rows decode-time unreachable on the API path: unknown
+    ``work_id``, unknown ``highlight_id`` inside a known ``work_id``
+    (the cross-entry attribution failure), unknown ``project_id``,
     duplicate ``work_id``, and missing rankings. They remain reachable
     on the **static** path (which builds ``ResumeCuration`` directly
     from portfolio data without grammar enforcement) and on the API
     path only if Anthropic's grammar compiler regresses.
 
-    Soft-drop behavior (still used on the static path; safety-net on
-    the API path):
+    Skill keywords are NOT decode-time-enforced on either path: the
+    354-string production enum surface across 22 groups exceeded
+    Anthropic's compiled-grammar budget (HTTP 400 "compiled grammar
+    is too large" on 2026-05-13), and the 27-property required-strict
+    object that replaced it on 2026-05-13 (Option A) hit the same 400
+    on 2026-05-14. The 2026-05-14 Haiku probe sequence localized the
+    binding axis to inner-property count; the wire shape collapsed to
+    a flat top-level ``skills`` array (Option E). The client adapter
+    walks each emitted keyword back to its parent portfolio group
+    (first-match by portfolio order) and drops unknown keywords with
+    a WARN log; the soft-drop below runs as defense-in-depth on the
+    API path and as primary defense on the static path.
+
+    Soft-drop behavior (primary defense on the static path; on the
+    API path, the adapter has already filtered before this validator
+    runs):
 
     - Unknown ``highlight_id`` inside a known ``work_id`` is a SOFT
       warning: the bogus ID is dropped, the rest of the ranking is
@@ -589,7 +604,9 @@ def validate_curation_ids(
     - Missing ranking for a portfolio work entry. (Grammar-unreachable;
       the client adapter synthesizes empty rankings for entries the
       schema omitted, which keeps this invariant satisfied.)
-    - Unknown ``skill_group_id``. (Grammar-unreachable on API path.)
+    - Unknown ``skill_group_id``. (Reachable only on the static path
+      under Option E; the API-path adapter only emits looked-up group
+      IDs.)
     - Unknown ``project_id``. (Grammar-unreachable on API path when the
       portfolio has at least one project. Edge: an empty portfolio
       projects list disables the enum constraint, so this row remains
@@ -674,6 +691,16 @@ def validate_curation_ids(
         errors.append(f"missing ranking for work entries: {sorted(missing_work_ids)}")
 
     # --- skills: unknown group IDs are hard; hallucinated keywords are soft ---
+    # On the API path the unknown-group-id branch below is dead code: the
+    # client adapter only emits skill_ids it just looked up from the
+    # portfolio (see _adapt_curation_dict). The branch stays live for the
+    # static path, where synthesize_curation builds SkillRanking from
+    # portfolio.skills directly without going through the adapter, so a
+    # future drift between the static-mode logic and the portfolio shape
+    # still fails fast here. Likewise, the hallucinated-keyword soft-drop
+    # below catches non-verbatim keywords on the static path; on the API
+    # path the adapter already dropped them, so this is defense-in-depth
+    # against an adapter regression.
 
     valid_skill_ids = {s.id: set(s.keywords) for s in portfolio.skills}
     sanitized_skills: list[SkillRanking] = []

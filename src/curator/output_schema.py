@@ -2,20 +2,30 @@
 
 The schema is constructed from the loaded ``PortfolioData`` at curate
 time and injected via ``output_config.format`` on ``messages.stream``.
-The grammar makes cross-parent ``highlight_id`` and non-verbatim skill
-keyword emission decode-time-impossible.
+The grammar makes cross-parent ``highlight_id`` emission
+decode-time-impossible (via per-property ``items.enum`` on
+``work_highlights_by_id``). Skill keyword verbatim-match is enforced
+only post-hoc by ``client._adapt_curation_dict`` and
+``validate_curation_ids``, NOT at decode time: the 2026-05-13
+production schema (object-keyed-by-skill-group, 27 inner properties)
+exceeded Anthropic's compiled-grammar budget; the 2026-05-14 Haiku
+probe sequence localized the binding axis to inner-property count
+under ``required`` + ``additionalProperties: false``, forcing the
+collapse to a flat top-level array.
 
 Shape (top-level):
 
-    summary            string
-    suggested_label    string
-    company_slug       string
+    summary                 string
+    suggested_label         string
+    company_slug            string
     work_highlights_by_id   object[work_id -> array[items.enum]]
-    skills_by_id            object[skill_id -> array[items.enum]]
+    skills                  array[string]  (flat keyword list)
     projects                array[items.enum]
 
-Each property in ``work_highlights_by_id`` / ``skills_by_id`` has its
-value's ``items.enum`` scoped to that parent's children. Anthropic's
+Only ``work_highlights_by_id`` carries nested per-property
+``items.enum``; the adapter walks each emitted ``skills`` keyword back
+to its parent portfolio group (first-match by portfolio order) to
+reconstruct ``list[SkillRanking]`` for the domain model. Anthropic's
 grammar compiles per-property constraints independently (verified
 empirically 2026-05-13).
 
@@ -28,10 +38,12 @@ Constraints inherited from Anthropic's structured-output keyword
 subset:
 
 - ``enum`` arrays must be non-empty (empty enums return HTTP 400).
-  Portfolio entries with zero highlights or zero keywords are
-  therefore omitted from the schema; the adapter synthesizes empty
-  rankings to keep the Pydantic "every portfolio work entry has a
-  ranking" invariant.
+  Work entries with zero highlights are omitted from
+  ``work_highlights_by_id``; the adapter synthesizes empty
+  ``WorkHighlightRanking`` instances for omitted entries to keep the
+  Pydantic "every portfolio work entry has a ranking" invariant.
+  ``skills`` is a flat unconstrained string array, so the empty-enum
+  rule does not apply to skill groups.
 - ``minLength`` / ``maxLength`` / ``pattern`` / ``minimum`` /
   ``maximum`` are not enforced at decode time. Constraints survive
   only as post-hoc Pydantic re-validation on the parsed dict.
@@ -162,43 +174,46 @@ def _build_work_highlights_by_id_schema(portfolio: PortfolioData) -> dict[str, A
     }
 
 
-def _build_skills_by_id_schema(portfolio: PortfolioData) -> dict[str, Any]:
-    """Object keyed by skill group ID; each value is enum-constrained items.
+def _build_skills_schema(portfolio: PortfolioData) -> dict[str, Any]:
+    """Flat top-level array of skill keyword strings.
 
-    Skill groups with zero keywords are omitted (Anthropic rejects
-    empty ``enum``). The adapter drops empty-value groups before
-    constructing ``ResumeCuration``.
+    Wire shape: ``{"skills": ["EC2", "S3", "Kubernetes", ...]}``. The
+    model emits keywords ordered by JD fit across all relevant
+    portfolio skill groups. The client adapter walks each emitted
+    keyword back to its parent portfolio group (first-match by
+    portfolio iteration order) to reconstruct ``list[SkillRanking]``.
+
+    There is NO ``items.enum``: the 354-string production surface
+    across 22 skill groups exceeded Anthropic's compiled-grammar
+    budget (HTTP 400 "compiled grammar is too large" on 2026-05-13).
+    Verbatim-match enforcement lives in
+    ``client._adapt_curation_dict`` (drops + WARN logs unknown
+    keywords) and ``validate_curation_ids`` (defense in depth).
+
+    The argument is unused at present (the flat shape carries no
+    portfolio-derived enum), but the signature mirrors the other
+    ``_build_*_schema`` builders so future tightening can hook in
+    without a call-site change.
     """
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-    for s in portfolio.skills:
-        sid = _check_id(s.id, "skill group")
-        if not s.keywords:
-            continue
-        properties[sid] = {
-            "type": "array",
-            "description": (
-                f"Verbatim subset of keywords from skill group '{sid}', "
-                f"ordered by JD fit. Every emitted string must match an "
-                f"existing keyword in this group exactly (case-sensitive). "
-                f"An empty array means 'skip this group in the rendered "
-                f"resume' (use when the group is irrelevant to the JD; "
-                f"do not pad with weak keywords)."
-            ),
-            "items": {"type": "string", "enum": list(s.keywords)},
-        }
-        required.append(sid)
+    del portfolio  # see docstring
     return {
-        "type": "object",
-        "additionalProperties": False,
+        "type": "array",
         "description": (
-            "Filtered keywords keyed by portfolio skill group ID. The "
-            "property key identifies the group; the value lists that "
-            "group's keywords filtered and ordered by JD fit. Empty "
-            "arrays are valid and mean 'skip this group'."
+            "Flat list of skill keywords ordered by JD fit, strongest "
+            "first across all relevant portfolio skill groups. Every "
+            "emitted string MUST be a verbatim (case-sensitive) match "
+            "of a keyword already present in some portfolio skill "
+            "group's ``keywords`` list. The schema does not enforce "
+            "this at decode time (compile-budget constraint, see "
+            "module docstring); non-verbatim keywords are dropped "
+            "post-hoc by the client adapter and surface as WARN log "
+            "lines. If a keyword appears in multiple portfolio groups, "
+            "include it only once. If a portfolio group is irrelevant "
+            "to the JD, omit all of its keywords; do NOT pad with "
+            "weak keywords to keep a group represented. May be empty "
+            "when no portfolio group is sufficiently JD-relevant."
         ),
-        "required": required,
-        "properties": properties,
+        "items": {"type": "string"},
     }
 
 
@@ -240,7 +255,7 @@ def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
             "suggested_label",
             "company_slug",
             "work_highlights_by_id",
-            "skills_by_id",
+            "skills",
             "projects",
         ],
         "properties": {
@@ -248,7 +263,7 @@ def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
             "suggested_label": _build_suggested_label_schema(),
             "company_slug": _build_company_slug_schema(),
             "work_highlights_by_id": _build_work_highlights_by_id_schema(portfolio),
-            "skills_by_id": _build_skills_by_id_schema(portfolio),
+            "skills": _build_skills_schema(portfolio),
             "projects": _build_projects_schema(portfolio),
         },
     }
