@@ -3,7 +3,7 @@
 Current architecture for resume-curator. This document is kept up to date as the
 project evolves.
 
-Last updated: 2026-05-13
+Last updated: 2026-05-15
 
 ---
 
@@ -622,7 +622,7 @@ Decision history:
 already embeds portfolio content, both the schema and the prompt
 invalidate on the same axis (portfolio change). JD-only changes (the
 dominant axis in real workflows) keep both stable and the cache warm.
-The first run after the 2026-05-14 Option E landing is a cache miss
+The first run after the 2026-05-15 Option E landing is a cache miss
 for every existing portfolio prefix; subsequent runs against an
 unchanged portfolio rewarm the new cache.
 
