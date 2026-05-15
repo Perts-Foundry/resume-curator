@@ -769,6 +769,153 @@ class TestCurateGrammarSchemaAdapter:
         emitted_group_order = [sr.skill_id for sr in result.curation.skills]
         assert emitted_group_order == [g_b, g_a], emitted_group_order
 
+    def test_adapter_preserves_within_group_emit_order(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Within a single SkillRanking, keyword order = model emit order
+        (not portfolio order). The renderer's 'strongest first' bullet
+        ordering depends on this; the adapter docstring promises it."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        # The default portfolio fixture has only one skill group with one
+        # keyword; substitute a single multi-keyword group so we can
+        # distinguish emit order from portfolio order.
+        portfolio_kws = ["AAA", "BBB", "CCC", "DDD"]
+        extended = replace(
+            portfolio_data,
+            skills=[
+                SkillEntry(
+                    id="multi-kw-group",
+                    name="Multi-Keyword Group",
+                    keywords=portfolio_kws,
+                )
+            ],
+        )
+        # Reverse the portfolio order so we can distinguish.
+        emit_order = list(reversed(portfolio_kws))
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = emit_order
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(extended, "Job description.")
+
+        srs = [
+            sr for sr in result.curation.skills if sr.skill_id == "multi-kw-group"
+        ]
+        assert len(srs) == 1
+        assert srs[0].keywords == emit_order, (
+            f"expected emit-order {emit_order}, got {srs[0].keywords}"
+        )
+
+    def test_adapter_logs_info_on_ambiguous_attribution(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """A keyword present in two portfolio groups is attributed to the
+        first one (portfolio order) and logged at INFO with the chosen
+        group + alternatives. The log line is the only operator signal
+        that an attribution choice was made; this test guards its format."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        # Add a second group that shares one keyword with the first.
+        shared_kw = portfolio_data.skills[0].keywords[0]
+        extended = replace(
+            portfolio_data,
+            skills=[
+                *portfolio_data.skills,
+                SkillEntry(
+                    id="other-group",
+                    name="Other Group",
+                    keywords=[shared_kw, "OTHER-EXCLUSIVE-KW"],
+                ),
+            ],
+        )
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [shared_kw]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        info_mock = mocker.patch("curator.client.logger.info")
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(extended, "Job description.")
+
+        # Attribution went to the FIRST portfolio group containing shared_kw.
+        winning_group = portfolio_data.skills[0].id
+        assert {sr.skill_id for sr in result.curation.skills} == {winning_group}
+        # Exactly one INFO log line carries the ambiguous-attribution message.
+        matching = [
+            call
+            for call in info_mock.call_args_list
+            if isinstance(call.args[0], str)
+            and "ambiguous keyword attribution" in call.args[0]
+        ]
+        assert len(matching) == 1, info_mock.call_args_list
+        # The shared keyword, winning group, and the loser group all
+        # appear somewhere in the call args.
+        flat_args = str(matching[0].args)
+        assert shared_kw in flat_args
+        assert winning_group in flat_args
+        assert "other-group" in flat_args
+
+    def test_adapter_ambiguous_attribution_logged_once_per_keyword(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """If the model emits an ambiguous keyword twice, the adapter's
+        in-group dedupe keeps it once AND the INFO log records the
+        ambiguity once. Guards against double-counting in the
+        observability path."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        shared_kw = portfolio_data.skills[0].keywords[0]
+        extended = replace(
+            portfolio_data,
+            skills=[
+                *portfolio_data.skills,
+                SkillEntry(
+                    id="other-group",
+                    name="Other Group",
+                    keywords=[shared_kw],
+                ),
+            ],
+        )
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [shared_kw, shared_kw]  # emitted twice
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        info_mock = mocker.patch("curator.client.logger.info")
+        client = CuratorClient(mock_settings)
+
+        client.curate(extended, "Job description.")
+
+        matching = [
+            call
+            for call in info_mock.call_args_list
+            if isinstance(call.args[0], str)
+            and "ambiguous keyword attribution" in call.args[0]
+        ]
+        assert len(matching) == 1, info_mock.call_args_list
+        # The count in the log line argument should be 1, not 2.
+        assert matching[0].args[1] == 1, matching[0].args
+
     def test_adapter_dedupes_keyword_repeated_in_emit_order(
         self,
         mocker: Any,
@@ -857,7 +1004,7 @@ class TestCurateGrammarSchemaAdapter:
         anything else surfaces as APIResponseError carrying the
         request_id."""
         wire = _curation_to_wire_dict(valid_curation)
-        # Legacy by-id object shape — no longer accepted under Option E.
+        # Legacy by-id object shape (no longer accepted under Option E).
         wire["skills"] = {"cloud-aws": ["EKS"]}
         message = _make_mock_message(raw_text=json.dumps(wire))
         _wire_mock_stream(mocker, message)
@@ -1782,18 +1929,18 @@ class TestCurationResultCoverLetterField:
 
 
 class TestCurateSingleCallInvariant:
-    # The retry-with-feedback feature tracked in TODO.md "Curation
-    # Reliability > Retry-with-feedback loop" would bump the call count
-    # to 2+ when validation fails. When that lands, this class must be
-    # parametrized over a retry-budget flag and the assertion adjusted
-    # to `<= 1 + retry_budget`, NOT deleted. Removing this invariant
-    # would silently double the cost of every paid run on grammar
-    # regression.
-
     """Lock the 'no double paying' rule at the unit test layer.
 
     The assertion covers stream/create/count_tokens so a future refactor
     that swaps one for another does not slip past silently.
+
+    The retry-with-feedback feature tracked in TODO.md "Curation
+    Reliability > Retry-with-feedback loop" would bump the call count
+    to 2+ when validation fails. When that lands, this class must be
+    parametrized over a retry-budget flag and the assertion adjusted
+    to ``<= 1 + retry_budget``, NOT deleted. Removing this invariant
+    would silently double the cost of every paid run on grammar
+    regression.
     """
 
     @pytest.mark.parametrize("with_cover_letter", [False, True])

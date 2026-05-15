@@ -442,12 +442,14 @@ class SkillRanking(BaseModel):
     Application-level domain model: ``keywords`` is required non-empty (a
     present ranking by definition has at least one keyword). The wire-shape
     JSON schema built by :func:`curator.output_schema.build_curation_schema`
-    lets the model emit an empty array under a skill group to mean "skip
-    this group"; the client adapter (``client._adapt_curation_dict``)
-    filters those out and emits one ``logger.info("Filtered ... empty
-    skill group(s)")`` line before constructing ``ResumeCuration``. Any
-    code that constructs ``SkillRanking`` directly (static path, tests)
-    must omit the group rather than pass ``keywords=[]``.
+    emits ``skills`` as a flat top-level array of keyword strings (Option E,
+    2026-05-15); the client adapter (``client._adapt_curation_dict``) walks
+    each emitted keyword back to its parent portfolio group via first-match
+    lookup and constructs ``SkillRanking`` instances ONLY for groups that
+    received at least one matched keyword. Empty-group instances therefore
+    never reach this model on the API path. Any code that constructs
+    ``SkillRanking`` directly (static path, tests) must likewise omit the
+    group rather than pass ``keywords=[]``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -555,7 +557,7 @@ def validate_curation_ids(
 
     Defense-in-depth on the API path; primary defense on the static path.
 
-    As of 2026-05-14 the API-path curation arrives via a partially
+    As of 2026-05-15 the API-path curation arrives via a partially
     grammar-enforced structured-output schema built by
     ``curator.output_schema.build_curation_schema``. ``items.enum`` on
     ``work_highlights_by_id`` and ``projects``, plus ``required`` and
@@ -575,7 +577,7 @@ def validate_curation_ids(
     object that replaced it on 2026-05-13 (Option A) hit the same 400
     on 2026-05-14. The 2026-05-14 Haiku probe sequence localized the
     binding axis to inner-property count; the wire shape collapsed to
-    a flat top-level ``skills`` array (Option E). The client adapter
+    a flat top-level ``skills`` array (Option E, shipped 2026-05-15). The client adapter
     walks each emitted keyword back to its parent portfolio group
     (first-match by portfolio order) and drops unknown keywords with
     a WARN log; the soft-drop below runs as defense-in-depth on the
@@ -691,16 +693,16 @@ def validate_curation_ids(
         errors.append(f"missing ranking for work entries: {sorted(missing_work_ids)}")
 
     # --- skills: unknown group IDs are hard; hallucinated keywords are soft ---
-    # On the API path the unknown-group-id branch below is dead code: the
-    # client adapter only emits skill_ids it just looked up from the
-    # portfolio (see _adapt_curation_dict). The branch stays live for the
-    # static path, where synthesize_curation builds SkillRanking from
-    # portfolio.skills directly without going through the adapter, so a
-    # future drift between the static-mode logic and the portfolio shape
-    # still fails fast here. Likewise, the hallucinated-keyword soft-drop
-    # below catches non-verbatim keywords on the static path; on the API
-    # path the adapter already dropped them, so this is defense-in-depth
-    # against an adapter regression.
+    # Under Option E (2026-05-15) the API-path adapter only emits
+    # skill_ids it just looked up from portfolio.skills and only emits
+    # keywords that match portfolio entries verbatim; both branches below
+    # are therefore unreachable on the normal API path. They remain live
+    # on the static path (synthesize_curation builds SkillRanking from
+    # portfolio.skills directly without going through the adapter) and
+    # serve as a tripwire against a future API-path code regression that
+    # bypasses the adapter's filtering. They do NOT catch a runtime
+    # bypass of the adapter (such code path wouldn't call this validator
+    # either) so the API-path "defense-in-depth" framing is narrow.
 
     valid_skill_ids = {s.id: set(s.keywords) for s in portfolio.skills}
     sanitized_skills: list[SkillRanking] = []

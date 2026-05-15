@@ -673,7 +673,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "89e1afccb1a984e1e0c63b66573e5001f100d85c3737c0cbcd377e7b19b4e8f3"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "fc73d36676ee15af7ecdc36add3de55dcab662f1c4fd86868997cb2dad2a8484"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()

@@ -239,7 +239,17 @@ def _adapt_curation_dict(
     group_keywords: dict[str, list[str]] = {}  # insertion-ordered
     unknown_keywords: list[str] = []
     ambiguous_attributions: list[tuple[str, str, list[str]]] = []
+    seen_ambiguous: set[str] = set()  # dedupe INFO log when a keyword repeats
     for kw in raw_skills:
+        # Defense-in-depth: the schema declares ``items: {"type": "string"}``
+        # so a non-string emission would already be a grammar regression,
+        # but ``dict.get(unhashable)`` would raise ``TypeError`` that
+        # escapes the project's ``APIResponseError`` convention. Coerce
+        # to str via ``repr`` and route through the unknown-keyword path
+        # so the operator sees what the model produced.
+        if not isinstance(kw, str):
+            unknown_keywords.append(repr(kw))
+            continue
         gid = keyword_to_group.get(kw)
         if gid is None:
             unknown_keywords.append(kw)
@@ -248,10 +258,17 @@ def _adapt_curation_dict(
         if kw not in bucket:  # in-group dedupe
             bucket.append(kw)
         all_groups = keyword_to_all_groups[kw]
-        if len(all_groups) > 1:
+        if len(all_groups) > 1 and kw not in seen_ambiguous:
+            seen_ambiguous.add(kw)
             alternatives = [g for g in all_groups if g != gid]
             ambiguous_attributions.append((kw, gid, alternatives))
 
+    # NOTE: request_id is interpolated into the format string here for
+    # consistency with the rest of curator.client. The architecture-review
+    # 2026-05-15 suggested `logger.bind(request_id=...).info(...)` for
+    # structured logging, but no other call site in this module uses
+    # bind(); moving them all in lockstep is a follow-up worth its own
+    # commit. See TODO.md.
     if unknown_keywords:
         logger.warning(
             "Adapter dropped {} keyword(s) not in any portfolio skill "

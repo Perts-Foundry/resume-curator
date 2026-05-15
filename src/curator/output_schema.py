@@ -11,7 +11,7 @@ production schema (object-keyed-by-skill-group, 27 inner properties)
 exceeded Anthropic's compiled-grammar budget; the 2026-05-14 Haiku
 probe sequence localized the binding axis to inner-property count
 under ``required`` + ``additionalProperties: false``, forcing the
-collapse to a flat top-level array.
+collapse to a flat top-level array that shipped 2026-05-15.
 
 Shape (top-level):
 
@@ -42,8 +42,9 @@ subset:
   ``work_highlights_by_id``; the adapter synthesizes empty
   ``WorkHighlightRanking`` instances for omitted entries to keep the
   Pydantic "every portfolio work entry has a ranking" invariant.
-  ``skills`` is a flat unconstrained string array, so the empty-enum
-  rule does not apply to skill groups.
+  ``skills`` is a flat unconstrained string array (no nested
+  per-group structure on the wire), so the empty-enum rule has no
+  surface here.
 - ``minLength`` / ``maxLength`` / ``pattern`` / ``minimum`` /
   ``maximum`` are not enforced at decode time. Constraints survive
   only as post-hoc Pydantic re-validation on the parsed dict.
