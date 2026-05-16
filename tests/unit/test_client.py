@@ -807,9 +807,7 @@ class TestCurateGrammarSchemaAdapter:
 
         result = client.curate(extended, "Job description.")
 
-        srs = [
-            sr for sr in result.curation.skills if sr.skill_id == "multi-kw-group"
-        ]
+        srs = [sr for sr in result.curation.skills if sr.skill_id == "multi-kw-group"]
         assert len(srs) == 1
         assert srs[0].keywords == emit_order, (
             f"expected emit-order {emit_order}, got {srs[0].keywords}"
