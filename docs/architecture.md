@@ -3,7 +3,7 @@
 Current architecture for resume-curator. This document is kept up to date as the
 project evolves.
 
-Last updated: 2026-05-09
+Last updated: 2026-05-15
 
 ---
 
@@ -105,6 +105,23 @@ src/curator/
                       #   via scripts/rerender.py --partial. Total word count
                       #   above COVER_LETTER_WORD_MAX is a soft warning only;
                       #   the letter still ships and no partial is written.
+  output_schema.py    # Builds the per-call JSON schema from PortfolioData;
+                      #   grammar-enforces cross-parent highlight ID scoping
+                      #   under work_highlights_by_id (items.enum per work
+                      #   entry) and projects (items.enum top-level), so
+                      #   cross-parent highlight attribution is decode-time
+                      #   impossible. Skills ship as a flat top-level
+                      #   `skills: array[string]` with no items.enum: the
+                      #   354-string production enum surface exceeded
+                      #   Anthropic's compiled-grammar budget on 2026-05-13,
+                      #   and the 22-property object replacement (Option A)
+                      #   hit the same 400 on 2026-05-14 because the binding
+                      #   axis is inner-property count under required+
+                      #   additionalProperties:false. Skill keyword
+                      #   verbatim-match is reconstructed adapter-side in
+                      #   client.py. Pure function build_curation_schema(
+                      #   portfolio, *, with_cover_letter); deterministic,
+                      #   no I/O.
   renderer.py         # Curated YAML writer, Typst compilation, page-fitting trimmer.
                       #   _render_cover_letter writes data/cover_letter.yaml and
                       #   compiles cover_letter.pdf (single pass, no trim cascade).
@@ -205,9 +222,14 @@ pipeline.py
   └── exceptions.py    (RenderError)
 
 client.py
-  ├── models.py        (structured output types)
-  ├── prompt.py        (message construction)
+  ├── models.py         (structured output types)
+  ├── output_schema.py  (per-call JSON schema construction)
+  ├── prompt.py         (message construction)
   └── exceptions.py
+
+output_schema.py
+  ├── models.py         (PortfolioData; TYPE_CHECKING only)
+  └── rules.py          (sign-off enum, summary length constants)
 
 loader.py
   ├── io_utils.py      (YAML safe loading)
@@ -334,13 +356,28 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
 3. If --dry-run: display preview (portfolio stats, JD length, cost estimate) and exit (no API call)
 4. cli.py calls pipeline.run_pipeline(settings, jd_text, skip_pdf=...)
 5. pipeline.py: loader.py reads all YAML from portfolio-source directory
-6. pipeline.py: client.py calls Claude once via messages.stream() with ResumeCuration schema
+6. pipeline.py: client.py calls Claude once via messages.stream() with a
+   per-call JSON schema built by output_schema.build_curation_schema(portfolio)
    - prompt.py constructs system prompt (with portfolio data) + user message (with JD)
-   - Streaming prevents timeouts; get_final_message() returns ParsedMessage
-   - Portfolio data is prompt-cached (stable across requests)
+   - output_schema.py builds the wire schema (work_highlights_by_id
+     object-keyed-by-work-ID with items.enum scoping per entry; skills
+     as a flat top-level array of keyword strings with no items.enum;
+     projects with top-level items.enum)
+   - Streaming prevents timeouts; get_final_message() returns the message
+   - Portfolio data is prompt-cached (stable across requests); schema is
+     part of the cache prefix and invalidates on the same axis
    - Job description varies per request
-7. Claude returns structured ResumeCuration (summary, label, slug, work highlight rankings, skill rankings, project rankings)
-8. client.py validates response (all IDs exist in portfolio, all work entries covered, keywords verbatim-match portfolio)
+7. Claude returns structured JSON conforming to the schema; client.py extracts
+   from message.content[0].text and adapts the wire shape into the domain
+   shape (object-keyed work_highlights_by_id -> list[WorkHighlightRanking];
+   flat skills array -> list[SkillRanking] via first-match keyword->group
+   lookup against portfolio.skills; unknown/duplicate keywords logged and
+   dropped) before constructing ResumeCuration
+8. client.py runs validate_curation_ids as defense-in-depth; the schema
+   already made cross-parent highlight-ID emission decode-time-impossible,
+   and the adapter already filtered non-verbatim skill keywords, so this
+   layer mainly catches grammar regressions, adapter regressions, and
+   static-path issues
 9. pipeline.py: renderer.py applies selections, writes per-section YAML, compiles PDF
 10. renderer.py: if PDF exceeds max_pages, trims content deterministically and re-compiles
     - 8-tier trim cascade: interests > project highlights (lowest project first,
@@ -473,6 +510,10 @@ profiles/
 
 ## Structured Output Schema
 
+The Pydantic types remain the canonical domain shape used by the
+renderer, validator, static-mode synthesizer, and on-disk
+`curation.yaml` artifacts:
+
 ```python
 class WorkHighlightRanking(BaseModel):
     work_id: str                     # Portfolio work entry ID
@@ -492,6 +533,118 @@ class ResumeCuration(BaseModel):
     skills: list[SkillRanking]                   # Relevant groups, JD-ordered
     projects: list[str]                           # 3-5 project IDs ordered by (JD fit x weight)
 ```
+
+### Dynamic schema construction (API path)
+
+On the API path, the JSON schema sent to Anthropic is **NOT** generated
+from the Pydantic class. Instead `curator.output_schema.build_curation_schema(portfolio, *, with_cover_letter)`
+constructs a per-call dict schema from `PortfolioData` and the client
+injects it via `output_config.format` on `messages.stream`. The wire
+shape differs from the domain shape on two fields:
+
+| Domain field (Pydantic)                       | Wire field (schema)                       |
+|-----------------------------------------------|--------------------------------------------|
+| `work_highlights: list[WorkHighlightRanking]` | `work_highlights_by_id: object`            |
+| `skills: list[SkillRanking]`                  | `skills: array[string]` (flat keywords)    |
+
+`work_highlights_by_id` is keyed by portfolio work entry IDs; each
+property's value is an array whose `items.enum` is scoped to that
+entry's highlight IDs. This makes cross-parent emission (a highlight
+ID emitted under a different parent work entry) decode-time-impossible:
+the grammar literally cannot sample a token sequence the schema forbids.
+
+`skills` is a flat top-level array of keyword strings with no
+`items.enum`. The adapter at `client._adapt_curation_dict` walks each
+emitted keyword back to its parent portfolio group using a first-match
+lookup against `portfolio.skills` (preserving model emit order within
+and across groups; deduping within group; logging
+ambiguous-attribution decisions at INFO and unknown keywords at WARN)
+to reconstruct `list[SkillRanking]` for the domain model.
+
+`projects` carries `items.enum` over portfolio project IDs at the top
+level; no nested object needed.
+
+Decision history:
+
+- The original design used `oneOf` (or `anyOf+const`) over work entries
+  with each branch's `highlight_ids.items.enum` scoped to that branch.
+  Anthropic's structured-output keyword subset does NOT include
+  `oneOf`, and `anyOf` appears to be union-flattened at compile time
+  (no decode-time branch narrowing under prefix constraints; the docs'
+  explicit "exponential compilation cost" warning is the signature of
+  branch-flattening). The object-with-fixed-keys design sidesteps the
+  union question entirely.
+- Confirmed empirically against `claude-haiku-4-5` on 2026-05-13 with
+  9 probe calls (adversarial, benign-confusion, cover-letter wrapper,
+  empty-enum edge, field-order). All ENFORCED at small scale; full
+  results in the plan file referenced by `TODO.md`.
+- The same constrained-decoding mechanism powers the
+  `CoverLetterCuration.body_paragraph_1` / `body_paragraph_2`
+  tuple-shape (AR-2026-05-09) and the cover-letter `sign_off` enum;
+  the object-with-fixed-keys pattern here is the same lever applied to
+  parent-child ID scoping.
+- The original Option A design encoded `skills_by_id` as an object
+  keyed by skill group ID (mirror of `work_highlights_by_id`). The
+  354-keyword enum surface across 22 groups exceeded Anthropic's
+  compiled-grammar budget (HTTP 400 "compiled grammar is too large"
+  on 2026-05-13, request_id `req_011Cb1UJpKh9GB6pZEQVhZT8`). Dropping
+  `items.enum` from those property values (the documented Option A
+  retrenchment) was insufficient: the same 400 reproduced on
+  Sonnet 4.6 against the 22-property required-strict object on
+  2026-05-14 (request_id `req_011Cb1WssSd2jd2vCa1figYz`). A 6-probe
+  Haiku bisect localized the binding axis to *inner-property count
+  under `required` + `additionalProperties: false`*, not enum count
+  or description bytes: a probe with 8 enum strings across the same
+  27-property shape still 400'd, while collapsing `skills_by_id`
+  into a flat `skills: array[string]` (5 inner properties total)
+  passed cleanly. Option E ships that flat shape;
+  `work_highlights_by_id` and `projects` retain their grammar-level
+  enforcement (the load-bearing cross-parent-highlight bug fix).
+  Probe results live in the investigation plan referenced by `TODO.md`.
+
+**Edge cases handled by the builder:**
+
+- Work entries with zero highlights are omitted from
+  `work_highlights_by_id` (Anthropic returns 400 on empty `enum`).
+  The client adapter synthesizes an empty `WorkHighlightRanking` for
+  each omitted work entry to satisfy the validator's "every portfolio
+  work entry has a ranking" invariant.
+- `skills` is a flat unconstrained string array, so the empty-enum
+  rule does not apply to skill groups. The model expresses "skip this
+  group" by omitting all of its keywords from the array; empty
+  `skills` is valid when no portfolio group is JD-relevant.
+- Portfolio with zero projects: `projects.items` falls back to an
+  unconstrained string array (since `items.enum: []` would 400). The
+  application-level validator catches any bogus ID.
+
+**Cache impact:** the schema is part of the prompt-cache key
+(`tools → system → messages`). Because the ~85K-token system prompt
+already embeds portfolio content, both the schema and the prompt
+invalidate on the same axis (portfolio change). JD-only changes (the
+dominant axis in real workflows) keep both stable and the cache warm.
+The first run after the 2026-05-15 Option E landing is a cache miss
+for every existing portfolio prefix; subsequent runs against an
+unchanged portfolio rewarm the new cache.
+
+**Determinism:** `build_curation_schema` iterates portfolio collections
+in YAML insertion order via `loader.py`; no `set` is used in schema
+construction. Two calls with the same `PortfolioData` produce
+byte-identical schemas. A test in `tests/unit/test_output_schema.py`
+pins this invariant.
+
+**Validator retention:** `validate_curation_ids` runs unchanged on the
+adapted curation. Under Option E the following rows are
+decode-time-unreachable on the API path: unknown `work_id`, unknown
+`highlight_id` inside a known `work_id`, unknown `project_id`,
+duplicate `work_id`, and missing rankings. Unknown `skill_group_id`
+and non-verbatim skill keywords are NOT decode-time-blocked (no enum
+on `skills`); the adapter's keyword→group lookup filters both before
+the validator runs, and `validate_curation_ids` keeps the same
+soft-drop branches as defense-in-depth against an adapter regression.
+All hard-fail rows remain reachable on the **static** path (which
+builds `ResumeCuration` directly from portfolio data without going
+through the adapter), so the validator is also the primary defense
+there. Defense-in-depth is justified.
 
 ### Portfolio signal fields
 
@@ -545,20 +698,27 @@ Optional cover-letter generation is gated by `--cover-letter` on both the
 ```python
 class CoverLetterCuration(BaseModel):
     salutation: str          # "Dear ...,". Always ends with a comma.
-    opening: str             # 2-3 sentence company-specific hook.
-    body_paragraphs: list[str]   # 2-3 STAR paragraphs, JD-ordered.
+    opening: str             # 2 sentence company-specific hook.
+    body_paragraph_1: str    # First STAR-shaped body paragraph.
+    body_paragraph_2: str    # Second STAR-shaped body paragraph.
     closing: str             # Value recap + subtle CTA.
     sign_off: str            # Sincerely | Best regards | ... (no comma).
+    # `body_paragraphs: list[str]` is exposed as a computed_field for
+    # downstream consumers (renderer, validator, Typst template); the
+    # tuple shape is the schema-facing contract that lets the grammar
+    # enforce "exactly 2" (2026-05-09 design log entry).
 
 class ResumeCurationWithCoverLetter(BaseModel):
     resume: ResumeCuration
     cover_letter: CoverLetterCuration
 ```
 
-`ResumeCuration` is unchanged. The wrapper is used as `output_format` only
-when `with_cover_letter=True`; otherwise the existing `ResumeCuration` schema
-is used. This keeps every existing consumer working without modification and
-preserves prompt-cache hits on the off path.
+`ResumeCuration` is unchanged. When `with_cover_letter=True`,
+`build_curation_schema` produces a wrapper object schema with `resume` and
+`cover_letter` properties (matching the `ResumeCurationWithCoverLetter` shape)
+and injects it via `output_config.format`; otherwise it produces the resume
+schema only. The Pydantic wrapper class survives for static-mode parity but
+is no longer used as `output_format` on the API path.
 
 The same `CoverLetterCuration` also serves as the portfolio-boundary model:
 `PortfolioData.cover_letter: CoverLetterCuration | None` is populated by
@@ -654,36 +814,60 @@ Setup: Console → Settings → API Keys → Create Key → store in `.env` as
 Structured outputs are GA on Claude Sonnet 4.6, Opus 4.6, and Haiku 4.5. No beta
 header required.
 
-`client.messages.stream()` with `output_format` is the primary integration point:
+`client.messages.stream()` with `output_config.format` is the integration point:
 
-1. Define a Pydantic `BaseModel` (e.g. `ResumeCuration`)
-2. Pass it as `output_format` to `messages.stream()`
-3. Claude's token sampling is **constrained at generation time** to match the schema —
-   output is guaranteed valid, not "ask nicely and hope"
-4. The SDK auto-transforms the schema before sending (strips unsupported constraints
-   like `minimum`/`maximum`/`pattern`, adds `additionalProperties: false`, moves
-   constraints into field descriptions)
-5. The SDK validates the response against the **original** Pydantic model post-response,
-   catching anything the JSON Schema couldn't express
-6. `get_final_message()` returns a `ParsedMessage[ResumeCuration]` — access the result
-   via `response.parsed_output`, a typed Python object, no JSON parsing
+1. Build the JSON schema **per call** from `PortfolioData` via
+   `curator.output_schema.build_curation_schema()`. The schema encodes
+   `work_highlights_by_id` as an object keyed by portfolio work entry ID
+   (each value's `items.enum` scoped to that entry's highlight IDs);
+   `skills` as a flat top-level array of keyword strings with no
+   `items.enum` (the by-skill-group object exceeded Anthropic's
+   compiled-grammar budget on 2026-05-13/14); and `projects` as an array
+   with top-level `items.enum` over portfolio project IDs. See **Dynamic
+   schema construction (API path)** earlier in this document for the
+   full design rationale.
+2. Pass the dict via `output_config={"format": {"type": "json_schema", "schema":
+   schema}}` to `messages.stream()`. `output_format=PydanticClass` is the
+   legacy convenience wrapper and is not used: a Pydantic class can't express
+   the parent-child enum scoping we need on work_highlights_by_id.
+3. Claude's token sampling is **constrained at generation time** to match the
+   schema. Cross-parent highlight ID emission, unknown work/project IDs,
+   duplicate work IDs, and missing work rankings all become
+   decode-time-impossible. Non-verbatim skill keywords and unknown skill
+   group identity are NOT decode-time-blocked under Option E; the client
+   adapter filters both (unknown keywords logged at WARN, ambiguous
+   first-match attribution logged at INFO) and `validate_curation_ids`
+   runs as defense-in-depth.
+4. The grammar guarantees the response is schema-valid JSON. The client extracts
+   the text from `message.content[0].text` (`parsed_output` is None when a raw
+   dict schema is used) and converts the wire shape (object-keyed work
+   highlights + flat keyword array) to the domain shape
+   (`list[WorkHighlightRanking]`, `list[SkillRanking]`) via the adapter
+   in `client._adapt_curation_dict`.
+5. `ResumeCuration.model_validate()` runs as the final post-parse check, plus
+   `validate_curation_ids` as defense-in-depth against grammar/adapter
+   regressions and as primary defense on the static path.
 
 ```python
+schema = build_curation_schema(portfolio, with_cover_letter=with_cover_letter)
+output_config = {"format": {"type": "json_schema", "schema": schema}}
+if effort is not None:
+    output_config["effort"] = effort
 with client.messages.stream(
-    model="claude-sonnet-4-6-20260217",
+    model="claude-sonnet-4-6",
     max_tokens=4096,
     system=[...],
     messages=[...],
-    output_format=ResumeCuration,
+    output_config=output_config,
 ) as stream:
     response = stream.get_final_message()
-curation: ResumeCuration = response.parsed_output
+parsed = json.loads(response.content[0].text)
+curation, cover_letter = _adapt_curation_dict(parsed, portfolio, ...)
 ```
 
-**Parameter migration:** `output_format` is moving to `output_config.format`. Both work
-during the transition period. We use `output_format` for now (simpler, SDK handles it).
-The `effort` parameter is passed via `output_config={"effort": value}` alongside
-`output_format` — the SDK merges them internally.
+**Effort tuning:** `effort` is passed via `output_config={"effort": value}`
+alongside the schema. Both keys live in the same `output_config` dict; the SDK
+sends them together.
 
 ### Prompt Architecture
 
@@ -1017,10 +1201,11 @@ warnings without rejecting.
    highlight-ID and skill-keyword soft-drops are deliberately recoverable: a single
    hallucinated child ID does not abort a paid call; the renderer sees only the
    validated set. The highlight-ID soft-drop was added 2026-05-12 after two paid
-   calls in 24 hours hit the cross-entry attribution failure (`pf-*` highlights
-   leaking into `aws-cloud-support-engineer`) and were lost to hard-fail.
-   Currently no semantic-retry path; see `TODO.md` `## Curation Reliability` for
-   the retry-with-feedback architecture deferred to a follow-up PR.
+   calls in 24 hours hit the cross-entry attribution failure (a highlight ID
+   emitted under a different parent work entry) and were lost to hard-fail.
+   As of 2026-05-13 the schema-level fix makes the originating failure
+   grammar-unreachable on the API path; the soft-drop remains as
+   defense-in-depth.
 
 Note: work entry and highlight ordering is NOT a Pydantic or prompt-level contract.
 The renderer sorts work entries reverse chronologically (`_sort_work_chronologically`
@@ -1249,4 +1434,4 @@ centralization for contributor visibility.
 | 2026-04-30 | Disable Typst auto-hyphenation in resume + cover-letter templates; extend invisible-character validator | **Templates**: `hyphenate: false` in both `cover_letter.typ` and `curated.typ` `#set text(...)` blocks. Typst's auto-hyphenation wraps each line-break hyphen in a `/ActualText <FEFF00AD>` marked-content section, so PDF copy operations emit U+00AD (SOFT HYPHEN) instead of U+002D. Web-form fonts that lack a U+00AD glyph render the codepoint as `.notdef` boxes. Reproduced in `profiles/2026-04-30-<redacted-vendor>/cover_letter.pdf`: 8 line breaks, 8 matching markers, all visible as boxes when pasted into a job-application form. Disabling hyphenation keeps the rendered text, accessibility tags, and clipboard text consistent (no soft hyphens at any layer). The resume template carried the same flag latently; flipped symmetrically. **Trade-off**: `curated.typ` retains `justify: true`, so disabling hyphenation may produce slightly larger inter-word gaps on lines with long unbreakable tokens. Documented inline; do NOT "fix" by re-enabling. **Validator hardening**: `_CONTROL_CHAR_RE` extended from C0+DEL to also reject U+00AD, U+200B-U+200F (zero-width spaces, ZWNJ, ZWJ, LRM, RLM), and U+FEFF (BOM); applies to all three `_CONTROL_CHAR_RE` call sites in `models.py` (`ResumeCuration._no_control_chars` for `summary`/`suggested_label`, `CoverLetterCuration._no_control_chars` for `salutation`/`opening`/`closing`/`sign_off`, `CoverLetterCuration._paragraphs_no_control_chars` for `body_paragraphs`). Closes the bypass on AI-curated output and on the cover-letter portfolio file (which reuses `CoverLetterCuration` as both API-output and portfolio-input model). The broader portfolio-side text fields (`Basics`, `WorkEntry.highlights[].text`, `SkillEntry.keywords`, `ProjectEntry`, etc.) are **not** covered by this regex; portfolio-wide validator extension is tracked as `[AR-1]` in `TODO.md`. **Tests**: structural unit test (`TestTemplateTypography`, parametrized over both templates, font-independent, strips Typst `//` and `/* ... */` comments before the assertion) plus integration negative+positive control (`TestCoverLetterSoftHyphenRegression`, gated on `TYPST_AVAILABLE`, uses pypdf for filter-aware stream walking; positive control patches `hyphenate: true` back into a copied template and asserts the literal `FEFF00AD` byte sequence is present, proving the assertion harness fires on the bad input). Validator hardening is exercised by `test_invisible_chars_in_summary_rejected` (7 codepoints x ResumeCuration.summary), `test_invisible_chars_in_scalar_field_rejected` (9 codepoints x 4 cover-letter scalar fields), and `test_invisible_chars_in_body_paragraph_rejected` (9 codepoints x body_paragraphs). +56 new collected tests; 1314 total passing |
 | 2026-05-10 | Trim cascade rebalance with graduated per-position floors + cover-letter target tightening | **Cascade rewrite to fix the 11/4/0/0/0 ghost-row outcome.** A real-world run on 2026-05-10 (5-entry portfolio under `--pages 2`) produced 11 highlights on the top role and 0 on each of the three older roles, which rendered as title-only "ghost rows" while the top role saturated page 1. Tracing showed the prior cascade had a **cliff**: tiers 6/7 drained positions 2..N-1 to *zero* before tiers 8/9 even started trimming positions 0/1 toward their soft floor. The single `recent_role_soft_floor: int` (4 on 2-page) protected only the top two positions; everything older went to 0. **Replaces single int with `work_position_floors: tuple[int, ...]`** indexed by reverse-chronological position. New `_caps_for_pages` profiles: `(3, 3, 0, 0, 0)` on 1-page (preserves ghost-row policy on 1-page where page space is too constrained for non-zero older floors), `(8, 6, 6, 2, 2)` on 2-page (graduated so older roles always render content), `(10, 8, 8, 4, 4)` on 3+-page. Positions beyond tuple length fall through to the last value. **Cascade collapses tiers 6-9 into a single tier 6** (per-position floor, bottom-up scan, fall-through) and **merges tiers 11-12 into a single tier 8** generalized over all positions (oldest-first scan with `below_floor=True`). Total cascade tier count 12 → 8. The bottom-up scan preserves the prior "protect recent content" intent: older roles drain toward their floor first; the top role only loses content once everyone else is at floor. **Eval/renderer source-of-truth coupling**: `EvalBands` gains `work_position_floors` populated from `_caps_for_pages(max_pages).work_position_floors`. Drops `EvalBands.primary_role_highlight_target` and `EvalBands.position_2plus_max_highlights`; both replaced. `eval/selection.py:highlight_counts` derives per-position bands as `(floor, floor + _HIGHLIGHT_BAND_HEADROOM)` (asymmetric: lo = floor since the cascade lands AT floor; hi = floor + 2 for unprovoked under-trims). The cross-module invariant test (`test_eval_target_at_least_renderer_floor`) becomes structurally redundant and is replaced with `test_eval_bands_share_caps_floors` pinning the shared identity. **Pre-emptive band widening**: `LONG_FORM_BANDS.total_highlight_count_pass` 15-28 → 20-38 PASS / 11-35 → 15-45 WARN to accommodate the new floor sum (5-entry minimum 24 highlights). All 28 long-form goldens passed unchanged after the widening. **Per-position monotonicity** in `test_caps_monotonic` redefined to iterate to `max(len(prev), len(cur))` and fall through to the last value, pinning the contract against future tuple-length divergence. **`_PageCaps` validation** (`__post_init__`): rejects empty tuple, negative floors, negative cert floor; new `floor_for_position(i)` helper wraps the fall-through logic. **Module extraction**: `_PageCaps` and `_caps_for_pages` moved from `renderer.py` to a new `src/curator/page_caps.py` import-leaf module so `eval/report.py` can consume them without a circular import. `renderer.py` re-exports for back-compat. **Cover-letter target** lowered (`COVER_LETTER_WORD_TARGET 275 → 265`). Body band prose tightened in three places (`80-90 → 80-87` in length-budget table, per-field structure text, final-pass checklist) so achievable upper bound becomes `65 + 2*87 + 45 = 284`, comfortably under the 300 hard cap. Validator `COVER_LETTER_PARAGRAPH_WORD_MAX=90` unchanged; mirrors the summary's prompt-vs-validator slack pattern. Recent runs landed 290-320 with ~26% over the cap; the conservative target shift alone was unlikely to move the long tail materially per prompt-reviewer CRIT-1, so the body-band tightening is the load-bearing fix. **`PROMPT_VERSION` NOT bumped**: `_SYSTEM_PROMPT_TEXT` is byte-identical so off-path runs (no `--cover-letter`) still hit the same prompt cache. `PROMPT_HASH` (covers `_SYSTEM_PROMPT_TEXT + _COVER_LETTER_PROMPT_BLOCK`) auto-rotates and is the truth-source for cover-letter content drift. Comment block at `prompt.py:53-62` clarified to document the new version-vs-hash semantics. **Cache impact**: off-path warm; on-path one-time cache write on next paid `--cover-letter` run. Documented as known cost. **2-vs-3+ asymmetry**: renderer now scales `(8,6,6,2,2)` vs `(10,8,8,4,4)` while eval still treats both as `LONG_FORM_BANDS` (= caps(2)). Tracked as the `EXEC_FORM_BANDS` deferred work in TODO.md. **Tests**: 1427 passing (was 1382); 13 new in `TestPageCapsValidation`, `TestCascadeDefaultFloors`, `TestPerPositionFloorEdgeCases`, `TestCascadeCliffRegression`. New `tests/unit/test_rules.py` pins `COVER_LETTER_WORD_TARGET == 265` so future drift requires deliberate test rotation. **Why** bottom-up scan in tier 6 (rather than top-down): preserves the prior "older first" trim intent; final convergence is identical, only iteration shape differs. **Why** `EvalBands` derives from `_PageCaps` rather than maintaining parallel ceilings: removes the entire drift class identified in pre-PR review (architecture-reviewer C3, I1; test-engineer item 12). **Why** `PROMPT_VERSION` stays at `"2026-05-09"`: bumping for a cover-letter-only edit would mislead off-path log readers whose effective prompt is byte-identical (prompt-reviewer IMP-1). |
 | 2026-04-28 | Resume layout tweaks: tighter summary, "Fully Remote" header, single-line education; rules.py-driven discipline; prompt_hash audit-log wiring | **Layout**: summary word band tightened (`SUMMARY_WORD_TARGET_MAX 75 -> 65`, `SUMMARY_WORD_HARD_MAX 80 -> 70`; output regularly landed at 70-80 and pushed work content below the fold). Header gained an explicit "Fully Remote" marker on the contact line (cheap insurance against ATS/recruiter filters that look for an explicit remote signal). Education compressed from a three-line render (degree+area / institution+date-range / 9pt honors line) to a single-line layout `B.S. Computer Science, minor in Cyber Security · University of Mary Washington · 2018 · Summa Cum Laude` via two new Typst helpers `abbreviate-degree` (exact-match degree-title abbreviation, falls through verbatim) and `year-of` (year-only date extractor with 4-digit-prefix validation). GPA still intentionally omitted per §4.8. **Rules-driven discipline**: `eval/selection.py:summary_word_count_in_range` migrated from hardcoded `50 <= n <= 80` literals to the `SUMMARY_WORD_*` constants (the threshold change had broken the parity with `eval/content.py:summary_word_count`, producing contradictory FAIL/PASS for 71-75 word summaries within a single eval report). `models.py` `ResumeCuration.summary` description string now interpolates the constants instead of hardcoding "50-65"/"70". New module-load `assert SUMMARY_WORD_WARN_MIN <= ... <= SUMMARY_WORD_WARN_MAX` monotonicity guard mirroring the `COVER_LETTER_WORD_TARGET` guard at rules.py:596. **Audit log**: `prompt_hash` (already-defined `sha256[:12]` of `_SYSTEM_PROMPT_TEXT + _COVER_LETTER_PROMPT_BLOCK` constant in `prompt.py`) now actually emitted into `curation_log.json` via `renderer.py` log_data dict. Mirrors the existing judge-side pattern (`judge_version` + `judge_prompt_hash` at `eval/judge.py:212`); resolves the same-day-prompt-edit forensic-collision concern raised in pre-PR review (today's `PROMPT_VERSION="2026-04-28"` was already bumped earlier in the day from a separate edit, so version alone could not distinguish the two prompt snapshots). **Prompt clarity**: `render_summary_length_guidance_for_prompt` now renders "50-65 words soft target, 70 word hard maximum" so the soft/hard distinction is explicit; `_SYSTEM_PROMPT_TEXT` SHA pin updated in lockstep at `tests/unit/test_prompt.py:655`. **Defensive guards**: header literal "Fully Remote" gated behind a `_has_contact_prefix` check so a sparse-basics fixture doesn't render `· Fully Remote` with a stray leading dot; education `institution` segment guarded against schema-relaxation. **Trust-model docs**: `render-education` gained a comment block matching the header trust-model note at curated.typ:107-114, naming the education-field interpolation surface. **PROMPT_VERSION**: stays `"2026-04-28"` — date is still accurate; the new `prompt_hash` field disambiguates the two same-day snapshots in the audit log. **Tests**: 1258+ passing across the run; new `prompt_hash` presence/shape assertion in `test_renderer.py::test_curation_log_has_metadata` |
-| 2026-05-12 | Soft-drop unknown `highlight_id` in known `work_id` (Layer 3 validator) | **Motivation**: two paid Sonnet 4.6 calls wasted in 24 hours hit the same recurring failure shape — model emitted a real portfolio ID under the wrong parent work entry (`pf-aws-native-security` under `aws-cloud-support-engineer` on 2026-05-12 `msg_01HHnyiJozErDzHUPHEYMD5f`; `pf-p0-nfs-outage` under `aws-cloud-support-engineer` on 2026-05-13 `msg_0155qNaLDCGSyDdsXrkc4D99`). Both IDs are real portfolio entries under `pf-*` work entries; the model conflated `aws-*` and `pf-*-aws-*` namespaces because both mention AWS. `WorkHighlightRanking.highlight_ids: list[str]` is not per-entry-constrained at the JSON schema level, so the grammar permits cross-entry attribution; the system prompt's prose rule against it ("list ALL highlight IDs from that portfolio entry") is unenforceable at decode time. Hard-rejecting these via `CurationValidationError -> APIResponseError` aborted the run post-API-call with no PDF, no partial save, no recovery. **Change**: `validate_curation_ids` promotes unknown `highlight_id` inside a known `work_id` from hard-fail to soft-drop + WARN, mirroring the existing skill-keyword soft-drop precedent. The renderer's safety-net at `renderer._reorder_with_safety_net` (unchanged) fills omitted IDs in portfolio order, so dropping a bogus ID is a strict subset of the existing partial-list handling. The omitted-IDs WARN now uses the post-sanitize count (`len(kept_hids)`) not the raw model-emitted count, so the audit log line reflects what actually lands in the rendered output. **What stays HARD**: unknown `work_id`, duplicate `work_id`, missing rankings, unknown skill `group_id`, unknown `project_id`. Hard/soft heuristic now documented in the Layer-3 doc section: unknown PARENT IDs are HARD; unknown CHILD IDs inside a known parent are SOFT. **Replayed cleanly** against both failed runs: bogus ID dropped + warned, real AWS-entry highlights preserved, paid call salvaged. **Trade-off**: silent substitution. The model "meant" to surface the cross-entry highlight somewhere; the validator drops it from the wrong parent and the right parent's ranking never receives it. The signal (model regressed on cross-entry attribution) is reduced to a WARN log line. A future `validation_drops` audit-log entry would restore artifact-level visibility (deferred). The long-term durable fix is the dynamic per-call JSON schema with `oneOf` discriminated on `work_id` (TODO.md `## Curation Reliability > Schema-level elimination`), which would make this hallucination grammar-impossible. **No `PROMPT_VERSION` bump**: the prompt rule against cross-entry attribution stays as best-effort guidance; the change is validator-side only. **Tests**: 1432 passing; 5 new in `TestValidateCurationIds` (single-drop soft path, multi-drop consolidation, multi-entry independence, omitted-count uses sanitized list, all-bogus collapses to empty). The previously hard-fail `test_unknown_highlight_id_fails` was replaced by `test_unknown_highlight_id_in_known_work_entry_dropped_with_warn` |
+| 2026-05-12 | Soft-drop unknown `highlight_id` in known `work_id` (Layer 3 validator) | **Motivation**: two paid Sonnet 4.6 calls wasted in 24 hours hit the same recurring failure shape — model emitted a real portfolio highlight ID under a different parent work entry, conflating two work entries that shared a common technology namespace. `WorkHighlightRanking.highlight_ids: list[str]` was not per-entry-constrained at the JSON schema level, so the grammar permitted cross-entry attribution; the system prompt's prose rule against it ("list ALL highlight IDs from that portfolio entry") was unenforceable at decode time. Hard-rejecting these via `CurationValidationError -> APIResponseError` aborted the run post-API-call with no PDF, no partial save, no recovery. **Change**: `validate_curation_ids` promotes unknown `highlight_id` inside a known `work_id` from hard-fail to soft-drop + WARN, mirroring the existing skill-keyword soft-drop precedent. The renderer's safety-net at `renderer._reorder_with_safety_net` (unchanged) fills omitted IDs in portfolio order, so dropping a bogus ID is a strict subset of the existing partial-list handling. The omitted-IDs WARN now uses the post-sanitize count (`len(kept_hids)`) not the raw model-emitted count, so the audit log line reflects what actually lands in the rendered output. **What stays HARD**: unknown `work_id`, duplicate `work_id`, missing rankings, unknown skill `group_id`, unknown `project_id`. Hard/soft heuristic now documented in the Layer-3 doc section: unknown PARENT IDs are HARD; unknown CHILD IDs inside a known parent are SOFT. **Replayed cleanly** against both failed runs: bogus ID dropped + warned, the correct work entry's highlights preserved, paid call salvaged. **Trade-off**: silent substitution. The model "meant" to surface the cross-entry highlight somewhere; the validator drops it from the wrong parent and the right parent's ranking never receives it. The signal (model regressed on cross-entry attribution) is reduced to a WARN log line. A future `validation_drops` audit-log entry would restore artifact-level visibility (deferred). **2026-05-13 update**: superseded as the primary defense by the per-call dynamic JSON schema (`output_schema.build_curation_schema`) which uses an object-with-fixed-keys form (`work_highlights_by_id`) where each property's `items.enum` is scoped to that work entry's highlight IDs; cross-parent attribution is now decode-time impossible. The soft-drop behavior remains as defense-in-depth on both the API path (Anthropic-side grammar regressions) and the static path. **No `PROMPT_VERSION` bump for the soft-drop**: the prompt rule against cross-entry attribution stayed as best-effort guidance; the change was validator-side only. (`PROMPT_VERSION` did bump on 2026-05-13 alongside the schema-level fix.) **Tests**: 1432 passing at the soft-drop landing; 5 new in `TestValidateCurationIds` (single-drop soft path, multi-drop consolidation, multi-entry independence, omitted-count uses sanitized list, all-bogus collapses to empty). The previously hard-fail `test_unknown_highlight_id_fails` was replaced by `test_unknown_highlight_id_in_known_work_entry_dropped_with_warn` |

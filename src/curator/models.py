@@ -404,29 +404,53 @@ _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f­​-‏﻿]")
 
 
 class WorkHighlightRanking(BaseModel):
-    """Highlight ordering for a single work entry."""
+    """Highlight ordering for a single work entry.
+
+    Application-level domain model. The API wire shape is an object
+    keyed by portfolio work entry ID (``work_highlights_by_id`` in the
+    schema built by :func:`curator.output_schema.build_curation_schema`);
+    the client adapter converts to a list of these instances before
+    Pydantic validation. ``Field.description`` strings here are no
+    longer sent to the API (the JSON schema carries its own per-property
+    descriptions written by ``build_curation_schema``); they remain for
+    reader documentation and Pydantic ``model_validate`` error context.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     work_id: str = Field(
         description=(
-            "ID of a portfolio work entry. You MUST return one "
-            "WorkHighlightRanking per portfolio work entry; the validator "
-            "hard-rejects curations missing any portfolio work entry."
+            "ID of a portfolio work entry. On the wire, this value is "
+            "the parent property key under work_highlights_by_id."
         ),
     )
     highlight_ids: list[str] = Field(
         description=(
-            "Portfolio highlight IDs from this work entry, ordered "
-            "strongest-first for the target JD. Return ALL highlights from "
-            "the portfolio entry in ranked order; do not omit highlights. "
-            "The renderer trims from the bottom based on page fit."
+            "Portfolio highlight IDs belonging to this work entry, "
+            "ordered strongest-first for the JD. Empty list is valid: "
+            "the client adapter synthesizes one when a portfolio entry "
+            "has zero highlights and was therefore omitted from the "
+            "wire schema. The renderer trims from the bottom based on "
+            "page fit."
         ),
     )
 
 
 class SkillRanking(BaseModel):
-    """A skill group with keyword-level filtering and ordering."""
+    """A skill group with keyword-level filtering and ordering.
+
+    Application-level domain model: ``keywords`` is required non-empty (a
+    present ranking by definition has at least one keyword). The wire-shape
+    JSON schema built by :func:`curator.output_schema.build_curation_schema`
+    emits ``skills`` as a flat top-level array of keyword strings (Option E,
+    2026-05-15); the client adapter (``client._adapt_curation_dict``) walks
+    each emitted keyword back to its parent portfolio group via first-match
+    lookup and constructs ``SkillRanking`` instances ONLY for groups that
+    received at least one matched keyword. Empty-group instances therefore
+    never reach this model on the API path. Any code that constructs
+    ``SkillRanking`` directly (static path, tests) must likewise omit the
+    group rather than pass ``keywords=[]``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -531,34 +555,64 @@ def validate_curation_ids(
 ) -> ResumeCuration:
     """Verify curation IDs against the portfolio; return a sanitized copy.
 
-    Applies the same checks to both API-sourced and statically-synthesized
-    curations. Accumulates hard errors into a single message for
-    debuggability. Returns a new ``ResumeCuration`` with hallucinated
-    highlight IDs and skill keywords dropped (soft warn) so callers
-    don't silently keep invalid output.
+    Defense-in-depth on the API path; primary defense on the static path.
 
-    Work highlights: one ranking per portfolio work entry is required
-    (hard fail on missing or unknown work entries). Unknown ``highlight_id``
-    inside a known ``work_id`` is a SOFT warning: the bogus ID is dropped
-    from the returned curation, the rest of the ranking is preserved, and
-    a WARNING line names every drop. The renderer safety-net at
-    ``renderer._reorder_with_safety_net`` then fills omitted IDs in
-    portfolio order. This mirrors the skill-keyword precedent below and
-    addresses the recurring cross-entry attribution failure (the model
-    emits ``pf-*`` IDs that belong to other work entries under
-    ``aws-cloud-support-engineer``, since both namespaces mention AWS).
-    Hard-rejecting on these burned paid calls with no recoverable output;
-    soft-drop ships a usable resume in every case.
+    As of 2026-05-15 the API-path curation arrives via a partially
+    grammar-enforced structured-output schema built by
+    ``curator.output_schema.build_curation_schema``. ``items.enum`` on
+    ``work_highlights_by_id`` and ``projects``, plus ``required`` and
+    ``additionalProperties: false`` on every nested object, make the
+    following rows decode-time unreachable on the API path: unknown
+    ``work_id``, unknown ``highlight_id`` inside a known ``work_id``
+    (the cross-entry attribution failure), unknown ``project_id``,
+    duplicate ``work_id``, and missing rankings. They remain reachable
+    on the **static** path (which builds ``ResumeCuration`` directly
+    from portfolio data without grammar enforcement) and on the API
+    path only if Anthropic's grammar compiler regresses.
 
-    Skills: unknown group IDs are still a hard failure (model invented a
-    section that doesn't exist). Non-verbatim keywords inside a known
-    group are a SOFT warning: the bogus keyword is dropped from the
-    returned curation, the rest of the group is preserved, and a
-    WARNING line names every drop. This was the right trade after
-    repeated runs where the model emitted JD-listed AWS services
-    (e.g., RDS, Route53) under ``cloud-aws`` despite the verbatim-only
-    rule; hard-rejecting on hallucinated keywords burned paid calls
-    without producing a usable resume on the next attempt.
+    Skill keywords are NOT decode-time-enforced on either path: the
+    354-string production enum surface across 22 groups exceeded
+    Anthropic's compiled-grammar budget (HTTP 400 "compiled grammar
+    is too large" on 2026-05-13), and the 27-property required-strict
+    object that replaced it on 2026-05-13 (Option A) hit the same 400
+    on 2026-05-14. The 2026-05-14 Haiku probe sequence localized the
+    binding axis to inner-property count; the wire shape collapsed to
+    a flat top-level ``skills`` array (Option E, shipped 2026-05-15). The client adapter
+    walks each emitted keyword back to its parent portfolio group
+    (first-match by portfolio order) and drops unknown keywords with
+    a WARN log; the soft-drop below runs as defense-in-depth on the
+    API path and as primary defense on the static path.
+
+    Soft-drop behavior (primary defense on the static path; on the
+    API path, the adapter has already filtered before this validator
+    runs):
+
+    - Unknown ``highlight_id`` inside a known ``work_id`` is a SOFT
+      warning: the bogus ID is dropped, the rest of the ranking is
+      preserved, a WARNING line names every drop. The renderer
+      safety-net at ``renderer._reorder_with_safety_net`` fills
+      omitted IDs in portfolio order.
+    - Non-verbatim keywords inside a known ``skill_group_id`` are a
+      SOFT warning: the bogus keyword is dropped, the rest of the
+      group is preserved, a WARNING line names every drop.
+
+    Hard failures (still raise ``CurationValidationError``):
+
+    - Unknown ``work_id``: model invented a work entry that does not
+      exist. (Grammar-unreachable on the API path, possible on static.)
+    - Duplicate ``work_id`` across rankings: same entry returned more
+      than once. (Grammar-unreachable; an object schema cannot have
+      duplicate keys.)
+    - Missing ranking for a portfolio work entry. (Grammar-unreachable;
+      the client adapter synthesizes empty rankings for entries the
+      schema omitted, which keeps this invariant satisfied.)
+    - Unknown ``skill_group_id``. (Reachable only on the static path
+      under Option E; the API-path adapter only emits looked-up group
+      IDs.)
+    - Unknown ``project_id``. (Grammar-unreachable on API path when the
+      portfolio has at least one project. Edge: an empty portfolio
+      projects list disables the enum constraint, so this row remains
+      reachable on the API path in that one degenerate case.)
 
     Projects: unknown IDs are hard failures; empty list is valid.
 
@@ -639,6 +693,16 @@ def validate_curation_ids(
         errors.append(f"missing ranking for work entries: {sorted(missing_work_ids)}")
 
     # --- skills: unknown group IDs are hard; hallucinated keywords are soft ---
+    # Under Option E (2026-05-15) the API-path adapter only emits
+    # skill_ids it just looked up from portfolio.skills and only emits
+    # keywords that match portfolio entries verbatim; both branches below
+    # are therefore unreachable on the normal API path. They remain live
+    # on the static path (synthesize_curation builds SkillRanking from
+    # portfolio.skills directly without going through the adapter) and
+    # serve as a tripwire against a future API-path code regression that
+    # bypasses the adapter's filtering. They do NOT catch a runtime
+    # bypass of the adapter (such code path wouldn't call this validator
+    # either) so the API-path "defense-in-depth" framing is narrow.
 
     valid_skill_ids = {s.id: set(s.keywords) for s in portfolio.skills}
     sanitized_skills: list[SkillRanking] = []

@@ -8,6 +8,7 @@ for cost tracking.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path  # noqa: TC003
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 import anthropic
 import httpx
 from loguru import logger
+from pydantic import ValidationError
 
 from curator.exceptions import (
     APIAuthError,
@@ -30,10 +32,10 @@ from curator.models import (
     CoverLetterCuration,
     PortfolioData,
     ResumeCuration,
-    ResumeCurationWithCoverLetter,
     validate_cover_letter,
     validate_curation_ids,
 )
+from curator.output_schema import build_curation_schema
 from curator.prompt import build_system_prompt, build_user_message
 from curator.rules import COVER_LETTER_MAX_TOKENS_HEADROOM
 
@@ -95,6 +97,227 @@ def _validate_curation_ids(
         return validate_curation_ids(curation, portfolio)
     except CurationValidationError as e:
         raise APIResponseError(str(e)) from e
+
+
+def _extract_curation_dict(message: anthropic.types.Message) -> dict[str, Any]:
+    """Pull and parse the JSON object from a structured-output response.
+
+    When the structured-output call uses a raw-dict schema (rather than a
+    Pydantic class), ``message.parsed_output`` is None and the JSON sits
+    in the first text block of ``message.content``. The grammar
+    guarantees the text is schema-valid JSON; this function raises
+    :class:`APIResponseError` if extraction or parsing fails (e.g.,
+    truncation mid-object, no text block at all).
+    """
+    if not message.content:
+        msg = (
+            f"No content in API response (stop_reason={message.stop_reason}, "
+            f"request_id={message.id})"
+        )
+        raise APIResponseError(msg)
+    text_blocks = [
+        b for b in message.content if isinstance(b, anthropic.types.TextBlock)
+    ]
+    if not text_blocks:
+        msg = (
+            f"No text block in API response content "
+            f"(stop_reason={message.stop_reason}, request_id={message.id})"
+        )
+        raise APIResponseError(msg)
+    # Concatenate all text blocks in order. With `effort` enabled or future
+    # SDK changes, the structured JSON could split across multiple text
+    # blocks (or trail a reasoning block); reading only `text_blocks[0]`
+    # would silently truncate the response.
+    raw = "".join(b.text for b in text_blocks)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        msg = (
+            f"API response is not valid JSON "
+            f"(stop_reason={message.stop_reason}, request_id={message.id}): "
+            f"{exc}"
+        )
+        raise APIResponseError(msg) from exc
+    if not isinstance(parsed, dict):
+        msg = (
+            f"API response JSON is not an object "
+            f"(got {type(parsed).__name__}, request_id={message.id})"
+        )
+        raise APIResponseError(msg)
+    return parsed
+
+
+def _adapt_curation_dict(
+    parsed: dict[str, Any],
+    portfolio: PortfolioData,
+    *,
+    with_cover_letter: bool,
+    request_id: str,
+) -> tuple[ResumeCuration, CoverLetterCuration | None]:
+    """Convert the wire dict to ``ResumeCuration`` (+ optional cover letter).
+
+    The wire schema encodes ``work_highlights_by_id`` as an object keyed
+    by portfolio work entry IDs (for grammar enforcement of cross-parent
+    highlight attribution) and ``skills`` as a flat top-level array of
+    keyword strings. The domain model uses
+    ``list[WorkHighlightRanking]`` and ``list[SkillRanking]``. This
+    adapter converts shapes:
+
+    - Work entries omitted from the schema (zero-highlight portfolios)
+      are synthesized as empty ``WorkHighlightRanking`` instances so
+      the validator's "every portfolio entry has a ranking" invariant
+      continues to hold.
+    - Each emitted ``skills`` keyword is walked back to its parent
+      portfolio group via a precomputed first-match lookup
+      (``portfolio.skills`` iteration order). Within-group order
+      preserves model emit order; duplicates within a group are
+      de-duped. Unknown keywords (not present in any portfolio group)
+      are dropped with one WARN log per call. Keywords that exist in
+      multiple portfolio groups are attributed to the first one (the
+      prompt instructs the model to emit each keyword once); the
+      adapter logs one INFO per call listing every such tie-break
+      decision so the signal isn't lost.
+    - JSON validation failures surface as :class:`APIResponseError` with
+      the request_id and a brief shape description for debuggability.
+
+    See ``docs/architecture.md`` "Dynamic schema construction (API
+    path)" for why ``skills`` is flat rather than object-keyed (the
+    27-property required-strict object exceeded Anthropic's
+    compiled-grammar budget on 2026-05-13).
+    """
+    if with_cover_letter:
+        resume_dict = parsed.get("resume")
+        cover_letter_dict = parsed.get("cover_letter")
+        if not isinstance(resume_dict, dict) or not isinstance(cover_letter_dict, dict):
+            msg = (
+                f"Expected resume + cover_letter objects in response "
+                f"(request_id={request_id})"
+            )
+            raise APIResponseError(msg)
+    else:
+        resume_dict = parsed
+        cover_letter_dict = None
+
+    # Resume: convert object-keyed work_highlights and flat skills array
+    # into domain-shape ranking lists.
+    raw_work = resume_dict.get("work_highlights_by_id", {})
+    raw_skills = resume_dict.get("skills", [])
+    if not isinstance(raw_work, dict):
+        msg = (
+            f"work_highlights_by_id must be an object in API response "
+            f"(request_id={request_id})"
+        )
+        raise APIResponseError(msg)
+    if not isinstance(raw_skills, list):
+        msg = f"skills must be an array in API response (request_id={request_id})"
+        raise APIResponseError(msg)
+
+    work_highlights: list[dict[str, Any]] = [
+        {"work_id": wid, "highlight_ids": hids} for wid, hids in raw_work.items()
+    ]
+    # Synthesize empty rankings for portfolio entries the schema omitted
+    # (zero-highlight entries cannot be encoded as an empty enum).
+    present_work_ids = {wh["work_id"] for wh in work_highlights}
+    work_highlights.extend(
+        {"work_id": w.id, "highlight_ids": []}
+        for w in portfolio.work
+        if w.id not in present_work_ids
+    )
+
+    # Skills: walk each flat keyword back to its parent portfolio group.
+    # Precompute two lookups in one pass:
+    #   keyword_to_group: first-match attribution (portfolio order)
+    #   keyword_to_all_groups: every group containing the keyword
+    #     (drives the ambiguous-attribution INFO log below)
+    keyword_to_group: dict[str, str] = {}
+    keyword_to_all_groups: dict[str, list[str]] = {}
+    for group in portfolio.skills:
+        for kw in group.keywords:
+            keyword_to_group.setdefault(kw, group.id)
+            keyword_to_all_groups.setdefault(kw, []).append(group.id)
+
+    group_keywords: dict[str, list[str]] = {}  # insertion-ordered
+    unknown_keywords: list[str] = []
+    ambiguous_attributions: list[tuple[str, str, list[str]]] = []
+    seen_ambiguous: set[str] = set()  # dedupe INFO log when a keyword repeats
+    for kw in raw_skills:
+        # Defense-in-depth: the schema declares ``items: {"type": "string"}``
+        # so a non-string emission would already be a grammar regression,
+        # but ``dict.get(unhashable)`` would raise ``TypeError`` that
+        # escapes the project's ``APIResponseError`` convention. Coerce
+        # to str via ``repr`` and route through the unknown-keyword path
+        # so the operator sees what the model produced.
+        if not isinstance(kw, str):
+            unknown_keywords.append(repr(kw))
+            continue
+        gid = keyword_to_group.get(kw)
+        if gid is None:
+            unknown_keywords.append(kw)
+            continue
+        bucket = group_keywords.setdefault(gid, [])
+        if kw not in bucket:  # in-group dedupe
+            bucket.append(kw)
+        all_groups = keyword_to_all_groups[kw]
+        if len(all_groups) > 1 and kw not in seen_ambiguous:
+            seen_ambiguous.add(kw)
+            alternatives = [g for g in all_groups if g != gid]
+            ambiguous_attributions.append((kw, gid, alternatives))
+
+    # NOTE: request_id is interpolated into the format string here for
+    # consistency with the rest of curator.client. The architecture-review
+    # 2026-05-15 suggested `logger.bind(request_id=...).info(...)` for
+    # structured logging, but no other call site in this module uses
+    # bind(); moving them all in lockstep is a follow-up worth its own
+    # commit. See TODO.md.
+    if unknown_keywords:
+        logger.warning(
+            "Adapter dropped {} keyword(s) not in any portfolio skill "
+            "group: {} (request_id={})",
+            len(unknown_keywords),
+            unknown_keywords,
+            request_id,
+        )
+    if ambiguous_attributions:
+        logger.info(
+            "Adapter resolved {} ambiguous keyword attribution(s) via "
+            "first-match by portfolio order: {} (request_id={})",
+            len(ambiguous_attributions),
+            ambiguous_attributions,
+            request_id,
+        )
+    skills: list[dict[str, Any]] = [
+        {"skill_id": gid, "keywords": kws} for gid, kws in group_keywords.items()
+    ]
+
+    resume_payload = {
+        "summary": resume_dict.get("summary"),
+        "suggested_label": resume_dict.get("suggested_label"),
+        "company_slug": resume_dict.get("company_slug"),
+        "work_highlights": work_highlights,
+        "skills": skills,
+        "projects": resume_dict.get("projects", []),
+    }
+    try:
+        curation = ResumeCuration.model_validate(resume_payload)
+    except ValidationError as exc:
+        msg = (
+            f"API response failed ResumeCuration validation "
+            f"(request_id={request_id}): {exc}"
+        )
+        raise APIResponseError(msg) from exc
+
+    cover_letter: CoverLetterCuration | None = None
+    if cover_letter_dict is not None:
+        try:
+            cover_letter = CoverLetterCuration.model_validate(cover_letter_dict)
+        except ValidationError as exc:
+            msg = (
+                f"API response failed CoverLetterCuration validation "
+                f"(request_id={request_id}): {exc}"
+            )
+            raise APIResponseError(msg) from exc
+
+    return curation, cover_letter
 
 
 def _persist_partial_resume(
@@ -210,11 +433,11 @@ class CuratorClient:
         structured output, validates the response, and returns a
         ``CurationResult`` with the curation and usage metadata.
 
-        When ``with_cover_letter`` is True, the output schema is
-        :class:`ResumeCurationWithCoverLetter` and the system prompt gains
-        a cover-letter rulebook block. The call itself remains a single
-        ``messages.stream(...)`` invocation; there is never a second paid
-        call.
+        When ``with_cover_letter`` is True, ``build_curation_schema`` wraps
+        the resume schema with a sibling ``cover_letter`` property and the
+        system prompt gains a cover-letter rulebook block. The call itself
+        remains a single ``messages.stream(...)`` invocation; there is never
+        a second paid call.
 
         Args:
             portfolio: Validated portfolio data from the loader.
@@ -250,19 +473,24 @@ class CuratorClient:
             COVER_LETTER_MAX_TOKENS_HEADROOM if with_cover_letter else 0
         )
 
-        # 3. Build API kwargs (effort only when explicitly set).
-        output_schema: type[ResumeCuration] | type[ResumeCurationWithCoverLetter] = (
-            ResumeCurationWithCoverLetter if with_cover_letter else ResumeCuration
-        )
+        # 3. Build the per-call JSON schema from portfolio data. Object-
+        # with-fixed-keys shape: each work entry / skill group gets its
+        # own property whose value carries items.enum scoped to that
+        # parent's children. The grammar then makes cross-parent ID
+        # emission decode-time impossible (verified 2026-05-13).
+        schema = build_curation_schema(portfolio, with_cover_letter=with_cover_letter)
+        output_config: dict[str, Any] = {
+            "format": {"type": "json_schema", "schema": schema},
+        }
+        if self._effort is not None:
+            output_config["effort"] = self._effort
         kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": effective_max_tokens,
-            "output_format": output_schema,
+            "output_config": output_config,
             "system": system,
             "messages": messages,
         }
-        if self._effort is not None:
-            kwargs["output_config"] = {"effort": self._effort}
 
         # Log input sizes and request config.
         prompt_chars = sum(len(b["text"]) for b in system)
@@ -293,19 +521,17 @@ class CuratorClient:
                 raise APIRefusalError(msg)
             if message.stop_reason == "max_tokens":
                 # When cover letter is on, bundled responses are larger and
-                # truncation is more likely. If the structured-output parser
-                # still produced a valid object (JSON closed cleanly), log a
-                # WARNING and continue rather than raising, so the user gets
-                # a usable result without re-paying for a retry. Downstream
-                # validator failures will surface this via the truncation
-                # hint appended to the error message.
-                if with_cover_letter and message.parsed_output is not None:
+                # truncation is more likely. If the JSON closed cleanly
+                # before max_tokens hit, log a WARNING and continue rather
+                # than raising, so the user gets a usable result without
+                # re-paying for a retry. JSON parse failure below converts
+                # the soft path back to a hard raise via APIResponseError.
+                if with_cover_letter:
                     was_truncated = True
                     logger.warning(
-                        "Response truncated at max_tokens={} (request_id={}) "
-                        "but parsed_output is present; returning partial "
-                        "result. Do not retry; increase CURATOR_MAX_TOKENS "
-                        "if this recurs.",
+                        "Response truncated at max_tokens={} (request_id={}); "
+                        "attempting to parse partial result. Do not retry; "
+                        "increase CURATOR_MAX_TOKENS if this recurs.",
                         effective_max_tokens,
                         message.id,
                     )
@@ -317,32 +543,30 @@ class CuratorClient:
                     )
                     raise APIResponseError(msg)
 
-            # 6. Extract parsed output, splitting on schema shape.
-            parsed = message.parsed_output
-            if parsed is None:
-                msg = (
-                    "No structured output in API response "
-                    f"(stop_reason={message.stop_reason})"
-                )
-                raise APIResponseError(msg)
-
-            cover_letter: CoverLetterCuration | None = None
-            if with_cover_letter:
-                if not isinstance(parsed, ResumeCurationWithCoverLetter):
+            # 6. Extract the JSON object from the response and adapt the
+            # wire shape (object-keyed) to the domain shape (list-of-
+            # rankings) so existing validators and downstream code
+            # continue to work unchanged.
+            try:
+                parsed_dict = _extract_curation_dict(message)
+            except APIResponseError as exc:
+                if was_truncated:
+                    # Add the truncation hint so the user can act on it.
                     msg = (
-                        "Expected ResumeCurationWithCoverLetter from API, "
-                        f"got {type(parsed).__name__}"
+                        f"Response truncated at max_tokens="
+                        f"{effective_max_tokens} and the partial JSON is "
+                        f"unparseable. Increase CURATOR_MAX_TOKENS "
+                        f"(current: {self._max_tokens}) and retry "
+                        f"(request_id={message.id}): {exc}"
                     )
-                    raise APIResponseError(msg)
-                curation = parsed.resume
-                cover_letter = parsed.cover_letter
-            else:
-                if not isinstance(parsed, ResumeCuration):
-                    msg = (
-                        f"Expected ResumeCuration from API, got {type(parsed).__name__}"
-                    )
-                    raise APIResponseError(msg)
-                curation = parsed
+                    raise APIResponseError(msg) from exc
+                raise
+            curation, cover_letter = _adapt_curation_dict(
+                parsed_dict,
+                portfolio,
+                with_cover_letter=with_cover_letter,
+                request_id=message.id,
+            )
 
             # 7. Application-level ID validation (Layer 3) for the resume.
             # Returns a sanitized curation with hallucinated keywords

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import FrozenInstanceError, replace
 from typing import Any
@@ -22,9 +23,51 @@ from curator.exceptions import (
     APISpendGuardError,
 )
 from curator.models import (
+    CoverLetterCuration,
     PortfolioData,
     ResumeCuration,
+    ResumeCurationWithCoverLetter,
 )
+
+
+def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
+    """Convert a Pydantic curation (or wrapper) to the wire-shape dict.
+
+    The wire schema keys highlights by parent work_id (for grammar-time
+    cross-parent attribution enforcement) and emits skills as a flat
+    top-level array of keyword strings (Option E, 2026-05-14: the
+    object-keyed-by-skill-group shape exceeded Anthropic's
+    compiled-grammar budget; see ``docs/architecture.md`` "Dynamic
+    schema construction (API path)"). Production code at
+    ``client._adapt_curation_dict`` walks each flat keyword back to its
+    parent portfolio group, so this helper must flatten in the order
+    the production model would emit (group-rank-major, then
+    keyword-rank-minor) to produce realistic round-trip fixtures.
+    """
+    if isinstance(obj, ResumeCurationWithCoverLetter):
+        return {
+            "resume": _curation_to_wire_dict(obj.resume),
+            "cover_letter": obj.cover_letter.model_dump(mode="json"),
+        }
+    if isinstance(obj, ResumeCuration):
+        skills_flat: list[str] = []
+        for sr in obj.skills:
+            skills_flat.extend(sr.keywords)
+        return {
+            "summary": obj.summary,
+            "suggested_label": obj.suggested_label,
+            "company_slug": obj.company_slug,
+            "work_highlights_by_id": {
+                wh.work_id: list(wh.highlight_ids) for wh in obj.work_highlights
+            },
+            "skills": skills_flat,
+            "projects": list(obj.projects),
+        }
+    if isinstance(obj, dict):
+        return obj
+    msg = f"unsupported curation type for wire-dict conversion: {type(obj).__name__}"
+    raise TypeError(msg)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -96,14 +139,43 @@ def _make_mock_message(
     stop_reason: str = "end_turn",
     model: str = "claude-sonnet-4-6-20260217",
     usage: MagicMock | None = None,
+    raw_text: str | None = None,
+    include_text_block: bool = True,
 ) -> MagicMock:
-    """Build a mock ParsedMessage with controllable attributes."""
+    """Build a mock Message with controllable attributes.
+
+    The client extracts the JSON from ``message.content[0].text`` (the
+    raw-dict structured-output path; ``parsed_output`` stays None when
+    the schema is a dict rather than a Pydantic class). This helper
+    serializes the curation to wire-shape JSON and stuffs it into a
+    text content block.
+
+    Args:
+        curation: A ``ResumeCuration``, ``ResumeCurationWithCoverLetter``,
+            or dict to serialize. ``None`` produces no text content.
+        raw_text: Override the serialized JSON entirely (used to test
+            JSON parse failures, wrong types, etc.).
+        include_text_block: When False, the message has no text blocks
+            (used to test the "no text in response" path).
+    """
     message = MagicMock()
-    message.parsed_output = curation
+    message.parsed_output = None
     message.stop_reason = stop_reason
     message.model = model
     message.id = "msg_test_123"
     message.usage = usage or _make_mock_usage()
+    if not include_text_block or (curation is None and raw_text is None):
+        message.content = []
+    else:
+        text = (
+            raw_text
+            if raw_text is not None
+            else json.dumps(_curation_to_wire_dict(curation))
+        )
+        text_block = MagicMock(spec=anthropic.types.TextBlock)
+        text_block.type = "text"
+        text_block.text = text
+        message.content = [text_block]
     return message
 
 
@@ -259,7 +331,11 @@ class TestCurate:
         result = client.curate(portfolio_data, "Senior SRE role at Acme.")
 
         assert isinstance(result, CurationResult)
-        assert result.curation is valid_curation
+        # Equal, not identical: the curation is re-parsed from JSON in the
+        # response text block and reconstructed via model_validate. Identity
+        # held under the legacy parsed_output path but is no longer
+        # meaningful with raw-dict structured outputs.
+        assert result.curation == valid_curation
 
     def test_returns_actual_model_from_response(
         self,
@@ -298,13 +374,22 @@ class TestCurate:
         assert result.cache_creation_input_tokens == 1200
         assert result.cache_read_input_tokens == 300
 
-    def test_passes_output_format(
+    def test_passes_dynamic_schema_via_output_config(
         self,
         mocker: Any,
         mock_settings: CuratorSettings,
         portfolio_data: PortfolioData,
         valid_curation: ResumeCuration,
     ) -> None:
+        """The client injects the per-call dynamic JSON schema, not a Pydantic class.
+
+        Locks the invariant from both sides: ``output_format`` must be
+        ABSENT (no legacy Pydantic-class path), AND
+        ``output_config.format.schema`` must be PRESENT and shaped
+        like the dict from ``build_curation_schema``.
+        """
+        from curator.output_schema import build_curation_schema
+
         message = _make_mock_message(valid_curation)
         mock_anthropic = _wire_mock_stream(mocker, message)
         client = CuratorClient(mock_settings)
@@ -312,7 +397,14 @@ class TestCurate:
         client.curate(portfolio_data, "Job description.")
 
         stream_kwargs = mock_anthropic.return_value.messages.stream.call_args[1]
-        assert stream_kwargs["output_format"] is ResumeCuration
+        assert "output_format" not in stream_kwargs
+        output_config = stream_kwargs["output_config"]
+        assert output_config["format"]["type"] == "json_schema"
+        # Schema must match the one build_curation_schema produces from
+        # this portfolio (determinism is asserted in test_output_schema).
+        assert output_config["format"]["schema"] == build_curation_schema(
+            portfolio_data, with_cover_letter=False
+        )
 
     def test_effort_omitted_when_none(
         self,
@@ -329,7 +421,9 @@ class TestCurate:
         client.curate(portfolio_data, "Job description.")
 
         stream_kwargs = mock_anthropic.return_value.messages.stream.call_args[1]
-        assert "output_config" not in stream_kwargs
+        # output_config is always present (carries the schema), but
+        # effort is omitted when None.
+        assert "effort" not in stream_kwargs["output_config"]
 
     def test_effort_included_when_set(
         self,
@@ -354,7 +448,8 @@ class TestCurate:
         client.curate(portfolio_data, "Job description.")
 
         stream_kwargs = mock_anthropic.return_value.messages.stream.call_args[1]
-        assert stream_kwargs["output_config"] == {"effort": "high"}
+        assert stream_kwargs["output_config"]["effort"] == "high"
+        assert stream_kwargs["output_config"]["format"]["type"] == "json_schema"
 
     def test_calls_build_system_prompt(
         self,
@@ -443,17 +538,24 @@ class TestCurateStopReasons:
         with pytest.raises(APIResponseError, match="CURATOR_MAX_TOKENS"):
             client.curate(portfolio_data, "Job description.")
 
-    def test_end_turn_with_none_parsed_output(
+    def test_end_turn_with_no_content_raises(
         self,
         mocker: Any,
         mock_settings: CuratorSettings,
         portfolio_data: PortfolioData,
     ) -> None:
-        message = _make_mock_message(None, stop_reason="end_turn")
+        """A grammar-constrained response without any content blocks is
+        an upstream bug; surface as APIResponseError. (Replaces the
+        legacy ``test_end_turn_with_none_parsed_output`` check; with
+        raw-dict schemas, ``parsed_output`` is always None and the
+        equivalent failure is "no text content".)"""
+        message = _make_mock_message(
+            None, stop_reason="end_turn", include_text_block=False
+        )
         _wire_mock_stream(mocker, message)
         client = CuratorClient(mock_settings)
 
-        with pytest.raises(APIResponseError, match="No structured output"):
+        with pytest.raises(APIResponseError, match="No content in API response"):
             client.curate(portfolio_data, "Job description.")
 
     def test_end_turn_with_valid_output_succeeds(
@@ -468,7 +570,7 @@ class TestCurateStopReasons:
         client = CuratorClient(mock_settings)
 
         result = client.curate(portfolio_data, "Job description.")
-        assert result.curation is valid_curation
+        assert result.curation == valid_curation
 
     def test_invalid_curation_ids_raises_through_curate(
         self,
@@ -484,6 +586,491 @@ class TestCurateStopReasons:
         client = CuratorClient(mock_settings)
 
         with pytest.raises(APIResponseError, match="invalid ID"):
+            client.curate(portfolio_data, "Job description.")
+
+
+# ---------------------------------------------------------------------------
+# TestCurateGrammarSchemaAdapter
+#
+# Pins the wire-shape adapter introduced when curate() switched from
+# output_format=PydanticClass to output_config.format with a raw-dict
+# schema. Covers the unique invariants of the new path: empty
+# work-entry synthesis, empty-skill-group filtering with INFO log,
+# JSON parse failures, and shape-mismatch handling.
+# ---------------------------------------------------------------------------
+
+
+class TestCurateGrammarSchemaAdapter:
+    def test_concatenates_multiple_text_blocks(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """If the SDK / model returns the structured JSON across two text
+        blocks (or after a reasoning block), the adapter must
+        concatenate them rather than reading only block[0]. Reading
+        only the first block would silently truncate the response and
+        surface as a generic JSON parse error."""
+        full_text = json.dumps(_curation_to_wire_dict(valid_curation))
+        # Split into two halves to simulate streaming or post-thinking
+        # text emission.
+        mid = len(full_text) // 2
+        block1 = MagicMock(spec=anthropic.types.TextBlock)
+        block1.type = "text"
+        block1.text = full_text[:mid]
+        block2 = MagicMock(spec=anthropic.types.TextBlock)
+        block2.type = "text"
+        block2.text = full_text[mid:]
+        message = MagicMock()
+        message.parsed_output = None
+        message.stop_reason = "end_turn"
+        message.model = "claude-sonnet-4-6-20260217"
+        message.id = "msg_test_123"
+        message.usage = _make_mock_usage()
+        message.content = [block1, block2]
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        assert result.curation == valid_curation
+
+    def test_truncation_with_unparseable_json_surfaces_truncation_hint(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """When --cover-letter is on and stop_reason=max_tokens, the
+        client soft-warns and tries to parse the partial response. If
+        the JSON is unparseable (truncated mid-object), the error
+        message must include the truncation hint so the user knows to
+        bump CURATOR_MAX_TOKENS rather than chasing a generic parse
+        error."""
+        message = _make_mock_message(
+            raw_text='{"resume": {"summary": "incomplete',
+            stop_reason="max_tokens",
+        )
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        with pytest.raises(APIResponseError, match="truncated at max_tokens"):
+            client.curate(portfolio_data, "Job description.", with_cover_letter=True)
+
+    def test_synthesizes_empty_ranking_for_omitted_work_entry(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Work entries with zero highlights are omitted from the schema
+        (Anthropic rejects empty enums). The adapter must synthesize an
+        empty WorkHighlightRanking for each omitted entry so the
+        validator's "every portfolio work entry has a ranking"
+        invariant holds.
+        """
+        # Build a wire dict that omits one of the portfolio's work entries.
+        wire = _curation_to_wire_dict(valid_curation)
+        portfolio_work_ids = [w.id for w in portfolio_data.work]
+        # Identify a work ID present in the portfolio but emit no rankings
+        # for at least one of them in the wire response.
+        wire["work_highlights_by_id"] = {
+            wid: hids
+            for wid, hids in wire["work_highlights_by_id"].items()
+            if wid != portfolio_work_ids[0]
+        }
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # The synthesized ranking must be present with an empty list.
+        synth = next(
+            wh
+            for wh in result.curation.work_highlights
+            if wh.work_id == portfolio_work_ids[0]
+        )
+        assert synth.highlight_ids == []
+
+    def test_adapter_groups_flat_skills_by_portfolio_lookup(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Wire emits a flat ``skills`` array; the adapter reverse-looks
+        each keyword to its parent portfolio group and builds
+        ``list[SkillRanking]`` for the domain model."""
+        # Use a wire dict the production adapter sees: skills is a
+        # flat list of portfolio-verbatim keywords.
+        wire = _curation_to_wire_dict(valid_curation)
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # Every reconstructed SkillRanking references a real portfolio
+        # group, and every keyword belongs to its parent group's
+        # portfolio keyword list.
+        portfolio_keyword_to_group: dict[str, str] = {}
+        for g in portfolio_data.skills:
+            for kw in g.keywords:
+                portfolio_keyword_to_group.setdefault(kw, g.id)
+        for sr in result.curation.skills:
+            for kw in sr.keywords:
+                assert portfolio_keyword_to_group[kw] == sr.skill_id
+
+    def test_adapter_preserves_model_emit_order_for_skill_groups(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Group order in the reconstructed list = first-appearance of
+        any keyword from that group in the wire array."""
+        # The default portfolio fixture has only one skill group; extend
+        # it with a second group so we can verify cross-group ordering.
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        extended = replace(
+            portfolio_data,
+            skills=[
+                *portfolio_data.skills,
+                SkillEntry(
+                    id="extra-group",
+                    name="Extra Group",
+                    keywords=["EXTRA-KW"],
+                ),
+            ],
+        )
+        g_a = portfolio_data.skills[0].id
+        g_b = "extra-group"
+        kw_a = portfolio_data.skills[0].keywords[0]
+        kw_b = "EXTRA-KW"
+
+        wire = _curation_to_wire_dict(valid_curation)
+        # Emit b's keyword first, then a's: b should rank above a.
+        wire["skills"] = [kw_b, kw_a]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(extended, "Job description.")
+
+        emitted_group_order = [sr.skill_id for sr in result.curation.skills]
+        assert emitted_group_order == [g_b, g_a], emitted_group_order
+
+    def test_adapter_preserves_within_group_emit_order(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Within a single SkillRanking, keyword order = model emit order
+        (not portfolio order). The renderer's 'strongest first' bullet
+        ordering depends on this; the adapter docstring promises it."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        # The default portfolio fixture has only one skill group with one
+        # keyword; substitute a single multi-keyword group so we can
+        # distinguish emit order from portfolio order.
+        portfolio_kws = ["AAA", "BBB", "CCC", "DDD"]
+        extended = replace(
+            portfolio_data,
+            skills=[
+                SkillEntry(
+                    id="multi-kw-group",
+                    name="Multi-Keyword Group",
+                    keywords=portfolio_kws,
+                )
+            ],
+        )
+        # Reverse the portfolio order so we can distinguish.
+        emit_order = list(reversed(portfolio_kws))
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = emit_order
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(extended, "Job description.")
+
+        srs = [sr for sr in result.curation.skills if sr.skill_id == "multi-kw-group"]
+        assert len(srs) == 1
+        assert srs[0].keywords == emit_order, (
+            f"expected emit-order {emit_order}, got {srs[0].keywords}"
+        )
+
+    def test_adapter_logs_info_on_ambiguous_attribution(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """A keyword present in two portfolio groups is attributed to the
+        first one (portfolio order) and logged at INFO with the chosen
+        group + alternatives. The log line is the only operator signal
+        that an attribution choice was made; this test guards its format."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        # Add a second group that shares one keyword with the first.
+        shared_kw = portfolio_data.skills[0].keywords[0]
+        extended = replace(
+            portfolio_data,
+            skills=[
+                *portfolio_data.skills,
+                SkillEntry(
+                    id="other-group",
+                    name="Other Group",
+                    keywords=[shared_kw, "OTHER-EXCLUSIVE-KW"],
+                ),
+            ],
+        )
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [shared_kw]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        info_mock = mocker.patch("curator.client.logger.info")
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(extended, "Job description.")
+
+        # Attribution went to the FIRST portfolio group containing shared_kw.
+        winning_group = portfolio_data.skills[0].id
+        assert {sr.skill_id for sr in result.curation.skills} == {winning_group}
+        # Exactly one INFO log line carries the ambiguous-attribution message.
+        matching = [
+            call
+            for call in info_mock.call_args_list
+            if isinstance(call.args[0], str)
+            and "ambiguous keyword attribution" in call.args[0]
+        ]
+        assert len(matching) == 1, info_mock.call_args_list
+        # The shared keyword, winning group, and the loser group all
+        # appear somewhere in the call args.
+        flat_args = str(matching[0].args)
+        assert shared_kw in flat_args
+        assert winning_group in flat_args
+        assert "other-group" in flat_args
+
+    def test_adapter_ambiguous_attribution_logged_once_per_keyword(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """If the model emits an ambiguous keyword twice, the adapter's
+        in-group dedupe keeps it once AND the INFO log records the
+        ambiguity once. Guards against double-counting in the
+        observability path."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+
+        shared_kw = portfolio_data.skills[0].keywords[0]
+        extended = replace(
+            portfolio_data,
+            skills=[
+                *portfolio_data.skills,
+                SkillEntry(
+                    id="other-group",
+                    name="Other Group",
+                    keywords=[shared_kw],
+                ),
+            ],
+        )
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [shared_kw, shared_kw]  # emitted twice
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        info_mock = mocker.patch("curator.client.logger.info")
+        client = CuratorClient(mock_settings)
+
+        client.curate(extended, "Job description.")
+
+        matching = [
+            call
+            for call in info_mock.call_args_list
+            if isinstance(call.args[0], str)
+            and "ambiguous keyword attribution" in call.args[0]
+        ]
+        assert len(matching) == 1, info_mock.call_args_list
+        # The count in the log line argument should be 1, not 2.
+        assert matching[0].args[1] == 1, matching[0].args
+
+    def test_adapter_dedupes_keyword_repeated_in_emit_order(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """If the model emits the same keyword twice, the adapter keeps
+        only the first occurrence to prevent duplicate bullets on the
+        rendered PDF."""
+        first_group = next(g for g in portfolio_data.skills if g.keywords)
+        kw = first_group.keywords[0]
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [kw, kw]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # Exactly one SkillRanking, exactly one keyword.
+        srs = [sr for sr in result.curation.skills if sr.skill_id == first_group.id]
+        assert len(srs) == 1
+        assert srs[0].keywords == [kw]
+
+    def test_adapter_drops_unknown_keyword_with_warn(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """An emitted keyword that doesn't exist in any portfolio skill
+        group is dropped by the adapter (not the validator), and a
+        single WARN log line names every drop."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [*wire["skills"], "this-is-not-a-portfolio-keyword"]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        warn_mock = mocker.patch("curator.client.logger.warning")
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # No SkillRanking contains the unknown keyword.
+        for sr in result.curation.skills:
+            assert "this-is-not-a-portfolio-keyword" not in sr.keywords
+        # Exactly one WARN log line names the drop.
+        matching = [
+            call
+            for call in warn_mock.call_args_list
+            if isinstance(call.args[0], str)
+            and "not in any portfolio skill group" in call.args[0]
+        ]
+        assert len(matching) == 1, warn_mock.call_args_list
+        assert "this-is-not-a-portfolio-keyword" in str(matching[0].args)
+
+    def test_adapter_empty_skills_array_emits_empty_list(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """``ResumeCuration.skills`` has no min_length; an empty wire
+        ``skills`` array (model decided no group is JD-relevant) must
+        round-trip to an empty domain list, not raise."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = []
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        assert result.curation.skills == []
+
+    def test_adapter_raises_apiresponseerror_when_skills_not_list(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Wire shape must be a list; an object (legacy by-id shape) or
+        anything else surfaces as APIResponseError carrying the
+        request_id."""
+        wire = _curation_to_wire_dict(valid_curation)
+        # Legacy by-id object shape (no longer accepted under Option E).
+        wire["skills"] = {"cloud-aws": ["EKS"]}
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        with pytest.raises(APIResponseError, match="skills must be an array"):
+            client.curate(portfolio_data, "Job description.")
+
+    def test_json_parse_failure_raises_api_response_error(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """Truncated or otherwise malformed JSON in the response text
+        block surfaces as APIResponseError with the request_id."""
+        message = _make_mock_message(raw_text='{"summary": "incomplete')  # truncated
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        with pytest.raises(APIResponseError, match="not valid JSON"):
+            client.curate(portfolio_data, "Job description.")
+
+    def test_response_must_be_json_object_not_array(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """The schema mandates an object at the root; a JSON array would
+        be a grammar bug. Adapter rejects it with APIResponseError."""
+        message = _make_mock_message(raw_text="[1, 2, 3]")
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        with pytest.raises(APIResponseError, match="not an object"):
+            client.curate(portfolio_data, "Job description.")
+
+    def test_wrong_shape_for_work_highlights_raises(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """If the grammar regressed and emitted a list instead of an
+        object for work_highlights_by_id, the adapter rejects with a
+        diagnostic message rather than letting Pydantic surface a
+        confusing nested error. The skills-array type guard is covered
+        by ``test_adapter_raises_apiresponseerror_when_skills_not_list``
+        in the adapter test class."""
+        message = _make_mock_message(
+            raw_text=json.dumps(
+                {
+                    "summary": "x",
+                    "suggested_label": "y",
+                    "company_slug": "z",
+                    "work_highlights_by_id": [],  # wrong: should be object
+                    "skills": [],
+                    "projects": [],
+                }
+            )
+        )
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        with pytest.raises(
+            APIResponseError, match="work_highlights_by_id must be an object"
+        ):
             client.curate(portfolio_data, "Job description.")
 
 
@@ -1303,10 +1890,6 @@ class TestCurateLogging:
 # ---------------------------------------------------------------------------
 
 
-from curator.models import (  # noqa: E402
-    CoverLetterCuration,
-    ResumeCurationWithCoverLetter,
-)
 from curator.rules import COVER_LETTER_MAX_TOKENS_HEADROOM  # noqa: E402
 
 
@@ -1348,6 +1931,14 @@ class TestCurateSingleCallInvariant:
 
     The assertion covers stream/create/count_tokens so a future refactor
     that swaps one for another does not slip past silently.
+
+    The retry-with-feedback feature tracked in TODO.md "Curation
+    Reliability > Retry-with-feedback loop" would bump the call count
+    to 2+ when validation fails. When that lands, this class must be
+    parametrized over a retry-budget flag and the assertion adjusted
+    to ``<= 1 + retry_budget``, NOT deleted. Removing this invariant
+    would silently double the cost of every paid run on grammar
+    regression.
     """
 
     @pytest.mark.parametrize("with_cover_letter", [False, True])
@@ -1402,7 +1993,7 @@ class TestCurateWithCoverLetter:
 
         assert result.cover_letter is not None
         assert result.cover_letter.salutation == letter.salutation
-        assert result.curation is valid_curation
+        assert result.curation == valid_curation
         assert mock_anthropic.return_value.messages.stream.call_count == 1
 
     def test_omits_cover_letter_when_flag_off(

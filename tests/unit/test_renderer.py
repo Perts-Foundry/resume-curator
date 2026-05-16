@@ -459,7 +459,7 @@ class TestWriteAuditArtifacts:
         assert log_data["format_version"] == "2.3"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
-        assert log_data["prompt_version"] == "2026-05-10"
+        assert log_data["prompt_version"] == "2026-05-13"
         assert log_data["prompt_hash"] == PROMPT_HASH
         assert isinstance(log_data["prompt_hash"], str)
         assert len(log_data["prompt_hash"]) == 12

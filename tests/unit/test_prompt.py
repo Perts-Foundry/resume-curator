@@ -109,7 +109,12 @@ class TestBuildSystemPrompt:
         constraints_start = text.index("<constraints>")
         constraints_end = text.index("</constraints>")
         constraints_block = text[constraints_start:constraints_end]
-        assert "skills.keywords" in constraints_block
+        # Field renamed across schema iterations:
+        # ``skills.keywords`` (legacy dotted-path) -> ``skills_by_id``
+        # (Option A object-with-fixed-keys, 2026-05-13) ->
+        # ``skills`` (Option E flat array, 2026-05-14). The rule
+        # invariant is what matters, not the field name.
+        assert "``skills``" in constraints_block
         assert "verbatim" in constraints_block
         assert "case-sensitive" in constraints_block
 
@@ -118,9 +123,10 @@ class TestBuildSystemPrompt:
     ) -> None:
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
+        # Field section header is ``skills`` under Option E (2026-05-14)
+        # after the by-id object shape was collapsed to a flat array.
         guidance_start = text.index("``skills``:")
         guidance_block = text[guidance_start : guidance_start + 2000]
-        assert "strict subset" in guidance_block
         assert "verbatim" in guidance_block.lower() or "Verbatim" in guidance_block
 
     def test_mirror_jd_rule_excludes_skill_keywords(
@@ -132,7 +138,9 @@ class TestBuildSystemPrompt:
         strategy_block = text[strategy_start : strategy_start + 800]
         assert "summary" in strategy_block
         assert "does NOT apply to" in strategy_block
-        assert "skills.keywords" in strategy_block
+        # Field reference is ``skills`` (Option E flat array,
+        # 2026-05-14); the exclusion still applies to skill keywords.
+        assert "``skills``" in strategy_block
 
     def test_rank_every_work_entry_rule_in_constraints(
         self, portfolio_data: PortfolioData
@@ -142,7 +150,11 @@ class TestBuildSystemPrompt:
         constraints_start = text.index("<constraints>")
         constraints_end = text.index("</constraints>")
         constraints_block = text[constraints_start:constraints_end]
-        assert "WorkHighlightRanking" in constraints_block
+        # Field renamed: work_highlights_by_id is an object with one
+        # required key per portfolio work entry. The legacy
+        # "WorkHighlightRanking" type name no longer appears on the
+        # wire so we assert the new field name instead.
+        assert "work_highlights_by_id" in constraints_block
         assert "portfolio work entry" in constraints_block.lower()
 
     def test_rank_every_work_entry_rule_in_output_guidance(
@@ -150,10 +162,13 @@ class TestBuildSystemPrompt:
     ) -> None:
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
-        guidance_start = text.index("``work_highlights``:")
+        guidance_start = text.index("``work_highlights_by_id``:")
         guidance_block = text[guidance_start : guidance_start + 1000]
-        assert "every portfolio work entry" in guidance_block.lower()
-        assert "MUST" in guidance_block
+        assert "portfolio work entry" in guidance_block.lower()
+        # "requires" / "required" replace the legacy "MUST" wording
+        # since the schema-level `required` array enforces it now.
+        lower = guidance_block.lower()
+        assert "required" in lower or "requires" in lower or "MUST" in guidance_block
 
     def test_injection_defense_present(self, portfolio_data: PortfolioData) -> None:
         result = build_system_prompt(portfolio_data)
@@ -278,7 +293,13 @@ class TestBuildSystemPrompt:
         text = result[0]["text"]
         assert "verbatim-keyword rule and" in text
         assert "no-fabrication rule take precedence" in text
-        assert "never add a JD term to ``skills.keywords`` to satisfy this rule" in text
+        # Field reference is ``skills`` under Option E (2026-05-14);
+        # the precedence clause phrases the exclusion as "JD term to
+        # ``skills``" matching the flat-array wire shape.
+        assert "never add" in text
+        assert "JD term" in text
+        assert "``skills``" in text
+        assert "to satisfy this rule" in text
 
     def test_acronym_prompt_subset_of_rules_constants(
         self, portfolio_data: PortfolioData
@@ -635,7 +656,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-10"
+        assert PROMPT_VERSION == "2026-05-13"
 
 
 class TestSystemPromptByteIdentity:
@@ -652,7 +673,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "d8a0b00ee00199f090f6f109583c03c739f0284bbe24a10b463a9ba9fdfef4b3"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "fc73d36676ee15af7ecdc36add3de55dcab662f1c4fd86868997cb2dad2a8484"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()

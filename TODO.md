@@ -7,16 +7,41 @@ files point here; `docs/architecture.md` describes current state only.
 
 ## Curation Reliability
 
-Two classes of Layer-3 failure are now recoverable in-place without retry:
-hallucinated skill keywords inside a known group (since 2026-04-11) and
-hallucinated `highlight_id` inside a known `work_id` (since 2026-05-12,
-after two paid calls in 24 hours hit the cross-entry attribution failure
-mode). Cover-letter word-count overshoots ship via the existing soft-warn
-on the API path. Items below address the remaining hard-fail rows
-(unknown `work_id`, duplicate `work_id`, missing rankings, unknown
-`skill_group_id`, unknown `project_id`) which still raise and abort,
-plus the durable schema-level fix that would make ID hallucination
-grammar-impossible.
+Cross-parent highlight attribution and unknown work/project IDs are
+**grammar-impossible** on the API path as of 2026-05-15: the
+structured-output schema built per-call from `PortfolioData` encodes
+`work_highlights_by_id` and `projects` with `items.enum` scoped to
+each parent's children, plus `required` + `additionalProperties: false`
+on every nested object. Unknown `work_id`, unknown `highlight_id`
+inside a known `work_id`, unknown `project_id`, duplicate `work_id`,
+and missing work rankings all became decode-time-unreachable.
+
+Skill keywords and skill-group identity are NOT decode-time-enforced.
+The original design's `skills_by_id: object{group_id → array[items.enum]}`
+exceeded Anthropic's compiled-grammar budget (HTTP 400 "compiled
+grammar is too large" on 2026-05-13). Dropping the keyword enum
+(Option A) was insufficient: the 22-property required-strict object
+hit the same 400 on 2026-05-14, and a 6-probe Haiku bisect localized
+the binding axis to *inner-property count under `required` +
+`additionalProperties: false`* (not enum count, not description
+bytes). The wire shape collapsed to a flat top-level
+`skills: array[string]` (Option E, shipped 2026-05-15); the adapter
+at `client._adapt_curation_dict` walks each emitted keyword back to
+its parent portfolio group (first-match by portfolio order) and
+drops unknown keywords with a WARN log line.
+
+`validate_curation_ids` stays as defense-in-depth on the API path
+(the adapter catches non-verbatim keywords first) and as primary
+defense on the static path (which constructs `ResumeCuration`
+directly without going through the adapter). The soft-drop behavior
+for hallucinated keywords/highlights (since 2026-04-11 / 2026-05-12)
+remains load-bearing on the static path and as adapter-regression
+safety net on the API path.
+
+Cover-letter word-count overshoots ship via the existing soft-warn
+on the API path. Items below address validation cases that grammar
+cannot reach (cover-letter validator policy, prose-level constraints
+on `summary` length, etc.) plus observability gaps.
 
 ### Retry-with-feedback loop
 
@@ -65,18 +90,37 @@ grammar-impossible.
 - [ ] Structured INFO log on every semantic retry (attempt number,
   invalid-ID count, request_id), WARNING on final failure.
 
-### Schema-level elimination (long-term)
+### Schema-level elimination (done 2026-05-13 / refined 2026-05-15)
 
-- [ ] Build per-call JSON schema dynamically in `client.py` that
-  replaces `keywords: list[str]` in `SkillRanking` with a `oneOf`
-  discriminated on `skill_id` where each branch's keywords field is
-  `{"type": "array", "items": {"type": "string", "enum": [<that
-  group's keywords>]}}`. Grammar-impossible to hallucinate under
-  constrained decoding. Schema currently built once at import time
-  from the Pydantic class; would need to move to runtime construction
-  from `PortfolioData`. Measure schema compile latency against
-  Anthropic limits before shipping. Also eliminates highlight-belongs-
-  to-parent-work-entry hallucinations.
+- [x] Build per-call JSON schema dynamically in `client.py` from
+  `PortfolioData`. Landed as `src/curator/output_schema.py` with
+  `build_curation_schema()`. `oneOf`-discriminator design was
+  abandoned after research established Anthropic's grammar likely
+  union-flattens `anyOf` branches with no decode-time narrowing
+  (`oneOf` isn't supported at all). Initial design used an
+  object-with-fixed-keys form for both `work_highlights_by_id`
+  AND `skills_by_id`, each value carrying its own `items.enum`.
+  Empirically verified against `claude-haiku-4-5` on 2026-05-13
+  (9 probe calls; all ENFORCED at small scale). The full-portfolio
+  shape, however, exceeded Anthropic's compiled-grammar budget
+  (HTTP 400 "compiled grammar is too large"); a 6-probe Haiku bisect
+  on 2026-05-14 localized the binding axis to inner-property count
+  under `required` + `additionalProperties: false`. The shipped
+  shape (Option E, 2026-05-15) keeps `work_highlights_by_id` as
+  object-with-fixed-keys (the load-bearing cross-parent attribution
+  surface, 5 inner properties) but collapses skills into a flat
+  top-level `skills: array[string]` with no `items.enum`. The
+  adapter at `client._adapt_curation_dict` walks each emitted keyword
+  back to its parent portfolio group (first-match by portfolio order;
+  ambiguous attributions logged at INFO; unknown keywords dropped
+  with WARN). Full failure history and the 6-probe bisect live in
+  the investigation plan referenced from `docs/architecture.md`.
+- [ ] Add a `highlight_ids` dedup pass to `validate_curation_ids`.
+  Grammar enforces membership of `items.enum`, not uniqueness or
+  count, so the model could in principle emit `[pf-a-h1, pf-a-h1,
+  pf-a-h1]` even with the new schema. Validator should dedup
+  in-place before returning. Independent of the schema fix; small
+  and self-contained.
 
 ### Defense-in-depth
 
