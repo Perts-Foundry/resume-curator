@@ -5,10 +5,11 @@ files point here; `docs/architecture.md` describes current state only.
 
 ---
 
-## Recently landed (2026-05-20, AI/code reallocation series)
+## Recently landed (2026-05-16/17, AI/code reallocation series)
 
-Six commits on branch `ai-code-reallocation` redistributed work between
-the AI and the code-side bookkeeping:
+Six commits on branch `ai-code-reallocation` (five source commits +
+one docs-sync + one consolidated pre-PR-review-feedback commit)
+redistributed work between the AI and the code-side bookkeeping:
 
 - **company_slug → code.** AI emits free-text `company_name`; client
   adapter slugifies into the existing `company_slug` Pydantic field.
@@ -17,7 +18,8 @@ the AI and the code-side bookkeeping:
   guidance and the load-bearing skill-keyword warning at the time.
 - **Per-entry highlight emission caps.** `output_schema.build_curation_schema`
   threads `max_pages` and surfaces `max(2, ceil(floor[i] * 1.5))` per
-  work entry as a soft cap (description text + adapter post-trim).
+  work entry as a soft cap (description text + adapter post-trim,
+  via `page_caps.per_entry_emit_cap`).
 - **Hybrid skill selection.** Wire `skills` becomes an ordered array
   of portfolio skill group IDs (enum-constrained); new
   `curator.jd_scorer` fills each group's keywords from portfolio data
@@ -26,6 +28,17 @@ the AI and the code-side bookkeeping:
   `work_highlight_weights` (per-entry float [0.5, 2.0] scales tier 6
   floor) and `trim_priority` (ordered middle-band drop priority with
   pinned guardrails — interests first, work last).
+- **Pre-PR review feedback.** Consolidated fix commit addressing
+  reviewer findings: corrected misleading "decode-time range
+  enforced" claims on `work_highlight_weights` (Anthropic strips
+  `minimum`/`maximum`), renamed `_clamp_weights_and_validate_range`
+  to `_validate_weights_range` to match behavior, fixed
+  `_CURATION_INSTRUCTION` user-message contradiction with the new
+  hybrid skill semantics, moved `_per_entry_emit_cap` to
+  `page_caps.py` and promoted it to public, added test coverage for
+  validator weight-key rejection / `ai_hints` audit log / skill-cap
+  paths, bumped `format_version` to 2.4, plus the doc-sync items
+  the original 5aea4be docs commit missed.
 
 ## Follow-ups from the AI/code reallocation series
 
@@ -85,27 +98,33 @@ on every nested object. Unknown `work_id`, unknown `highlight_id`
 inside a known `work_id`, unknown `project_id`, duplicate `work_id`,
 and missing work rankings all became decode-time-unreachable.
 
-Skill keywords and skill-group identity are NOT decode-time-enforced.
-The original design's `skills_by_id: object{group_id → array[items.enum]}`
-exceeded Anthropic's compiled-grammar budget (HTTP 400 "compiled
-grammar is too large" on 2026-05-13). Dropping the keyword enum
-(Option A) was insufficient: the 22-property required-strict object
-hit the same 400 on 2026-05-14, and a 6-probe Haiku bisect localized
+Skill keywords are no longer on the wire. Earlier wire iterations
+went through `skills_by_id: object{group_id → array[items.enum]}`
+(2026-05-13, hit the compiled-grammar budget), then a 22-property
+required-strict object (Option A, same 400 on 2026-05-14), then a
+flat top-level `skills: array[string]` of free-text keywords
+(Option E, shipped 2026-05-15). A 6-probe Haiku bisect localized
 the binding axis to *inner-property count under `required` +
 `additionalProperties: false`* (not enum count, not description
-bytes). The wire shape collapsed to a flat top-level
-`skills: array[string]` (Option E, shipped 2026-05-15); the adapter
-at `client._adapt_curation_dict` walks each emitted keyword back to
-its parent portfolio group (first-match by portfolio order) and
-drops unknown keywords with a WARN log line.
+bytes).
+
+The 2026-05-18 hybrid commit (cbac1d1) collapsed all of that into a
+top-level `skills: array[string]` enum-constrained to portfolio
+**group IDs** (typically <30, well under the grammar budget). The
+adapter at `client._adapt_curation_dict` fills each group's keywords
+from portfolio data via `jd_scorer.score_keywords_for_jd` against the
+JD text — the AI does not pick keywords at all, so non-verbatim
+keyword fabrication is unreachable by construction. Unknown group
+IDs are decode-time-impossible (enum-constrained); the adapter still
+drops them with WARN as defense in depth against an enum regression.
 
 `validate_curation_ids` stays as defense-in-depth on the API path
-(the adapter catches non-verbatim keywords first) and as primary
-defense on the static path (which constructs `ResumeCuration`
-directly without going through the adapter). The soft-drop behavior
-for hallucinated keywords/highlights (since 2026-04-11 / 2026-05-12)
-remains load-bearing on the static path and as adapter-regression
-safety net on the API path.
+and as primary defense on the static path (which constructs
+`ResumeCuration` directly without going through the adapter). The
+soft-drop branches for hallucinated highlights and keywords (since
+2026-04-11 / 2026-05-12) remain load-bearing on the static path; on
+the API path they are tripwires for adapter or grammar regressions
+that bypass the construction-time guarantee.
 
 Cover-letter word-count overshoots ship via the existing soft-warn
 on the API path. Items below address validation cases that grammar

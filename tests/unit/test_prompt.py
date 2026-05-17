@@ -170,7 +170,13 @@ class TestBuildSystemPrompt:
         guidance_start = text.index("``work_highlights_by_id``:")
         guidance_block = text[guidance_start : guidance_start + 1000]
         assert "portfolio work entry" in guidance_block.lower()
-        assert "renderer trims" in guidance_block.lower()
+        # The output_guidance must reference the per-entry soft cap
+        # surfaced in each property's description (the renderer
+        # discards above-cap emissions and the prompt warns this
+        # wastes tokens).
+        lower = guidance_block.lower()
+        assert "per-entry" in lower or "per entry" in lower or "soft cap" in lower
+        assert "renderer keeps" in lower or "renderer discards" in lower
 
     def test_injection_defense_present(self, portfolio_data: PortfolioData) -> None:
         result = build_system_prompt(portfolio_data)
@@ -655,7 +661,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-20"
+        assert PROMPT_VERSION == "2026-05-21"
 
 
 class TestSystemPromptByteIdentity:
@@ -672,7 +678,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "f22ad32a811cefe911b77a8cd9f7dca950db50a3df98ad1813500bbed511a09b"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "618459b8a9cf5956b6687e53c39d9efc53dcaf67ee4c8b82f86700fa4b88bc3a"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()

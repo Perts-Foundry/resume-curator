@@ -469,7 +469,7 @@ def _generate_next_trim(
     Certificates are trimmed bottom-up early in the cascade (tier 4)
     but ``certificate_floor`` entries are always preserved as
     load-bearing credentials. The floor is page-budget-aware: 3 on
-    1-page renders, 4 on 2-page, 5 on 3+-page (see
+    1-page renders, 3 on 2-page, 5 on 3+-page (see
     :func:`_caps_for_pages`). There is no late-stage cert drain to
     break this floor -- if page pressure persists after tier 7
     skill-group removal, the below-floor tier 8 fires as the final
@@ -969,7 +969,7 @@ def _write_audit_artifacts(
     # persisted; storing both invites drift.
     log_path = output_dir / "curation_log.json"
     log_data: dict[str, Any] = {
-        "format_version": "2.3",
+        "format_version": "2.4",
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "source": curation.source,

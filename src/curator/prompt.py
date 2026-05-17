@@ -9,13 +9,17 @@ cached; the job description varies per request.
 Architectural context
 ---------------------
 The AI owns: writing a tailored summary and label, extracting the company
-slug, ranking work highlights within every portfolio work entry,
-filtering+ordering skill keywords, and ranking projects.
+display name (client slugifies), ranking work highlights within every
+portfolio work entry, selecting and ordering relevant skill groups (the
+client fills each group's keywords from portfolio data via
+JD-relevance scoring), ranking projects, and optionally emitting two
+trim hints (``work_highlight_weights``, ``trim_priority``).
 
 The AI does NOT own: work entry selection (all entries are always rendered),
-education/certificate selection (renderer uses portfolio order), section
-order, page count, length trimming, interests, or PDF rendering. A
-deterministic renderer handles all of these downstream.
+keyword-level selection within skill groups (client fills from portfolio
+data), education/certificate selection (renderer uses portfolio order),
+section order, page count, length trimming, interests, or PDF rendering.
+A deterministic renderer handles all of these downstream.
 
 Quality rules are derived from an external resume-best-practices
 reference; word lists live in ``rules.py`` so the prompt and the
@@ -67,7 +71,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-20"
+PROMPT_VERSION: str = "2026-05-21"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -163,7 +167,7 @@ _RESERVED_DELIMITER_RE: re.Pattern[str] = re.compile(
 # prompt caching works across different job descriptions. Word lists from
 # rules.py are interpolated once at module load, then frozen.
 #
-# Skills wire shape (2026-05-18, hybrid AI/code):
+# Skills wire shape (2026-05-16, hybrid AI/code):
 #   - The model emits an ordered list of portfolio skill group IDs
 #     ONLY (enum-constrained at decode time via
 #     curator.output_schema._build_skills_schema's ``items.enum``).
@@ -249,10 +253,12 @@ subsidiaries like "DataLabs (a Google company)" return the primary \
 subsidiary name ("DataLabs"). The client converts this to a URL-safe \
 slug downstream; do not pre-slugify.
 
-``work_highlights_by_id``: for each portfolio work entry, return the \
-list of its highlight IDs ordered strongest-first for the JD. List ALL \
-of an entry's highlights in ranked order; the renderer trims from the \
-bottom based on page fit. The order in which you populate the keys \
+``work_highlights_by_id``: for each portfolio work entry, return its \
+highlight IDs ordered strongest-first for the JD, up to the per-entry \
+soft cap noted in each property's description. Emit your top picks for \
+the entry rather than the full list; the renderer keeps the top \
+entries that fit the page budget and discards the rest, so emissions \
+beyond the cap waste tokens. The order in which you populate the keys \
 does not affect the rendered resume (the renderer sorts reverse \
 chronologically).
 
@@ -382,9 +388,10 @@ _SYSTEM_PROMPT_TEXT = _SYSTEM_PROMPT_TEXT.format(
 
 _CURATION_INSTRUCTION = (
     "Curate the portfolio for the job description above. Return a "
-    "highlight ranking for every work entry, filter skill keywords, "
-    "and rank projects by a weighted blend of JD fit and the portfolio "
-    "``weight`` field."
+    "highlight ranking for every work entry, select and order the "
+    "relevant skill groups (the client fills each group's keywords "
+    "from portfolio data), and rank projects by a weighted blend of "
+    "JD fit and the portfolio ``weight`` field."
 )
 
 _CURATION_INSTRUCTION_WITH_COVER_LETTER = _CURATION_INSTRUCTION + (

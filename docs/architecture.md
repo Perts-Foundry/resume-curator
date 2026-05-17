@@ -227,12 +227,23 @@ pipeline.py
 client.py
   ├── models.py         (structured output types)
   ├── output_schema.py  (per-call JSON schema construction)
+  ├── page_caps.py      (per_entry_emit_cap for adapter-side trim)
   ├── prompt.py         (message construction)
+  ├── io_utils.py       (slugify for AI company_name -> company_slug)
+  ├── jd_scorer.py      (score_keywords_for_jd for hybrid skill fill)
+  ├── rules.py          (SKILL_GROUPS_MAX, SKILL_KEYWORDS_*_MAX,
+  │                      COVER_LETTER_MAX_TOKENS_HEADROOM)
   └── exceptions.py
 
 output_schema.py
   ├── models.py         (PortfolioData; TYPE_CHECKING only)
-  └── rules.py          (sign-off enum, summary length constants)
+  ├── page_caps.py      (per_entry_emit_cap surfaces per-entry caps
+  │                      in description text)
+  └── rules.py          (sign-off enum, summary length constants,
+                         SKILL_GROUPS_MAX)
+
+jd_scorer.py
+  └── (standalone, no internal deps; consumed by client.py)
 
 loader.py
   ├── io_utils.py      (YAML safe loading)
@@ -260,7 +271,8 @@ config.py
   └── exceptions.py    (ConfigError)
 
 page_caps.py
-  └── (standalone, no internal deps; consumed by renderer.py + eval/report.py)
+  └── (standalone, no internal deps; consumed by renderer.py,
+       output_schema.py, client.py, and eval/report.py)
 
 models.py
   └── (standalone, no internal deps)
@@ -360,12 +372,15 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
 4. cli.py calls pipeline.run_pipeline(settings, jd_text, skip_pdf=...)
 5. pipeline.py: loader.py reads all YAML from portfolio-source directory
 6. pipeline.py: client.py calls Claude once via messages.stream() with a
-   per-call JSON schema built by output_schema.build_curation_schema(portfolio)
+   per-call JSON schema built by
+   output_schema.build_curation_schema(portfolio, *, with_cover_letter, max_pages)
    - prompt.py constructs system prompt (with portfolio data) + user message (with JD)
    - output_schema.py builds the wire schema (work_highlights_by_id
-     object-keyed-by-work-ID with items.enum scoping per entry; skills
-     as a flat top-level array of keyword strings with no items.enum;
-     projects with top-level items.enum)
+     object-keyed-by-work-ID with items.enum scoping per entry plus
+     per-entry emission caps in description text from page_caps.per_entry_emit_cap;
+     skills as a top-level array of portfolio skill group IDs with items.enum;
+     projects with top-level items.enum; optional work_highlight_weights
+     and trim_priority AI-hint fields)
    - Streaming prevents timeouts; get_final_message() returns the message
    - Portfolio data is prompt-cached (stable across requests); schema is
      part of the cache prefix and invalidates on the same axis
@@ -373,9 +388,10 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
 7. Claude returns structured JSON conforming to the schema; client.py extracts
    from message.content[0].text and adapts the wire shape into the domain
    shape (object-keyed work_highlights_by_id -> list[WorkHighlightRanking];
-   flat skills array -> list[SkillRanking] via first-match keyword->group
-   lookup against portfolio.skills; unknown/duplicate keywords logged and
-   dropped) before constructing ResumeCuration
+   skill-group-ID array -> list[SkillRanking] with keywords filled per-group
+   by jd_scorer.score_keywords_for_jd against the JD text; company_name ->
+   slugified company_slug via io_utils.slugify; unknown group IDs and
+   over-cap emissions logged and dropped) before constructing ResumeCuration
 8. client.py runs validate_curation_ids as defense-in-depth; the schema
    already made cross-parent highlight-ID emission decode-time-impossible,
    and the adapter already filtered non-verbatim skill keywords, so this
@@ -654,7 +670,7 @@ Decision history:
   27-property shape still 400'd, while collapsing `skills_by_id`
   into a flat `skills: array[string]` (5 inner properties total)
   passed cleanly. Option E shipped that flat shape on 2026-05-15.
-- **2026-05-18 hybrid skill design.** The flat-keyword Option E
+- **2026-05-16 hybrid skill design.** The flat-keyword Option E
   required four prompt-side defenses to guard verbatim-match of
   free-text keywords and let the AI conflate two distinct decisions
   (which groups belong + which keywords within each). Re-shaping
@@ -666,7 +682,7 @@ Decision history:
   Group-ID enum is small (~30 IDs), well under the compiled-grammar
   budget. The four prompt-side defenses were collapsed in lockstep
   (see prompt.py header comment for the simplified architecture).
-- **2026-05-19 AI cascade hints.** Added two optional output
+- **2026-05-16 AI cascade hints.** Added two optional output
   fields (`work_highlight_weights`, `trim_priority`) so the AI can
   inform two decisions the renderer previously made JD-blind: per-
   entry highlight count and drop-priority order. Renderer guardrails
@@ -710,20 +726,24 @@ byte-identical schemas. A test in `tests/unit/test_output_schema.py`
 pins this invariant.
 
 **Validator retention:** `validate_curation_ids` runs on the adapted
-curation. Under the 2026-05-18 hybrid schema the following rows are
+curation. Under the 2026-05-16 hybrid schema the following rows are
 decode-time-unreachable on the API path: unknown `work_id`, unknown
 `highlight_id` inside a known `work_id`, unknown `skill_group_id`
 (group IDs are now enum-constrained), unknown `project_id`, duplicate
-`work_id`, missing rankings, and out-of-range
-`work_highlight_weights` values (number-range enforced at decode
-time). Hallucinated skill *keywords* are unreachable by construction
-because keywords are filled by code from portfolio data, not by the
-AI. All hard-fail rows remain reachable on the **static** path (which
-builds `ResumeCuration` directly without going through the adapter),
-so the validator is also the primary defense there. The validator
-additionally rejects `work_highlight_weights` keys that don't match
-any portfolio work ID; this is the only rule that catches a class of
-adapter bypass not already covered by Pydantic or the schema.
+`work_id`, and missing rankings. Hallucinated skill *keywords* are
+unreachable by construction because keywords are filled by code from
+portfolio data, not by the AI. Out-of-range `work_highlight_weights`
+values are NOT enforced at decode time (Anthropic strips
+`minimum`/`maximum`); the range survives only as description
+guidance and as a post-parse Pydantic-validator rejection
+(`ResumeCuration._validate_weights_range` — no clamp; out-of-range
+fails the entire response). All hard-fail rows remain reachable on
+the **static** path (which builds `ResumeCuration` directly without
+going through the adapter), so the validator is also the primary
+defense there. The validator additionally rejects
+`work_highlight_weights` keys that don't match any portfolio work ID;
+this is the only rule that catches a class of adapter bypass not
+already covered by Pydantic or the schema.
 
 ### Portfolio signal fields
 
@@ -898,37 +918,47 @@ header required.
 1. Build the JSON schema **per call** from `PortfolioData` via
    `curator.output_schema.build_curation_schema()`. The schema encodes
    `work_highlights_by_id` as an object keyed by portfolio work entry ID
-   (each value's `items.enum` scoped to that entry's highlight IDs);
-   `skills` as a flat top-level array of keyword strings with no
-   `items.enum` (the by-skill-group object exceeded Anthropic's
-   compiled-grammar budget on 2026-05-13/14); and `projects` as an array
-   with top-level `items.enum` over portfolio project IDs. See **Dynamic
-   schema construction (API path)** earlier in this document for the
-   full design rationale.
+   (each value's `items.enum` scoped to that entry's highlight IDs, with
+   per-entry emission caps surfaced in description text from
+   `page_caps.per_entry_emit_cap`); `skills` as a top-level array of
+   portfolio skill group IDs with `items.enum` (the 2026-05-16 hybrid
+   design moved keyword selection out of the AI and into
+   `client._adapt_curation_dict` via `jd_scorer.score_keywords_for_jd`);
+   `projects` as an array with top-level `items.enum` over portfolio
+   project IDs; and two optional AI-hint fields
+   (`work_highlight_weights`, `trim_priority`). See **Dynamic schema
+   construction (API path)** earlier in this document for the full
+   design rationale.
 2. Pass the dict via `output_config={"format": {"type": "json_schema", "schema":
    schema}}` to `messages.stream()`. `output_format=PydanticClass` is the
    legacy convenience wrapper and is not used: a Pydantic class can't express
    the parent-child enum scoping we need on work_highlights_by_id.
 3. Claude's token sampling is **constrained at generation time** to match the
-   schema. Cross-parent highlight ID emission, unknown work/project IDs,
-   duplicate work IDs, and missing work rankings all become
-   decode-time-impossible. Non-verbatim skill keywords and unknown skill
-   group identity are NOT decode-time-blocked under Option E; the client
-   adapter filters both (unknown keywords logged at WARN, ambiguous
-   first-match attribution logged at INFO) and `validate_curation_ids`
-   runs as defense-in-depth.
+   schema. Cross-parent highlight ID emission, unknown work/project/skill-group
+   IDs, duplicate work IDs, and missing work rankings all become
+   decode-time-impossible. `maxItems` and numeric range constraints
+   (`minimum`/`maximum` on `work_highlight_weights`) are NOT honored at
+   decode time; per-entry highlight caps and weight range are communicated
+   to the model via description text and enforced post-parse (adapter
+   trims highlight over-emission; Pydantic validator rejects out-of-range
+   weights). Hallucinated skill keywords are unreachable by construction
+   (the AI no longer emits keywords).
 4. The grammar guarantees the response is schema-valid JSON. The client extracts
    the text from `message.content[0].text` (`parsed_output` is None when a raw
    dict schema is used) and converts the wire shape (object-keyed work
-   highlights + flat keyword array) to the domain shape
-   (`list[WorkHighlightRanking]`, `list[SkillRanking]`) via the adapter
-   in `client._adapt_curation_dict`.
+   highlights + skill-group-ID array) to the domain shape
+   (`list[WorkHighlightRanking]`, `list[SkillRanking]` with adapter-
+   filled keywords) via the adapter in `client._adapt_curation_dict`.
 5. `ResumeCuration.model_validate()` runs as the final post-parse check, plus
    `validate_curation_ids` as defense-in-depth against grammar/adapter
    regressions and as primary defense on the static path.
 
 ```python
-schema = build_curation_schema(portfolio, with_cover_letter=with_cover_letter)
+schema = build_curation_schema(
+    portfolio,
+    with_cover_letter=with_cover_letter,
+    max_pages=settings.max_pages,
+)
 output_config = {"format": {"type": "json_schema", "schema": schema}}
 if effort is not None:
     output_config["effort"] = effort

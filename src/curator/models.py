@@ -542,9 +542,12 @@ class ResumeCuration(BaseModel):
             "portfolio work IDs; values are floats in [0.5, 2.0]. "
             "Renderer scales the per-position highlight floor by the "
             "weight; absent entries default to 1.0 (no adjustment). "
-            "Schema enforces decode-time range; validator clamps "
-            "post-parse for defense in depth and rejects unknown "
-            "work_ids."
+            "Range is enforced post-parse by the Pydantic validator "
+            "(out-of-range values fail the entire response - there is "
+            "no clamping); validate_curation_ids additionally rejects "
+            "unknown work_ids. Anthropic does not honor "
+            "minimum/maximum at decode time, so the range survives "
+            "only as description guidance and post-parse rejection."
         ),
     )
     trim_priority: list[str] = Field(
@@ -569,8 +572,16 @@ class ResumeCuration(BaseModel):
 
     @field_validator("work_highlight_weights")
     @classmethod
-    def _clamp_weights_and_validate_range(cls, v: dict[str, float]) -> dict[str, float]:
-        clamped: dict[str, float] = {}
+    def _validate_weights_range(cls, v: dict[str, float]) -> dict[str, float]:
+        """Reject out-of-range weights; preserve in-range values verbatim.
+
+        Anthropic does not honor ``minimum``/``maximum`` at decode
+        time, so this is the only enforcement layer for the [0.5, 2.0]
+        range. A single out-of-range emission fails the entire
+        response (no clamp fallback); this is the load-bearing trip
+        that surfaces an AI overshoot to the operator.
+        """
+        validated: dict[str, float] = {}
         for work_id, weight in v.items():
             if not (0.5 <= weight <= 2.0):
                 msg = (
@@ -578,8 +589,8 @@ class ResumeCuration(BaseModel):
                     "out of range [0.5, 2.0]"
                 )
                 raise ValueError(msg)
-            clamped[work_id] = float(weight)
-        return clamped
+            validated[work_id] = float(weight)
+        return validated
 
     @field_validator("trim_priority")
     @classmethod
@@ -673,6 +684,10 @@ def validate_curation_ids(
       portfolio has at least one project. Edge: an empty portfolio
       projects list disables the enum constraint, so this row remains
       reachable on the API path in that one degenerate case.)
+    - Unknown ``work_id`` key in ``work_highlight_weights``. (Schema's
+      ``additionalProperties: false`` makes this grammar-unreachable on
+      the API path; reachable on the static path and on round-trips via
+      ``scripts/rerender.py`` that load an externally edited curation.)
 
     Projects: unknown IDs are hard failures; empty list is valid.
 

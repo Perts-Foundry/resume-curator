@@ -33,16 +33,25 @@ from curator.models import (
 def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
     """Convert a Pydantic curation (or wrapper) to the wire-shape dict.
 
-    The wire schema keys highlights by parent work_id (for grammar-time
-    cross-parent attribution enforcement) and emits skills as a flat
-    top-level array of keyword strings (Option E, 2026-05-14: the
-    object-keyed-by-skill-group shape exceeded Anthropic's
-    compiled-grammar budget; see ``docs/architecture.md`` "Dynamic
-    schema construction (API path)"). Production code at
-    ``client._adapt_curation_dict`` walks each flat keyword back to its
-    parent portfolio group, so this helper must flatten in the order
-    the production model would emit (group-rank-major, then
-    keyword-rank-minor) to produce realistic round-trip fixtures.
+    Under the 2026-05-18 hybrid skill design the wire shape carries:
+      - ``work_highlights_by_id``: object keyed by parent work_id
+        (grammar-time cross-parent attribution enforcement).
+      - ``skills``: ordered array of portfolio skill group IDs only;
+        ``client._adapt_curation_dict`` fills each group's keywords
+        from portfolio data via JD-relevance scoring.
+      - ``company_name``: free text; adapter slugifies into
+        ``company_slug``. Emitting ``obj.company_slug`` round-trips
+        cleanly (slugify is idempotent on valid slugs).
+      - Optional ``work_highlight_weights`` (dict) and ``trim_priority``
+        (list): pass through from the model. The helper emits them
+        only when non-empty so default-empty fixtures keep their
+        compact shape; tests exercising the AI-hint path can populate
+        them directly.
+
+    Tests that need to round-trip specific keyword content should
+    control the JD text or assert on the adapter's filling behavior
+    directly rather than expecting the wire round trip to preserve
+    keyword choices.
     """
     if isinstance(obj, ResumeCurationWithCoverLetter):
         return {
@@ -50,19 +59,7 @@ def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
             "cover_letter": obj.cover_letter.model_dump(mode="json"),
         }
     if isinstance(obj, ResumeCuration):
-        # The wire format carries:
-        #   - free-text ``company_name`` that the adapter slugifies
-        #     into ``company_slug`` on the model side. Emitting
-        #     ``obj.company_slug`` round-trips: slugify(slug) returns
-        #     the same slug since hyphens and lowercase letters are
-        #     valid slug characters.
-        #   - ``skills`` as an ordered list of skill group IDs only.
-        #     The adapter fills keywords via JD scoring. Tests that
-        #     need to round-trip specific keyword content should
-        #     control the JD text or assert on the adapter's filling
-        #     behavior directly rather than expecting the wire round
-        #     trip to preserve keyword choices.
-        return {
+        wire: dict[str, Any] = {
             "summary": obj.summary,
             "suggested_label": obj.suggested_label,
             "company_name": obj.company_slug,
@@ -72,6 +69,11 @@ def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
             "skills": [sr.skill_id for sr in obj.skills],
             "projects": list(obj.projects),
         }
+        if obj.work_highlight_weights:
+            wire["work_highlight_weights"] = dict(obj.work_highlight_weights)
+        if obj.trim_priority:
+            wire["trim_priority"] = list(obj.trim_priority)
+        return wire
     if isinstance(obj, dict):
         return obj
     msg = f"unsupported curation type for wire-dict conversion: {type(obj).__name__}"
@@ -820,18 +822,16 @@ class TestCurateGrammarSchemaAdapter:
         )
         assert synth.highlight_ids == []
 
-    def test_adapter_groups_flat_skills_by_portfolio_lookup(
+    def test_adapter_reconstructs_skills_from_group_id_emissions(
         self,
         mocker: Any,
         mock_settings: CuratorSettings,
         portfolio_data: PortfolioData,
         valid_curation: ResumeCuration,
     ) -> None:
-        """Wire emits a flat ``skills`` array; the adapter reverse-looks
-        each keyword to its parent portfolio group and builds
-        ``list[SkillRanking]`` for the domain model."""
-        # Use a wire dict the production adapter sees: skills is a
-        # flat list of portfolio-verbatim keywords.
+        """Wire emits an ordered list of skill group IDs; the adapter
+        fills each group's keywords from portfolio data via the JD
+        scorer and builds ``list[SkillRanking]`` for the domain model."""
         wire = _curation_to_wire_dict(valid_curation)
         message = _make_mock_message(raw_text=json.dumps(wire))
         _wire_mock_stream(mocker, message)
@@ -926,9 +926,16 @@ class TestCurateGrammarSchemaAdapter:
         # the others.
         result = client.curate(extended, "We use TARGET-KW extensively for production.")
 
+        # Full ordering is deterministic under the jd_scorer formula:
+        #   - TARGET-KW: one substring match (~3) wins outright.
+        #   - AAA / BBB / DDD: zero JD presence; tie-break by portfolio
+        #     order, so AAA -> BBB -> DDD.
+        # Pinning the full order (not just the winner) catches a
+        # regression that re-sorts the zero-score tail (e.g.,
+        # alphabetical or reverse-portfolio).
         srs = [sr for sr in result.curation.skills if sr.skill_id == "multi-kw-group"]
         assert len(srs) == 1
-        assert srs[0].keywords[0] == "TARGET-KW"
+        assert srs[0].keywords == ["TARGET-KW", "AAA", "BBB", "DDD"]
 
     def test_adapter_dedupes_repeated_group_id(
         self,
@@ -991,6 +998,143 @@ class TestCurateGrammarSchemaAdapter:
         ]
         assert len(matching) == 1, warn_mock.call_args_list
         assert "this-is-not-a-portfolio-group" in str(matching[0].args)
+
+    def test_adapter_caps_skill_groups_at_per_resume_max(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Adapter drops skill group emissions over ``SKILL_GROUPS_MAX``
+        with one WARN log line per call. This path is unreachable when
+        the portfolio has fewer than SKILL_GROUPS_MAX groups (enum
+        forbids extras), so we extend the portfolio for this test."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+        from curator.rules import SKILL_GROUPS_MAX
+
+        excess = 3
+        extra_groups = [
+            SkillEntry(
+                id=f"extra-group-{i:02d}",
+                name=f"Extra {i}",
+                keywords=[f"x-{i}"],
+            )
+            for i in range(SKILL_GROUPS_MAX + excess)
+        ]
+        extended = replace(
+            portfolio_data,
+            skills=[*portfolio_data.skills, *extra_groups],
+        )
+        # Emit ALL portfolio groups (originals + extras). The adapter
+        # should keep the first SKILL_GROUPS_MAX in emit order and
+        # drop the rest with a WARN.
+        all_group_ids = [g.id for g in extended.skills]
+        assert len(all_group_ids) > SKILL_GROUPS_MAX
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = all_group_ids
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        warn_mock = mocker.patch("curator.client.logger.warning")
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(extended, "Job description.")
+
+        assert len(result.curation.skills) == SKILL_GROUPS_MAX
+        # One WARN log line names the per-resume cap drops.
+        matching = [
+            call
+            for call in warn_mock.call_args_list
+            if isinstance(call.args[0], str) and "per-resume cap" in call.args[0]
+        ]
+        assert len(matching) == 1, warn_mock.call_args_list
+        # Excess count matches the over-cap emission count.
+        assert matching[0].args[1] == len(all_group_ids) - SKILL_GROUPS_MAX
+
+    def test_adapter_caps_total_keywords_across_groups(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """``SKILL_KEYWORDS_TOTAL_MAX`` binds when the AI emits enough
+        groups that ``SKILL_GROUPS_MAX * SKILL_KEYWORDS_PER_GROUP_MAX``
+        would exceed the absolute total. With default constants
+        (12 * 10 = 120 < 140) the total cap is non-binding. This test
+        constructs a portfolio that forces the cap to bind by giving
+        each group enough portfolio keywords to fill its per-group
+        cap; once ``total_keywords`` approaches 140, ``per_group_cap``
+        shrinks toward 0 and later groups receive fewer keywords."""
+        from dataclasses import replace
+
+        from curator.models import SkillEntry
+        from curator.rules import (
+            SKILL_GROUPS_MAX,
+            SKILL_KEYWORDS_PER_GROUP_MAX,
+            SKILL_KEYWORDS_TOTAL_MAX,
+        )
+
+        # Each group has SKILL_KEYWORDS_PER_GROUP_MAX keywords so the
+        # adapter would naturally fill the per-group cap for every
+        # group. With SKILL_GROUPS_MAX groups emitted, the total
+        # demand is 12 * 10 = 120, under SKILL_KEYWORDS_TOTAL_MAX=140
+        # by default. To make the test cap-binding regardless of
+        # future constant tuning, we pick a smaller group count and
+        # higher keyword count.
+        groups = [
+            SkillEntry(
+                id=f"big-group-{i:02d}",
+                name=f"Big Group {i}",
+                keywords=[
+                    f"big-{i}-kw-{j}" for j in range(SKILL_KEYWORDS_PER_GROUP_MAX)
+                ],
+            )
+            for i in range(SKILL_GROUPS_MAX)
+        ]
+        extended = replace(portfolio_data, skills=groups)
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["skills"] = [g.id for g in groups]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(extended, "Job description.")
+
+        total_keywords = sum(len(sr.keywords) for sr in result.curation.skills)
+        # Absolute total never exceeds the cap.
+        assert total_keywords <= SKILL_KEYWORDS_TOTAL_MAX
+        # And no single group's keyword list exceeds the per-group cap.
+        for sr in result.curation.skills:
+            assert len(sr.keywords) <= SKILL_KEYWORDS_PER_GROUP_MAX
+
+    def test_adapter_round_trips_ai_hint_fields(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Optional AI hints (``work_highlight_weights``,
+        ``trim_priority``) flow through the adapter into the
+        ``ResumeCuration`` model. Guards against a refactor dropping
+        the two pass-through lines in ``_adapt_curation_dict``."""
+        wire = _curation_to_wire_dict(valid_curation)
+        # Use a real portfolio work_id for the weights key so the
+        # validator does not reject downstream.
+        portfolio_work_id = portfolio_data.work[0].id
+        wire["work_highlight_weights"] = {portfolio_work_id: 1.5}
+        wire["trim_priority"] = ["projects", "certificates"]
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        assert result.curation.work_highlight_weights == {portfolio_work_id: 1.5}
+        assert result.curation.trim_priority == ["projects", "certificates"]
 
     def test_adapter_empty_skills_array_emits_empty_list(
         self,
@@ -1253,6 +1397,28 @@ class TestValidateCurationIds:
         curation = ResumeCuration.model_validate(valid_curation_dict)
         with pytest.raises(APIResponseError, match="duplicate work_ids"):
             _validate_curation_ids(curation, portfolio_data)
+
+    def test_unknown_work_highlight_weights_key_fails(
+        self,
+        portfolio_data: PortfolioData,
+        valid_curation_dict: dict[str, object],
+    ) -> None:
+        # Schema's additionalProperties:false on the weights object
+        # makes this row grammar-unreachable on the API path; reachable
+        # on the static path and on round-trips via scripts/rerender.py
+        # that load an externally edited curation. The validator is
+        # the only enforcement for that surface.
+        valid_curation_dict["work_highlight_weights"] = {
+            "acme-senior-engineer": 1.5,  # valid portfolio ID
+            "ghost-role-not-in-portfolio": 1.2,  # invalid
+        }
+        curation = ResumeCuration.model_validate(valid_curation_dict)
+        with pytest.raises(
+            APIResponseError,
+            match=r"work_highlight_weights references unknown work_ids",
+        ) as exc_info:
+            _validate_curation_ids(curation, portfolio_data)
+        assert "ghost-role-not-in-portfolio" in str(exc_info.value)
 
     def test_unknown_highlight_id_in_known_work_entry_dropped_with_warn(
         self,

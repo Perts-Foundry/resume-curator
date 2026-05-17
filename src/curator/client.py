@@ -37,7 +37,8 @@ from curator.models import (
     validate_cover_letter,
     validate_curation_ids,
 )
-from curator.output_schema import _per_entry_emit_cap, build_curation_schema
+from curator.output_schema import build_curation_schema
+from curator.page_caps import per_entry_emit_cap
 from curator.prompt import build_system_prompt, build_user_message
 from curator.rules import (
     COVER_LETTER_MAX_TOKENS_HEADROOM,
@@ -177,7 +178,7 @@ def _adapt_curation_dict(
       the validator's "every portfolio entry has a ranking" invariant
       continues to hold.
     - Work-entry highlight emissions are trimmed to the per-position
-      cap (``_per_entry_emit_cap``) when the model exceeds the soft
+      cap (``page_caps.per_entry_emit_cap``) when the model exceeds the soft
       cap surfaced in the schema description (Anthropic does not
       enforce ``maxItems``). Over-emission is WARN-logged.
     - Each emitted ``skills`` group ID is looked up in the portfolio;
@@ -246,7 +247,7 @@ def _adapt_curation_dict(
         position = work_id_to_position.get(wh["work_id"])
         if position is None:
             continue  # unknown work_id is caught downstream by validator
-        cap = _per_entry_emit_cap(position, max_pages)
+        cap = per_entry_emit_cap(position, max_pages)
         original = wh["highlight_ids"]
         if isinstance(original, list) and len(original) > cap:
             over_emit_counts[wh["work_id"]] = len(original) - cap
@@ -294,6 +295,15 @@ def _adapt_curation_dict(
             continue
         seen_groups.add(gid)
         group = portfolio_groups[gid]
+        # Invariant: with the current rules.py constants
+        # (SKILL_GROUPS_MAX=12, SKILL_KEYWORDS_PER_GROUP_MAX=10,
+        # SKILL_KEYWORDS_TOTAL_MAX=140), the per-group cap upper bound
+        # is 10 and total_keywords cannot exceed 140 by loop
+        # construction, so (TOTAL_MAX - total_keywords) is always
+        # >= 0 and the min() never produces a negative. If a future
+        # constant change pushes 12 * 10 = 120 above TOTAL_MAX,
+        # score_keywords_for_jd's top_n <= 0 guard would still return
+        # [] safely; consider failing loud here instead.
         per_group_cap = min(
             SKILL_KEYWORDS_PER_GROUP_MAX,
             SKILL_KEYWORDS_TOTAL_MAX - total_keywords,

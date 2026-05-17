@@ -23,6 +23,17 @@ from __future__ import annotations
 
 import re
 
+# ReDoS safety: the tokenizer pattern is linear time (no overlapping
+# alternation branches; the `(?:[+#.][a-z0-9]+)*` repeats a literal
+# delimiter followed by a non-empty alphanumeric run, so there is no
+# way for the engine to backtrack through ambiguous splits). The
+# per-keyword scoring regex constructed in _keyword_score uses
+# re.escape on the keyword and applies bounded lookarounds, so it is
+# also linear in JD length. The JD is hard-capped at 50,000 chars by
+# validate_job_description before reaching the scorer; empirical
+# worst-case timing at the cap with hundreds of keywords is ~200ms.
+# DO NOT introduce alternation on user-controlled input without
+# re-verifying the linear-time property.
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:[+#.][a-z0-9]+)*")
 
 

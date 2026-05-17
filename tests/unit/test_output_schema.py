@@ -373,6 +373,101 @@ class TestSkills:
 
 
 # ---------------------------------------------------------------------------
+# work_highlight_weights (optional AI hint, per-portfolio-work-id properties)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkHighlightWeightsSchema:
+    """The optional ``work_highlight_weights`` field is keyed by
+    portfolio work IDs only (additionalProperties:false). Pinning the
+    property set guards against a refactor adding the wrong keys or
+    leaking renderer-internal section names."""
+
+    def test_property_keys_are_portfolio_work_ids(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        weights = build_curation_schema(realistic_portfolio)["properties"][
+            "work_highlight_weights"
+        ]
+        # Only work entries with non-empty highlights are exposed
+        # (mirrors work_highlights_by_id, which omits empty entries).
+        expected_ids = {w.id for w in realistic_portfolio.work if w.highlights}
+        assert set(weights["properties"].keys()) == expected_ids
+
+    def test_additional_properties_false(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        weights = build_curation_schema(realistic_portfolio)["properties"][
+            "work_highlight_weights"
+        ]
+        assert weights["additionalProperties"] is False
+
+    def test_each_property_value_is_number_no_min_max(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # Anthropic strips ``minimum``/``maximum``; the schema must
+        # not emit them (catches a regression that adds them under the
+        # false belief they're enforced).
+        weights = build_curation_schema(realistic_portfolio)["properties"][
+            "work_highlight_weights"
+        ]
+        for prop in weights["properties"].values():
+            assert prop["type"] == "number"
+            assert "minimum" not in prop
+            assert "maximum" not in prop
+
+    def test_not_in_required_list(self, realistic_portfolio: PortfolioData) -> None:
+        # Field is optional; AI may omit entirely.
+        schema = build_curation_schema(realistic_portfolio)
+        assert "work_highlight_weights" not in schema["required"]
+
+
+# ---------------------------------------------------------------------------
+# trim_priority (optional AI hint, ordered enum array, middle-band only)
+# ---------------------------------------------------------------------------
+
+
+class TestTrimPrioritySchema:
+    """The optional ``trim_priority`` field is a top-level array
+    enum-constrained to the AI-controllable middle band of the trim
+    cascade. Pinning the exact enum content prevents an accidental
+    inclusion of ``interests`` or work-highlight tier names, which
+    would silently bypass the renderer's pinned guardrails (interests
+    always first to drop, work highlights always last)."""
+
+    def test_items_enum_exactly_matches_middle_band(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        tp = build_curation_schema(realistic_portfolio)["properties"]["trim_priority"]
+        assert tp["type"] == "array"
+        assert tp["items"]["type"] == "string"
+        # Exact set match — order in the schema doesn't affect
+        # enum-membership semantics but pinning the precise membership
+        # is the load-bearing assertion.
+        assert set(tp["items"]["enum"]) == {
+            "project_highlights",
+            "projects",
+            "certificates",
+            "education",
+            "skill_groups",
+        }
+
+    def test_items_enum_excludes_pinned_tiers(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # ``interests`` and the work-highlight tiers are renderer-
+        # pinned and must never appear in the AI-controllable enum.
+        tp = build_curation_schema(realistic_portfolio)["properties"]["trim_priority"]
+        for forbidden in ("interests", "highlight", "highlight_below_floor"):
+            assert forbidden not in tp["items"]["enum"]
+
+    def test_not_in_required_list(self, realistic_portfolio: PortfolioData) -> None:
+        # Field is optional; AI may omit entirely.
+        schema = build_curation_schema(realistic_portfolio)
+        assert "trim_priority" not in schema["required"]
+
+
+# ---------------------------------------------------------------------------
 # projects
 # ---------------------------------------------------------------------------
 

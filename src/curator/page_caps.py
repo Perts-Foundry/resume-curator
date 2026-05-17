@@ -13,6 +13,7 @@ can be imported by both :mod:`curator.renderer` and
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 # Default certificate floor for 1-page resumes; 2+-page renders use
@@ -101,3 +102,27 @@ def _caps_for_pages(max_pages: int) -> _PageCaps:
         work_position_floors=(10, 8, 8, 4, 4),
         certificate_floor=5,
     )
+
+
+def per_entry_emit_cap(work_position: int, max_pages: int) -> int:
+    """Soft cap on highlight IDs the model should emit for one work entry.
+
+    Lives here (not in ``output_schema``) because it is part of the
+    cross-module contract between the schema description (advisory,
+    surfaced to the model) and the client adapter (hard enforcement
+    post-parse). Both consumers import this single source.
+
+    Anthropic's structured-output keyword subset does NOT include
+    ``maxItems``; the cap is communicated to the model via the
+    property's ``description`` text and enforced by the client adapter.
+
+    Formula: ``ceil(floor * 1.5)`` for the renderer floor at this
+    position, clamped to a minimum of 2 so the model has room even on
+    positions where the renderer's per-position floor is 0 (1-page mode
+    positions 2..4). ``ceil`` is used (not ``round``) to avoid Python's
+    banker's rounding edge cases and to always give the model a hair
+    more headroom than the strict 1.5x scale.
+    """
+    caps = _caps_for_pages(max_pages)
+    floor = caps.floor_for_position(work_position)
+    return max(2, math.ceil(floor * 1.5))

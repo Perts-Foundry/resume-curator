@@ -619,6 +619,31 @@ class TestResumeCuration:
         )
         assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
 
+    def test_work_highlight_weights_accept_lower_boundary(self) -> None:
+        # The 0.5 boundary is inclusive per the validator's
+        # ``0.5 <= weight <= 2.0`` check. Pinning it prevents an
+        # accidental strict-comparison regression.
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 0.5})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 0.5}
+
+    def test_work_highlight_weights_accept_upper_boundary(self) -> None:
+        # The 2.0 boundary is inclusive.
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 2.0})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 2.0}
+
+    def test_work_highlight_weights_accept_unit_weight_no_op(self) -> None:
+        # weight=1.0 is the no-op default — the most common production
+        # value. Pinning ensures the validator never accidentally
+        # treats 1.0 as a sentinel that should be stripped.
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.0})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.0}
+
     def test_work_highlight_weights_reject_above_max(self) -> None:
         weights = {"acme-senior-engineer": 2.5}
         with pytest.raises(ValidationError, match=r"out of range \[0\.5, 2\.0\]"):

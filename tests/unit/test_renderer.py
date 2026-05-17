@@ -456,10 +456,10 @@ class TestWriteAuditArtifacts:
         # presence and shape only.
         from curator.prompt import PROMPT_HASH
 
-        assert log_data["format_version"] == "2.3"
+        assert log_data["format_version"] == "2.4"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
-        assert log_data["prompt_version"] == "2026-05-20"
+        assert log_data["prompt_version"] == "2026-05-21"
         assert log_data["prompt_hash"] == PROMPT_HASH
         assert isinstance(log_data["prompt_hash"], str)
         assert len(log_data["prompt_hash"]) == 12
@@ -478,6 +478,86 @@ class TestWriteAuditArtifacts:
         )
         assert jd_path is not None
         assert jd_path.read_text() == "Original JD content."
+
+    def test_curation_log_omits_ai_hints_when_both_empty(
+        self,
+        tmp_path: Path,
+        curation_result: CurationResult,
+    ) -> None:
+        # Default fixture has empty weights/trim_priority; the
+        # ``ai_hints`` key must be absent (avoids audit-log noise on
+        # off-path runs).
+        _, log_path, _, _ = _write_audit_artifacts(
+            tmp_path, curation_result, "JD text."
+        )
+        log_data = json.loads(log_path.read_text())
+        assert "ai_hints" not in log_data
+
+    def test_curation_log_records_ai_hints_weights_only(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 1.5}
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["ai_hints"] == {
+            "work_highlight_weights": {"acme-senior-engineer": 1.5}
+        }
+        # trim_priority is absent from the sub-object when empty.
+        assert "trim_priority" not in log_data["ai_hints"]
+
+    def test_curation_log_records_ai_hints_trim_priority_only(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        simple_curation_dict["trim_priority"] = ["projects", "certificates"]
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["ai_hints"] == {"trim_priority": ["projects", "certificates"]}
+        assert "work_highlight_weights" not in log_data["ai_hints"]
+
+    def test_curation_log_records_ai_hints_both(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 2.0}
+        simple_curation_dict["trim_priority"] = ["skill_groups"]
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["ai_hints"] == {
+            "work_highlight_weights": {"acme-senior-engineer": 2.0},
+            "trim_priority": ["skill_groups"],
+        }
 
     def test_static_path_writes_mode_txt(
         self,

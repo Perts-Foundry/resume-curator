@@ -49,11 +49,10 @@ subset:
 
 from __future__ import annotations
 
-import math
 import re
 from typing import TYPE_CHECKING, Any
 
-from curator.page_caps import _caps_for_pages
+from curator.page_caps import per_entry_emit_cap
 from curator.rules import (
     COVER_LETTER_VALID_SIGN_OFFS,
     SKILL_GROUPS_MAX,
@@ -64,30 +63,6 @@ from curator.rules import (
 
 if TYPE_CHECKING:
     from curator.models import PortfolioData
-
-
-def _per_entry_emit_cap(work_position: int, max_pages: int) -> int:
-    """Soft cap on highlight IDs the model should emit for one work entry.
-
-    Anthropic's structured-output keyword subset does NOT include
-    ``maxItems`` (verified empirically; see TestNoUnsupportedKeywords in
-    test_output_schema.py and the API documentation). The cap is
-    communicated to the model via the property's ``description`` text
-    and enforced post-parse by the client adapter
-    (``_trim_work_highlights_to_cap``); both layers exist so the model
-    has a clear target and the adapter guarantees the renderer never
-    sees over-emission.
-
-    Formula: ``ceil(floor * 1.5)`` for the renderer floor at this
-    position, clamped to a minimum of 2 so the model has room even on
-    positions where the renderer's per-position floor is 0 (1-page mode
-    positions 2..4). ``ceil`` is used (not ``round``) to avoid Python's
-    banker's rounding edge cases and to always give the model a hair
-    more headroom than the strict 1.5x scale.
-    """
-    caps = _caps_for_pages(max_pages)
-    floor = caps.floor_for_position(work_position)
-    return max(2, math.ceil(floor * 1.5))
 
 
 _ID_PATTERN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -181,7 +156,7 @@ def _build_work_highlights_by_id_schema(
         if not w.highlights:
             continue
         highlight_ids = [_check_id(h.id, f"highlight in {wid}") for h in w.highlights]
-        emit_cap = _per_entry_emit_cap(position, max_pages)
+        emit_cap = per_entry_emit_cap(position, max_pages)
         properties[wid] = {
             "type": "array",
             "description": (
@@ -265,22 +240,38 @@ _TRIM_PRIORITY_MIDDLE_SECTIONS: tuple[str, ...] = (
 def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, Any]:
     """Per-work-entry priority weights (optional AI hint).
 
-    Each property is a portfolio work entry ID; values are floats in
-    [0.5, 2.0]. The renderer multiplies the per-position floor by the
-    weight when deciding how aggressively to trim each entry, allowing
-    the AI to surface JD signals like "this role is much more relevant
-    than that one." Defaults to 1.0 (no adjustment) for entries the AI
-    omits.
+    Each property is a portfolio work entry ID; values are floats with
+    a soft target range of [0.5, 2.0]. The renderer multiplies the
+    per-position floor by the weight when deciding how aggressively to
+    trim each entry, allowing the AI to surface JD signals like "this
+    role is much more relevant than that one." Defaults to 1.0 (no
+    adjustment) for entries the AI omits.
+
+    Mirrors ``work_highlights_by_id`` in omitting work entries with
+    zero highlights: a weight on a zero-highlight entry has no
+    behavioral effect (renderer floor stays 0), so the wire surface
+    skips it.
+
+    Range enforcement: Anthropic's structured-output keyword subset
+    does NOT honor ``minimum``/``maximum`` (see module docstring); the
+    range is communicated to the model via property and aggregate
+    description text and rejected post-parse by
+    ``ResumeCuration._validate_weights_range`` — there is no clamp,
+    out-of-range values fail the entire response.
     """
     properties: dict[str, Any] = {}
     for w in portfolio.work:
+        if not w.highlights:
+            continue
         wid = _check_id(w.id, "work entry")
         properties[wid] = {
             "type": "number",
             "description": (
-                f"Relative priority weight for work entry '{wid}' "
-                "(0.5-2.0). 1.0 = no adjustment; >1 keeps more "
-                "highlights from this role; <1 keeps fewer."
+                f"Relative priority weight for work entry '{wid}'. "
+                "Stay strictly within [0.5, 2.0] - out-of-range values "
+                "are rejected post-parse and fail the entire response. "
+                "1.0 = no adjustment; >1 keeps more highlights from "
+                "this role; <1 keeps fewer."
             ),
         }
     return {
@@ -290,12 +281,13 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
             "Optional per-work-entry priority weights. Emit only when "
             "the JD signals a strong preference for one role's content "
             "over another. Keys are portfolio work entry IDs; values "
-            "are floats in [0.5, 2.0]. Omitted entries default to 1.0. "
-            "Schema enforces decode-time range; the renderer clamps "
-            "again post-parse for defense in depth. The per-entry "
-            "highlight emission cap (see work_highlights_by_id) still "
-            "applies; weights affect only the renderer's per-position "
-            "floor, not the model's emission ceiling."
+            "MUST stay within [0.5, 2.0] (out-of-range values are "
+            "rejected post-parse and fail the entire response - there "
+            "is no clamping). Omitted entries default to 1.0. The "
+            "per-entry highlight emission cap (see "
+            "work_highlights_by_id) still applies; weights affect only "
+            "the renderer's per-position floor, not the model's "
+            "emission ceiling."
         ),
         "properties": properties,
     }
@@ -313,11 +305,15 @@ def _build_trim_priority_schema() -> dict[str, Any]:
         "description": (
             "Optional ordering of middle-tier sections by drop "
             "priority when the page overflows. First listed is "
-            "dropped first; sections omitted from the list inherit "
-            "the default cascade order. Interests is always first "
-            "to drop; work-highlights are always last. Use this to "
-            "signal JD-driven preference (e.g., emphasize "
-            "certifications by putting 'certificates' last)."
+            "dropped first. Sections omitted from the list inherit "
+            "the default cascade order: project_highlights -> "
+            "projects -> certificates -> education -> skill_groups. "
+            "Interests is always first to drop; work-highlights are "
+            "always last. Use this when the JD signals a strong "
+            "preference: emphasize certifications by putting "
+            "'certificates' last; deprioritize them by putting "
+            "'certificates' first; emphasize OSS work by putting "
+            "'projects' last."
         ),
         "items": {
             "type": "string",
