@@ -547,7 +547,12 @@ class ResumeCuration(BaseModel):
             "no clamping); validate_curation_ids additionally rejects "
             "unknown work_ids. Anthropic does not honor "
             "minimum/maximum at decode time, so the range survives "
-            "only as description guidance and post-parse rejection."
+            "only as description guidance and post-parse rejection. "
+            "Weights above 1.5 at the most-recent role are bounded by "
+            "the per-entry safety-net cap (ceil(floor * 1.5)) and will "
+            "not retain additional highlights beyond the cap - to keep "
+            "more highlights at the most-recent role, emit additional "
+            "highlight_id entries rather than a higher weight."
         ),
     )
     trim_priority: list[str] = Field(

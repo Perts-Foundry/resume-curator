@@ -258,6 +258,14 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
     description text and rejected post-parse by
     ``ResumeCuration._validate_weights_range`` — there is no clamp,
     out-of-range values fail the entire response.
+
+    Weight inertness at the most-recent role: the per-entry safety-net
+    cap (``ceil(floor * 1.5)``) bounds the total highlights retained
+    per work entry, so weights above 1.5 at the most-recent role
+    progressively become inert. The aggregate description below tells
+    the model how to recover the intent (emit more highlight IDs)
+    rather than over-spending tokens on weight signals that the
+    renderer will silently clamp.
     """
     properties: dict[str, Any] = {}
     for w in portfolio.work:
@@ -287,7 +295,12 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
             "per-entry highlight emission cap (see "
             "work_highlights_by_id) still applies; weights affect only "
             "the renderer's per-position floor, not the model's "
-            "emission ceiling."
+            "emission ceiling. As a practical consequence, weights "
+            "above 1.5 at the most-recent work entry are bounded by "
+            "the emit cap and will NOT retain additional highlights "
+            "beyond the cap; to keep more highlights at the most "
+            "recent role, emit additional highlight_id entries in "
+            "work_highlights_by_id rather than a higher weight."
         ),
         "properties": properties,
     }
