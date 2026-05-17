@@ -1053,6 +1053,19 @@ and only makes sense for sustained high-volume use (Phase 2 batch scoring).
 
 Minimum cacheable size is 2,048 tokens. Portfolio data exceeds this easily (~10k tokens).
 
+**On-path / off-path cache partitioning.** Toggling `with_cover_letter` between
+requests does NOT share cache hits. The cover-letter rulebook block is
+inserted into the system-prompt prefix before the portfolio block (the cache
+breakpoint), so the cached prefix differs between cover-letter-enabled and
+cover-letter-disabled requests. A mixed batch will show one
+`cache_creation_input_tokens` payment per path-flip in `curation_log.json`.
+The cost is small (~$0.10 per cold path-flip at current Sonnet 4.6 rates);
+a multi-breakpoint optimization that shares the system-prompt text across
+both paths is tracked in `TODO.md`. Separately, Anthropic's structured-output
+feature invalidates the cache when `output_format` (the per-call JSON schema
+built from portfolio data) changes, so cache reuse also requires the same
+`max_pages` and the same portfolio.
+
 ---
 
 ## Configuration

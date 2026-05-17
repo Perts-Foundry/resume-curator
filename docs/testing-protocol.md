@@ -232,7 +232,7 @@ evaluate both the structural contract and the human-judgment axes:
 `validate_cover_letter` in `src/curator/models.py` enforces all of these; a successful
 run implies PASS. Confirm by checking the artifacts exist and the log records the flag.
 
-- Word count 250-300 total, 40-130 per body paragraph
+- Word count 250-360 total, 40-130 per body paragraph
 - 2-3 body paragraphs
 - Sign-off in `COVER_LETTER_VALID_SIGN_OFFS` enum
 - No em-dashes (`—`)
