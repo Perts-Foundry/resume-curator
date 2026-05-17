@@ -459,7 +459,7 @@ class TestWriteAuditArtifacts:
         assert log_data["format_version"] == "2.3"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
-        assert log_data["prompt_version"] == "2026-05-19"
+        assert log_data["prompt_version"] == "2026-05-20"
         assert log_data["prompt_hash"] == PROMPT_HASH
         assert isinstance(log_data["prompt_hash"], str)
         assert len(log_data["prompt_hash"]) == 12
@@ -2319,6 +2319,191 @@ class TestTrimToFit:
 
 
 # ---------------------------------------------------------------------------
+# AI hint integration: trim_priority + work_highlight_weights
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTierOrder:
+    """The renderer's _resolve_tier_order helper composes the cascade
+    evaluation order with two guardrails: interests is always first to
+    drop, work highlights (to-floor + below-floor) always last. The
+    AI's trim_priority controls the order of the middle band."""
+
+    def test_default_order_when_ai_omits_hint(self) -> None:
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(None)
+        assert order == [
+            "interests",
+            "project_highlights",
+            "projects",
+            "certificates",
+            "education",
+            "skill_groups",
+            "highlight",
+            "highlight_below_floor",
+        ]
+
+    def test_default_order_when_ai_emits_empty_list(self) -> None:
+        from curator.renderer import _resolve_tier_order
+
+        assert _resolve_tier_order([]) == _resolve_tier_order(None)
+
+    def test_full_ai_list_honored_with_pinned_guardrails(self) -> None:
+        # Reverse the default middle band; interests stays first,
+        # work-highlight tiers stay last.
+        from curator.renderer import _resolve_tier_order
+
+        ai_order = [
+            "skill_groups",
+            "education",
+            "certificates",
+            "projects",
+            "project_highlights",
+        ]
+        order = _resolve_tier_order(ai_order)
+        assert order[0] == "interests"
+        assert order[-2:] == ["highlight", "highlight_below_floor"]
+        assert order[1:-2] == ai_order
+
+    def test_partial_ai_list_appends_missing_middle_tiers_in_default_order(
+        self,
+    ) -> None:
+        # AI only specifies certificates and projects; the other
+        # middle tiers fill the tail of the middle band in default
+        # order.
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(["certificates", "projects"])
+        assert order == [
+            "interests",
+            "certificates",
+            "projects",
+            # Default-order fill for omitted middle tiers:
+            "project_highlights",
+            "education",
+            "skill_groups",
+            "highlight",
+            "highlight_below_floor",
+        ]
+
+    def test_ai_list_duplicates_deduped_first_seen_wins(self) -> None:
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(["projects", "certificates", "projects"])
+        # Second "projects" is dropped.
+        assert order.count("projects") == 1
+        assert order.index("certificates") > order.index("projects")
+
+    def test_unknown_ai_entries_ignored(self) -> None:
+        # Schema enum prevents this, but the resolver tolerates it
+        # for defense in depth.
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(["projects", "not-a-real-tier", "interests"])
+        # interests cannot be AI-controlled even if emitted; the
+        # resolver only inserts items from _DEFAULT_MIDDLE_BAND.
+        assert "not-a-real-tier" not in order
+        assert order.count("interests") == 1  # pinned, not duplicated
+
+
+class TestWorkHighlightWeights:
+    """Weight scaling applies to the per-position floor in tier 6
+    (work highlights to floor). Default weight 1.0 leaves the floor
+    unchanged; >1 keeps more highlights from that role, <1 keeps
+    fewer. Out-of-range values are caught at the Pydantic boundary
+    so the renderer can assume valid input."""
+
+    def _sections(self) -> dict[str, Any]:
+        return {
+            "work": [
+                {
+                    "id": "w-recent",
+                    "highlights": [{"id": f"h{i}"} for i in range(10)],
+                },
+                {
+                    "id": "w-older",
+                    "highlights": [{"id": f"h{i}"} for i in range(10)],
+                },
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [{"id": "e1"}],
+        }
+
+    def test_weight_above_one_raises_effective_floor(self) -> None:
+        from curator.renderer import _generate_next_trim
+
+        sections = self._sections()
+        # Default floors (8, 6, 6, 2, 2) for 2-page mode. w-older at
+        # position 1 has floor 6; weight 1.5 raises effective floor to
+        # 9. With 10 highlights, only 1 should be trimmable before
+        # hitting the floor.
+        step = _generate_next_trim(
+            sections,
+            None,
+            work_position_floors=(8, 6, 6, 2, 2),
+            work_highlight_weight_hints={"w-older": 1.5},
+        )
+        # First trim still goes to the older role (default cascade
+        # is bottom-up by position), but the trim becomes available
+        # only because 10 > 9. Validate by exhausting the trim:
+        # after one trim, w-older has 9 highlights (== effective
+        # floor), so the next step should move to w-recent.
+        from curator.renderer import _apply_trim
+
+        assert step is not None
+        assert step.target_id == "w-older"
+        sections, _ = _apply_trim(sections, None, step)
+        step2 = _generate_next_trim(
+            sections,
+            None,
+            work_position_floors=(8, 6, 6, 2, 2),
+            work_highlight_weight_hints={"w-older": 1.5},
+        )
+        assert step2 is not None
+        assert step2.target_id == "w-recent"
+
+    def _count_tier6_trims(
+        self,
+        sections: dict[str, Any],
+        weights: dict[str, float] | None,
+    ) -> dict[str, int]:
+        """Drain via tier 6 only (stop at the first below-floor trim)."""
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        trimmed: dict[str, int] = {}
+        while True:
+            step = _generate_next_trim(
+                sections,
+                None,
+                work_position_floors=(8, 6, 6, 2, 2),
+                work_highlight_weight_hints=weights,
+            )
+            if step is None or step.below_floor:
+                break
+            trimmed[step.target_id or ""] = trimmed.get(step.target_id or "", 0) + 1
+            sections, _ = _apply_trim(sections, None, step)
+        return trimmed
+
+    def test_weight_below_one_lowers_effective_floor(self) -> None:
+        # Position 0 floor=8; weight 0.5 lowers effective floor to 4.
+        # That means w-recent loses 10-4=6 highlights via tier 6.
+        # w-older keeps default floor 6 -> 10-6=4 trims.
+        trimmed = self._count_tier6_trims(self._sections(), {"w-recent": 0.5})
+        assert trimmed["w-recent"] == 6
+        assert trimmed["w-older"] == 4
+
+    def test_no_weight_hint_uses_unscaled_floor(self) -> None:
+        # No weights -> default floors: w-recent loses 10-8=2,
+        # w-older loses 10-6=4.
+        trimmed = self._count_tier6_trims(self._sections(), None)
+        assert trimmed["w-recent"] == 2
+        assert trimmed["w-older"] == 4
+
+
+# ---------------------------------------------------------------------------
 # Additional trim edge cases
 # ---------------------------------------------------------------------------
 
@@ -2429,14 +2614,19 @@ class TestGenerateNextTrimEdgeCases:
         assert step.description == "Removed skill group: s2"
 
     def test_full_trim_sequence(self) -> None:
-        """Walk through a full trim sequence verifying the new 8-tier ordering.
+        """Walk through a full trim sequence verifying the cascade order.
 
-        With default floors ``(3, 3, 0, 0, 0)`` (1-page profile), tier 6
-        scans positions N-1..0 and drains each position to its floor
-        before advancing. Older positions (floor 0) drain fully before
-        positions 0/1 (floor 3) are touched. Once tier 6 is exhausted,
-        skill groups go (tier 7), then below-floor last resort drains
-        positions 1 and 0 from the bottom up (tier 8).
+        2026-05-20 hybrid: ``interests`` is always dropped first; work
+        highlights are always dropped last (per-position floor first,
+        then below-floor as final escape hatch). The middle band
+        (project highlights, projects, certificates, education,
+        skill groups) is AI-reorderable; with no AI hint, it runs in
+        the default order encoded in ``_DEFAULT_MIDDLE_BAND``.
+
+        With default floors ``(3, 3, 0, 0, 0)`` (1-page profile),
+        older positions (floor 0) drain fully before positions 0/1
+        (floor 3) are touched, and skill groups are removed wholesale
+        BEFORE work highlights start trimming.
         """
         from curator.renderer import _apply_trim, _generate_next_trim
 
@@ -2487,36 +2677,38 @@ class TestGenerateNextTrimEdgeCases:
             descriptions.append(step.description)
             sections, interests = _apply_trim(sections, interests, step)
 
-        # Expected 8-tier progression (work entries and projects of
-        # count <= 2 are never removed wholesale; top CERTIFICATE_FLOOR
-        # certs are preserved; skill groups removed atomically at
-        # tier 7 lowest-priority first):
-        #  1: interests
-        #  2: project highlights, lowest project first: p2 -> ph2, ph1
-        #  3: projects wholesale -- only 2 remain -> skip
-        #  4: certs bottom-up down to floor: c5, c4 (c1-c3 survive)
-        #  5: education keeps >=1 -> skip
-        #  6: work to per-position floor, bottom-up:
-        #     - w4 (pos 3, floor 0): len 1>0 -> h9
-        #     - w3 (pos 2, floor 0): len 2>0 -> h8, then h7
-        #     - w2 (pos 1, floor 3): len 3>3 false -> skip
-        #     - w1 (pos 0, floor 3): len 3>3 false -> skip
-        #  7: skill groups bottom-up: s2, then s1
-        #  8: below-floor last resort, scan N-1..0 for first non-empty:
-        #     - w4 empty, w3 empty
-        #     - w2 -> h6, h5, h4 (3 below-floor steps)
-        #     - w1 -> h3, h2, h1 (3 below-floor steps)
+        # Expected cascade progression with default (no AI) ordering.
+        # Work entries and projects of count <= 2 are never removed
+        # wholesale; top CERTIFICATE_FLOOR certs are preserved; the
+        # default middle band runs in order project_highlights,
+        # projects, certificates, education, skill_groups; then work
+        # highlights to floor; then below-floor as last resort:
+        #  - interests
+        #  - project highlights, lowest project first: p2 -> ph2, ph1
+        #  - projects wholesale -- only 2 remain -> skip
+        #  - certs bottom-up down to floor: c5, c4 (c1-c3 survive)
+        #  - education keeps >=1 -> skip
+        #  - skill groups bottom-up: s2, then s1
+        #  - work to per-position floor, bottom-up:
+        #    - w4 (pos 3, floor 0): len 1>0 -> h9
+        #    - w3 (pos 2, floor 0): len 2>0 -> h8, then h7
+        #    - w2 (pos 1, floor 3): len 3>3 false -> skip
+        #    - w1 (pos 0, floor 3): len 3>3 false -> skip
+        #  - below-floor last resort, scan N-1..0 for first non-empty:
+        #    - w4 empty, w3 empty
+        #    - w2 -> h6, h5, h4 (3 below-floor steps)
+        #    - w1 -> h3, h2, h1 (3 below-floor steps)
         expected = [
             "Removed interests section",
             "Removed highlight: ph2 from project: p2",
             "Removed highlight: ph1 from project: p2",
             "Removed certificate: c5",
             "Removed certificate: c4",
+            "Removed skill group: s2",
+            "Removed skill group: s1",
             "Removed highlight: h9 from work entry: w4",
             "Removed highlight: h8 from work entry: w3",
             "Removed highlight: h7 from work entry: w3",
-            "Removed skill group: s2",
-            "Removed skill group: s1",
             "Removed highlight: h6 from work entry: w2",
             "Removed highlight: h5 from work entry: w2",
             "Removed highlight: h4 from work entry: w2",

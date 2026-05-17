@@ -103,13 +103,18 @@ class TestTopLevelShape:
             "suggested_label",
             "company_name",
             "work_highlights_by_id",
+            "work_highlight_weights",
             "skills",
             "projects",
+            "trim_priority",
         ]
 
-    def test_top_level_required_lists_all_fields(
+    def test_top_level_required_lists_all_content_fields(
         self, realistic_portfolio: PortfolioData
     ) -> None:
+        # ``work_highlight_weights`` and ``trim_priority`` are optional
+        # AI hints; they are present in ``properties`` but excluded
+        # from ``required`` so the model may omit them.
         schema = build_curation_schema(realistic_portfolio)
         assert set(schema["required"]) == {
             "summary",
@@ -324,15 +329,19 @@ class TestSkills:
         schema = build_curation_schema(realistic_portfolio)
         assert "skills" in schema["required"]
 
-    def test_skills_field_order_between_work_highlights_and_projects(
+    def test_skills_field_order_after_work_highlights_before_projects(
         self, realistic_portfolio: PortfolioData
     ) -> None:
         # Under constrained decoding, field order matters: skills
         # must come after work_highlights_by_id (so the model commits
-        # to highlight ranking first) and before projects.
+        # to highlight ranking first) and before projects. As of
+        # 2026-05-20 ``work_highlight_weights`` sits between
+        # work_highlights_by_id and skills (weights ride on top of
+        # the ranking decision); skills immediately precedes projects.
         keys = list(build_curation_schema(realistic_portfolio)["properties"].keys())
-        assert keys.index("skills") == keys.index("work_highlights_by_id") + 1
-        assert keys.index("projects") == keys.index("skills") + 1
+        assert keys.index("work_highlights_by_id") < keys.index("skills")
+        assert keys.index("skills") < keys.index("projects")
+        assert keys.index("skills") == keys.index("projects") - 1
 
     def test_schema_has_no_skills_by_id_anywhere(
         self, realistic_portfolio: PortfolioData

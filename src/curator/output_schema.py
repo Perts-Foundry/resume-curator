@@ -250,6 +250,82 @@ def _build_skills_schema(portfolio: PortfolioData) -> dict[str, Any]:
     }
 
 
+#: Section names the AI may reorder in the trim cascade middle band.
+#: ``interests`` (first) and the work-highlight tiers (last + below-floor)
+#: are pinned by the renderer and not exposed to the AI.
+_TRIM_PRIORITY_MIDDLE_SECTIONS: tuple[str, ...] = (
+    "project_highlights",
+    "projects",
+    "certificates",
+    "education",
+    "skill_groups",
+)
+
+
+def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, Any]:
+    """Per-work-entry priority weights (optional AI hint).
+
+    Each property is a portfolio work entry ID; values are floats in
+    [0.5, 2.0]. The renderer multiplies the per-position floor by the
+    weight when deciding how aggressively to trim each entry, allowing
+    the AI to surface JD signals like "this role is much more relevant
+    than that one." Defaults to 1.0 (no adjustment) for entries the AI
+    omits.
+    """
+    properties: dict[str, Any] = {}
+    for w in portfolio.work:
+        wid = _check_id(w.id, "work entry")
+        properties[wid] = {
+            "type": "number",
+            "description": (
+                f"Relative priority weight for work entry '{wid}' "
+                "(0.5-2.0). 1.0 = no adjustment; >1 keeps more "
+                "highlights from this role; <1 keeps fewer."
+            ),
+        }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "description": (
+            "Optional per-work-entry priority weights. Emit only when "
+            "the JD signals a strong preference for one role's content "
+            "over another. Keys are portfolio work entry IDs; values "
+            "are floats in [0.5, 2.0]. Omitted entries default to 1.0. "
+            "Schema enforces decode-time range; the renderer clamps "
+            "again post-parse for defense in depth. The per-entry "
+            "highlight emission cap (see work_highlights_by_id) still "
+            "applies; weights affect only the renderer's per-position "
+            "floor, not the model's emission ceiling."
+        ),
+        "properties": properties,
+    }
+
+
+def _build_trim_priority_schema() -> dict[str, Any]:
+    """Optional AI-controlled cascade order for middle-tier sections.
+
+    Interests is always dropped first; work highlights are always
+    dropped last (per-position floor first, below-floor as last
+    resort). The AI controls the order of everything in between.
+    """
+    return {
+        "type": "array",
+        "description": (
+            "Optional ordering of middle-tier sections by drop "
+            "priority when the page overflows. First listed is "
+            "dropped first; sections omitted from the list inherit "
+            "the default cascade order. Interests is always first "
+            "to drop; work-highlights are always last. Use this to "
+            "signal JD-driven preference (e.g., emphasize "
+            "certifications by putting 'certificates' last)."
+        ),
+        "items": {
+            "type": "string",
+            "enum": list(_TRIM_PRIORITY_MIDDLE_SECTIONS),
+        },
+    }
+
+
 def _build_projects_schema(portfolio: PortfolioData) -> dict[str, Any]:
     """Array of project IDs, enum-constrained to portfolio.projects."""
     project_ids = [_check_id(p.id, "project") for p in portfolio.projects]
@@ -279,6 +355,14 @@ def _build_resume_schema(portfolio: PortfolioData, max_pages: int) -> dict[str, 
     decoding (CLAUDE.md "Claude API & AI Best Practices"): the model
     emits fields in declared order, so ``summary`` first commits tone
     and framing before ``work_highlights_by_id`` ranking decisions.
+    ``work_highlight_weights`` (per-entry budget hints) follows the
+    ranking so the model assigns weights after committing to its
+    ranking choices. ``trim_priority`` is emitted last so it reads
+    every content section first.
+
+    Both ``work_highlight_weights`` and ``trim_priority`` are optional
+    in ``required``: the model may omit either or both, in which case
+    the renderer falls back to default behavior.
     """
     return {
         "type": "object",
@@ -298,8 +382,10 @@ def _build_resume_schema(portfolio: PortfolioData, max_pages: int) -> dict[str, 
             "work_highlights_by_id": _build_work_highlights_by_id_schema(
                 portfolio, max_pages
             ),
+            "work_highlight_weights": _build_work_highlight_weights_schema(portfolio),
             "skills": _build_skills_schema(portfolio),
             "projects": _build_projects_schema(portfolio),
+            "trim_priority": _build_trim_priority_schema(),
         },
     }
 

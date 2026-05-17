@@ -601,7 +601,67 @@ class TestResumeCuration:
             "work_highlights",
             "skills",
             "projects",
+            "work_highlight_weights",
+            "trim_priority",
         )
+
+    def test_work_highlight_weights_default_to_empty(self) -> None:
+        curation = ResumeCuration.model_validate(_make_curation_dict())
+        assert curation.work_highlight_weights == {}
+
+    def test_trim_priority_default_to_empty(self) -> None:
+        curation = ResumeCuration.model_validate(_make_curation_dict())
+        assert curation.trim_priority == []
+
+    def test_work_highlight_weights_accept_valid_range(self) -> None:
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.5})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+
+    def test_work_highlight_weights_reject_above_max(self) -> None:
+        weights = {"acme-senior-engineer": 2.5}
+        with pytest.raises(ValidationError, match=r"out of range \[0\.5, 2\.0\]"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(work_highlight_weights=weights)
+            )
+
+    def test_work_highlight_weights_reject_below_min(self) -> None:
+        weights = {"acme-senior-engineer": 0.3}
+        with pytest.raises(ValidationError, match=r"out of range \[0\.5, 2\.0\]"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(work_highlight_weights=weights)
+            )
+
+    def test_trim_priority_accepts_valid_items(self) -> None:
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(trim_priority=["certificates", "projects"])
+        )
+        assert curation.trim_priority == ["certificates", "projects"]
+
+    def test_trim_priority_rejects_unknown_item(self) -> None:
+        with pytest.raises(ValidationError, match="not in allowed set"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["not-a-section"])
+            )
+
+    def test_trim_priority_rejects_pinned_items(self) -> None:
+        # ``interests`` and ``highlight`` are pinned by the renderer
+        # and not exposed to the AI; validator rejects them.
+        with pytest.raises(ValidationError, match="not in allowed set"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["interests"])
+            )
+        with pytest.raises(ValidationError, match="not in allowed set"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["highlight"])
+            )
+
+    def test_trim_priority_rejects_duplicates(self) -> None:
+        with pytest.raises(ValidationError, match="duplicate"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["projects", "projects"])
+            )
 
     def test_control_chars_in_summary_rejected(self) -> None:
         with pytest.raises(ValidationError, match="control characters"):

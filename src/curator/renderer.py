@@ -47,6 +47,8 @@ from curator.rules import COVER_LETTER_WORD_MAX
 # exportable via ``from x import *``.
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from curator.client import CurationResult
     from curator.config import CuratorSettings
     from curator.models import CoverLetterCuration, PortfolioData, ResumeCuration
@@ -384,12 +386,58 @@ def _apply_selections(
 # :mod:`curator.eval.report` can consume them without a circular import.
 
 
+#: Default cascade order for the AI-controlled middle band. Used when
+#: ``trim_priority`` is empty or absent; partial AI lists are completed
+#: by appending whichever default-band entries the AI omitted, in the
+#: order they appear here.
+_DEFAULT_MIDDLE_BAND: tuple[str, ...] = (
+    "project_highlights",
+    "projects",
+    "certificates",
+    "education",
+    "skill_groups",
+)
+
+
+def _resolve_tier_order(ai_trim_priority: Sequence[str] | None) -> list[str]:
+    """Compose the cascade evaluation order.
+
+    Pinned positions:
+      - Always first: ``interests``
+      - Always last: ``highlight`` (to-floor), then ``highlight_below_floor``
+
+    The AI controls the middle band's order via ``trim_priority``. Any
+    middle-band tier the AI omits is appended at the end of the middle
+    band in default order, so a partial AI list still produces a
+    complete cascade. Unknown entries in the AI list (defense in depth;
+    schema enum prevents them) are dropped silently.
+    """
+    order: list[str] = ["interests"]
+    if ai_trim_priority:
+        ai_middle = [s for s in ai_trim_priority if s in _DEFAULT_MIDDLE_BAND]
+        # Dedupe while preserving first-seen order.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for s in ai_middle:
+            if s not in seen:
+                seen.add(s)
+                deduped.append(s)
+        appended = [s for s in _DEFAULT_MIDDLE_BAND if s not in seen]
+        order.extend(deduped + appended)
+    else:
+        order.extend(_DEFAULT_MIDDLE_BAND)
+    order.extend(["highlight", "highlight_below_floor"])
+    return order
+
+
 def _generate_next_trim(
     sections: dict[str, Any],
     interests: dict[str, Any] | None,
     *,
     work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
+    trim_priority: Sequence[str] | None = None,
+    work_highlight_weight_hints: Mapping[str, float] | None = None,
 ) -> TrimStep | None:
     """Return the next trim operation, or None if nothing left to cut.
 
@@ -447,124 +495,129 @@ def _generate_next_trim(
     is the absolute last to lose content. Each tier 8 step emits a
     WARNING via the trim loop with ``below_floor=True``.
     """
-    # Tier 1: Remove interests section.
-    if interests is not None:
+    weight_hints = work_highlight_weight_hints or {}
+
+    def _eval_interests() -> TrimStep | None:
+        if interests is None:
+            return None
         hobbies = interests.get("hobbies", [])
         facts = interests.get("fun_facts", [])
-        if hobbies or facts:
+        if not (hobbies or facts):
+            return None
+        return TrimStep(
+            kind=TrimKind.INTERESTS,
+            description="Removed interests section",
+        )
+
+    def _eval_project_highlights() -> TrimStep | None:
+        projects = sections.get("projects", [])
+        for i in range(len(projects) - 1, -1, -1):
+            project_highlights = projects[i].get("highlights") or []
+            if len(project_highlights) > 0:
+                pid = projects[i].get("id", "unknown")
+                hid = project_highlights[-1].get("id", "unknown")
+                return TrimStep(
+                    kind=TrimKind.PROJECT_HIGHLIGHT,
+                    description=f"Removed highlight: {hid} from project: {pid}",
+                    target_id=pid,
+                )
+        return None
+
+    def _eval_projects() -> TrimStep | None:
+        projects = sections.get("projects", [])
+        if len(projects) > 2:
+            pid = projects[-1].get("id", "unknown")
             return TrimStep(
-                kind=TrimKind.INTERESTS,
-                description="Removed interests section",
+                kind=TrimKind.PROJECT,
+                description=f"Removed project: {pid}",
             )
+        return None
 
-    # Tier 2: Drain project highlights bottom-up (lowest-ranked project
-    # first). Allows full depletion to 0.
-    projects = sections.get("projects", [])
-    for i in range(len(projects) - 1, -1, -1):
-        project_highlights = projects[i].get("highlights") or []
-        if len(project_highlights) > 0:
-            pid = projects[i].get("id", "unknown")
-            hid = project_highlights[-1].get("id", "unknown")
+    def _eval_certificates() -> TrimStep | None:
+        certificates = sections.get("certificates", [])
+        if len(certificates) > certificate_floor:
+            cid = certificates[-1].get("id", "unknown")
             return TrimStep(
-                kind=TrimKind.PROJECT_HIGHLIGHT,
-                description=f"Removed highlight: {hid} from project: {pid}",
-                target_id=pid,
+                kind=TrimKind.CERTIFICATE,
+                description=f"Removed certificate: {cid}",
             )
+        return None
 
-    # Tier 3: Remove the lowest-ranked project wholesale (keep at least
-    # 2 so weight-1 and weight-2 picks always survive). The AI orders
-    # projects by (JD fit x weight), strongest first, so ``projects[-1]``
-    # is the least valuable to cut. Description rides with its project:
-    # there is no separate description-drain tier — template slot 0
-    # already shows the description alone once highlights=0, so the
-    # description disappears only when the whole project is cut here.
-    if len(projects) > 2:
-        pid = projects[-1].get("id", "unknown")
-        return TrimStep(
-            kind=TrimKind.PROJECT,
-            description=f"Removed project: {pid}",
-        )
+    def _eval_education() -> TrimStep | None:
+        education = sections.get("education", [])
+        if len(education) > 1:
+            eid = education[-1].get("id", "unknown")
+            return TrimStep(
+                kind=TrimKind.EDUCATION,
+                description=f"Removed education: {eid}",
+            )
+        return None
 
-    # Tier 4: Trim certificates bottom-up, keeping the top
-    # ``certificate_floor`` entries (default ``CERTIFICATE_FLOOR`` = 3).
-    # The top certs are load-bearing credentials that should survive
-    # any amount of page pressure; there is no later cert-drain tier,
-    # so once the floor is reached the cascade skips certificates
-    # permanently.
-    certificates = sections.get("certificates", [])
-    if len(certificates) > certificate_floor:
-        cid = certificates[-1].get("id", "unknown")
-        return TrimStep(
-            kind=TrimKind.CERTIFICATE,
-            description=f"Removed certificate: {cid}",
-        )
+    def _eval_skill_groups() -> TrimStep | None:
+        skills = sections.get("skills", [])
+        for i in range(len(skills) - 1, -1, -1):
+            if skills[i].get("keywords"):
+                sid = skills[i].get("id", "unknown")
+                return TrimStep(
+                    kind=TrimKind.SKILL_GROUP,
+                    description=f"Removed skill group: {sid}",
+                    target_id=sid,
+                )
+        return None
 
-    # Tier 5: Remove last education (only if >1 remains).
-    education = sections.get("education", [])
-    if len(education) > 1:
-        eid = education[-1].get("id", "unknown")
-        return TrimStep(
-            kind=TrimKind.EDUCATION,
-            description=f"Removed education: {eid}",
-        )
-
-    # Tier 6: Trim work to per-position floor. Scan positions N-1..0
-    # bottom-up; first position with ``len(highlights) > floors[i]``
-    # loses last highlight. Positions beyond ``work_position_floors``
-    # length fall through to the last tuple value. Bottom-up scanning
-    # preserves the "protect recent content" intent: older roles trim
-    # toward their floor first; the top role only loses content once
-    # everyone else is at floor.
-    work = sections.get("work", [])
-    floors_len = len(work_position_floors)
-    last_floor = work_position_floors[-1] if floors_len > 0 else 0
-    for i in range(len(work) - 1, -1, -1):
-        floor = work_position_floors[i] if i < floors_len else last_floor
-        highlights = work[i].get("highlights", [])
-        if len(highlights) > floor:
+    def _eval_work_highlights_to_floor() -> TrimStep | None:
+        # Per-position floors are scaled by AI-emitted weights when
+        # present. Weight 1.0 (default) means unchanged; >1 keeps more
+        # highlights from this role, <1 keeps fewer. ``max(0, ...)``
+        # protects against pathological weights driving the effective
+        # floor negative.
+        work = sections.get("work", [])
+        floors_len = len(work_position_floors)
+        last_floor = work_position_floors[-1] if floors_len > 0 else 0
+        for i in range(len(work) - 1, -1, -1):
+            base_floor = work_position_floors[i] if i < floors_len else last_floor
             wid = work[i].get("id", "unknown")
-            hid = highlights[-1].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.HIGHLIGHT,
-                description=f"Removed highlight: {hid} from work entry: {wid}",
-                target_id=wid,
-            )
+            weight = weight_hints.get(wid, 1.0)
+            effective_floor = max(0, round(base_floor * weight))
+            highlights = work[i].get("highlights", [])
+            if len(highlights) > effective_floor:
+                hid = highlights[-1].get("id", "unknown")
+                return TrimStep(
+                    kind=TrimKind.HIGHLIGHT,
+                    description=f"Removed highlight: {hid} from work entry: {wid}",
+                    target_id=wid,
+                )
+        return None
 
-    # Tier 7: Remove the lowest-priority skill group wholesale
-    # (lowest priority is the last entry in ``skills``). Dropping a
-    # whole group per iteration frees far more vertical space than
-    # one-keyword-at-a-time drain and converges the page-fit loop in
-    # dramatically fewer passes. Runs after the per-position floor
-    # tier so skill breadth is preserved until the cascade is running
-    # low on options. Groups with zero keywords are skipped here (they
-    # don't take page space, and ``_prune_empty_sections`` removes them).
-    skills = sections.get("skills", [])
-    for i in range(len(skills) - 1, -1, -1):
-        if skills[i].get("keywords"):
-            sid = skills[i].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.SKILL_GROUP,
-                description=f"Removed skill group: {sid}",
-                target_id=sid,
-            )
+    def _eval_work_highlights_below_floor() -> TrimStep | None:
+        work = sections.get("work", [])
+        for i in range(len(work) - 1, -1, -1):
+            highlights = work[i].get("highlights", [])
+            if len(highlights) > 0:
+                wid = work[i].get("id", "unknown")
+                hid = highlights[-1].get("id", "unknown")
+                return TrimStep(
+                    kind=TrimKind.HIGHLIGHT,
+                    description=f"Removed highlight: {hid} from work entry: {wid}",
+                    target_id=wid,
+                    below_floor=True,
+                )
+        return None
 
-    # Tier 8: Below-floor last resort. Scan positions N-1..0
-    # (oldest-first) and trim the first position with any remaining
-    # highlights. Sets ``below_floor=True`` so the trim loop emits a
-    # WARNING. Generalized over all positions because older positions
-    # may now have non-zero floors that tier 6 respected.
-    for i in range(len(work) - 1, -1, -1):
-        highlights = work[i].get("highlights", [])
-        if len(highlights) > 0:
-            wid = work[i].get("id", "unknown")
-            hid = highlights[-1].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.HIGHLIGHT,
-                description=f"Removed highlight: {hid} from work entry: {wid}",
-                target_id=wid,
-                below_floor=True,
-            )
-
+    evaluators = {
+        "interests": _eval_interests,
+        "project_highlights": _eval_project_highlights,
+        "projects": _eval_projects,
+        "certificates": _eval_certificates,
+        "education": _eval_education,
+        "skill_groups": _eval_skill_groups,
+        "highlight": _eval_work_highlights_to_floor,
+        "highlight_below_floor": _eval_work_highlights_below_floor,
+    }
+    for tier_name in _resolve_tier_order(trim_priority):
+        step = evaluators[tier_name]()
+        if step is not None:
+            return step
     return None
 
 
@@ -671,6 +724,8 @@ def _trim_to_fit(
     max_trim_iterations: int,
     work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
+    trim_priority: Sequence[str] | None = None,
+    work_highlight_weight_hints: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int, bool]:
     """Iteratively trim content until the PDF fits within max_pages.
 
@@ -696,6 +751,12 @@ def _trim_to_fit(
         certificate_floor: Hard minimum certificates preserved (top
             entries). Tier 4 never trims below this count; there is no
             bypass path. Defaults to ``CERTIFICATE_FLOOR``.
+        trim_priority: Optional AI-emitted ordering of middle-band
+            sections by drop priority. Forwarded to
+            ``_generate_next_trim``.
+        work_highlight_weight_hints: Optional per-work-entry
+            multipliers applied to the per-position floor in tier 6.
+            Forwarded to ``_generate_next_trim``.
 
     Returns:
         Tuple of (final_sections, final_interests, trim_log,
@@ -735,6 +796,8 @@ def _trim_to_fit(
             interests,
             work_position_floors=work_position_floors,
             certificate_floor=certificate_floor,
+            trim_priority=trim_priority,
+            work_highlight_weight_hints=work_highlight_weight_hints,
         )
         if step is None:
             logger.warning(
@@ -920,6 +983,19 @@ def _write_audit_artifacts(
     }
     if trim_log is not None:
         log_data["trim_log"] = trim_log
+    # AI-emitted hints (2026-05-19): record the per-entry weights and
+    # trim_priority list when the model emitted them, so post-hoc
+    # debugging can correlate a profile's trim pattern with the AI's
+    # JD-driven suggestions. Absent when neither field carries data.
+    ai_hints: dict[str, Any] = {}
+    if curation.curation.work_highlight_weights:
+        ai_hints["work_highlight_weights"] = dict(
+            curation.curation.work_highlight_weights
+        )
+    if curation.curation.trim_priority:
+        ai_hints["trim_priority"] = list(curation.curation.trim_priority)
+    if ai_hints:
+        log_data["ai_hints"] = ai_hints
     if curation.cover_letter is not None:
         word_count = _cover_letter_word_count(curation.cover_letter)
         log_data["cover_letter"] = {
@@ -1206,6 +1282,8 @@ def render(
                 max_trim_iterations=settings.max_trim_iterations,
                 work_position_floors=caps.work_position_floors,
                 certificate_floor=caps.certificate_floor,
+                trim_priority=rc.trim_priority or None,
+                work_highlight_weight_hints=rc.work_highlight_weights or None,
             )
             pdf_path = output_dir / "resume.pdf"
         else:

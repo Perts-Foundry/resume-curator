@@ -67,7 +67,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-19"
+PROMPT_VERSION: str = "2026-05-20"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -279,6 +279,26 @@ to the JD. Note: the renderer caps each project at 2 content bullets \
 (or 1 bullet plus the description) and silently drops the rest, so \
 the in-portfolio highlight ranking matters most for the top 1-2 \
 slots per project.
+
+``work_highlight_weights`` (OPTIONAL): per-work-entry priority \
+weights in [0.5, 2.0]. Emit ONLY when the JD signals a strong \
+preference for one role's content over another. Default is 1.0 (no \
+adjustment); >1 keeps more highlights from that role, <1 keeps \
+fewer. Example: a security-heavy JD might warrant 1.5 for a security \
+role and 0.7 for a generalist role. Keys must be portfolio work IDs; \
+omit any role you do not want to adjust. The renderer applies \
+weights to the per-position floor only; the per-entry highlight \
+emission cap (see ``work_highlights_by_id``) is unchanged.
+
+``trim_priority`` (OPTIONAL): ordered list of section names by drop \
+priority when the page overflows. Items must come from \
+``[project_highlights, projects, certificates, education, \
+skill_groups]``; first listed is dropped first. Interests is always \
+dropped first; work highlights are always dropped last. Emit ONLY \
+when the JD signals a strong preference (e.g., a JD that emphasizes \
+compliance certifications would put ``certificates`` last; a JD \
+asking for OSS contributions would put ``projects`` last). Omitted \
+items inherit the default cascade order.
 </output_guidance>
 
 <curation_rules>

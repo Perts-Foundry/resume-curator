@@ -338,6 +338,8 @@ def _adapt_curation_dict(
         "work_highlights": work_highlights,
         "skills": skills,
         "projects": resume_dict.get("projects", []),
+        "work_highlight_weights": resume_dict.get("work_highlight_weights") or {},
+        "trim_priority": resume_dict.get("trim_priority") or [],
     }
     try:
         curation = ResumeCuration.model_validate(resume_payload)

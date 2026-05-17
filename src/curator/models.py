@@ -535,6 +535,29 @@ class ResumeCuration(BaseModel):
             "connection to the JD."
         ),
     )
+    work_highlight_weights: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-work-entry priority weights. Keys are "
+            "portfolio work IDs; values are floats in [0.5, 2.0]. "
+            "Renderer scales the per-position highlight floor by the "
+            "weight; absent entries default to 1.0 (no adjustment). "
+            "Schema enforces decode-time range; validator clamps "
+            "post-parse for defense in depth and rejects unknown "
+            "work_ids."
+        ),
+    )
+    trim_priority: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional ordered drop priority for middle-tier sections "
+            "in the page-fit cascade. Items are section names from "
+            "{project_highlights, projects, certificates, education, "
+            "skill_groups}; first listed is dropped first. Interests "
+            "is always first to drop; work highlights always last. "
+            "Missing items inherit the default cascade order."
+        ),
+    )
 
     @field_validator("summary", "suggested_label")
     @classmethod
@@ -542,6 +565,43 @@ class ResumeCuration(BaseModel):
         if _CONTROL_CHAR_RE.search(v):
             msg = "contains control characters"
             raise ValueError(msg)
+        return v
+
+    @field_validator("work_highlight_weights")
+    @classmethod
+    def _clamp_weights_and_validate_range(cls, v: dict[str, float]) -> dict[str, float]:
+        clamped: dict[str, float] = {}
+        for work_id, weight in v.items():
+            if not (0.5 <= weight <= 2.0):
+                msg = (
+                    f"work_highlight_weights['{work_id}'] = {weight} "
+                    "out of range [0.5, 2.0]"
+                )
+                raise ValueError(msg)
+            clamped[work_id] = float(weight)
+        return clamped
+
+    @field_validator("trim_priority")
+    @classmethod
+    def _validate_trim_priority_items(cls, v: list[str]) -> list[str]:
+        allowed = {
+            "project_highlights",
+            "projects",
+            "certificates",
+            "education",
+            "skill_groups",
+        }
+        seen: set[str] = set()
+        for item in v:
+            if item not in allowed:
+                msg = (
+                    f"trim_priority item '{item}' not in allowed set {sorted(allowed)}"
+                )
+                raise ValueError(msg)
+            if item in seen:
+                msg = f"trim_priority contains duplicate '{item}'"
+                raise ValueError(msg)
+            seen.add(item)
         return v
 
 
@@ -691,6 +751,14 @@ def validate_curation_ids(
     missing_work_ids = valid_work_ids - seen_work_ids
     if missing_work_ids:
         errors.append(f"missing ranking for work entries: {sorted(missing_work_ids)}")
+
+    # --- work_highlight_weights: keys must be valid portfolio work IDs ---
+    unknown_weight_keys = set(curation.work_highlight_weights) - valid_work_ids
+    if unknown_weight_keys:
+        errors.append(
+            f"work_highlight_weights references unknown work_ids: "
+            f"{sorted(unknown_weight_keys)}"
+        )
 
     # --- skills: unknown group IDs are hard; hallucinated keywords are soft ---
     # Under Option E (2026-05-15) the API-path adapter only emits
