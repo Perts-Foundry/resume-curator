@@ -1133,14 +1133,16 @@ class TestValidateCoverLetter:
         # (default strict=False); it ships with a logger.warning. This
         # test pins the contract that paid API calls aren't reject-and-
         # discarded for a 5-10% overshoot.
+        #
+        # 2026-05-17: cap moved from 300 to 360; body paragraphs are
+        # bounded at 90 hard, so the overshoot has to come from
+        # opening/closing where per-section bands are not enforced.
+        # Total here: 105 + 90 + 90 + 90 = 375 (15 over the new 360 cap).
         kwargs = _valid_letter_kwargs()
-        # Each body 90 (in-band), opening 65 (in-band), closing 60 -> total
-        # 305 (>= 301, over the 300 cap). 60 is over the closing 35-45
-        # band but per-section bands are not enforced today (PR-7 deferred).
-        kwargs["opening"] = "word " * 65
+        kwargs["opening"] = "word " * 105
         kwargs["body_paragraphs"][0] = "word " * 90
         kwargs["body_paragraphs"][1] = "word " * 90
-        kwargs["closing"] = "word " * 60
+        kwargs["closing"] = "word " * 90
         letter = CoverLetterCuration(**kwargs)
         # Does NOT raise (soft warn on API path).
         validate_cover_letter(letter, _minimal_portfolio())
@@ -1150,10 +1152,10 @@ class TestValidateCoverLetter:
         # over-max becomes a hard reject so hand-authored YAMLs fail
         # loudly instead of silently shipping.
         kwargs = _valid_letter_kwargs()
-        kwargs["opening"] = "word " * 65
+        kwargs["opening"] = "word " * 105
         kwargs["body_paragraphs"][0] = "word " * 90
         kwargs["body_paragraphs"][1] = "word " * 90
-        kwargs["closing"] = "word " * 60
+        kwargs["closing"] = "word " * 90
         letter = CoverLetterCuration(**kwargs)
         with pytest.raises(CurationValidationError, match="exceeds maximum"):
             validate_cover_letter(letter, _minimal_portfolio(), strict=True)

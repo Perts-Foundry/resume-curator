@@ -503,7 +503,7 @@ class TestCoverLetterSoftHyphenRegression:
 
     The negative test compiles with the packaged template (hyphenate: false)
     and asserts no soft-hyphen ActualText markers and a single page on the
-    high-water-mark fixture (close to the 300-word total cap; verified
+    high-water-mark fixture (close to the 360-word total cap; verified
     in-test). The positive test patches the template back to
     hyphenate: true and asserts the marker IS present, proving the
     assertion mechanism actually fires on the bad input.
@@ -513,8 +513,11 @@ class TestCoverLetterSoftHyphenRegression:
     # exercises a meaningful page-fit assertion. If the shared helper
     # is shrunk for an unrelated test, this floor fires before the
     # geometry assertion does, pointing the failure at the fixture
-    # edit rather than the template.
-    HIGH_WATER_MARK_FLOOR = 280
+    # edit rather than the template. Raised from 280 to 340 on
+    # 2026-05-17 in lockstep with COVER_LETTER_WORD_MAX 300 -> 360 so
+    # the fixture continues to sit "near the cap" and stress-test
+    # cover-letter page geometry rather than coasting well below it.
+    HIGH_WATER_MARK_FLOOR = 340
 
     def test_default_template_emits_no_soft_hyphen_markers(
         self, typst_safe_dir: Path
@@ -529,7 +532,7 @@ class TestCoverLetterSoftHyphenRegression:
 
         # Guard against shared-fixture drift: the page-fit assertion
         # below is meaningful only when the fixture is near the
-        # 300-word cap. If a future contributor shrinks
+        # 360-word cap. If a future contributor shrinks
         # valid_cover_letter() for an unrelated test, surface the
         # decoupling here instead of having the geometry assertion
         # mislead the reader.
@@ -545,7 +548,7 @@ class TestCoverLetterSoftHyphenRegression:
             f"valid_cover_letter() word count is {word_count}, below the "
             f"high-water-mark floor of {self.HIGH_WATER_MARK_FLOOR}. "
             "The page-fit assertion below relies on the fixture being "
-            "near the 300-word cap. Either restore the helper's length, "
+            "near the 360-word cap. Either restore the helper's length, "
             "or move this test to a local high-water-mark fixture."
         )
 
