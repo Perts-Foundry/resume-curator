@@ -53,10 +53,15 @@ def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
         skills_flat: list[str] = []
         for sr in obj.skills:
             skills_flat.extend(sr.keywords)
+        # The wire format carries a free-text ``company_name`` that the
+        # adapter slugifies into ``company_slug`` on the model side.
+        # Emitting ``obj.company_slug`` here round-trips: slugify(slug)
+        # returns the same slug since hyphens and lowercase letters are
+        # valid slug characters.
         return {
             "summary": obj.summary,
             "suggested_label": obj.suggested_label,
-            "company_slug": obj.company_slug,
+            "company_name": obj.company_slug,
             "work_highlights_by_id": {
                 wh.work_id: list(wh.highlight_ids) for wh in obj.work_highlights
             },
@@ -637,6 +642,68 @@ class TestCurateGrammarSchemaAdapter:
 
         assert result.curation == valid_curation
 
+    def test_company_name_is_slugified_into_company_slug(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """The wire schema carries a free-text ``company_name``; the
+        adapter slugifies it into the ``company_slug`` model field. The
+        AI never emits a pre-slugified value, and the model never sees a
+        free-text name."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["company_name"] = "Acme Corp., Inc."
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        assert result.curation.company_slug == "acme-corp-inc"
+
+    def test_empty_company_name_falls_back_to_slugify_default(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """An empty or whitespace-only ``company_name`` from the AI
+        must not crash the adapter. ``slugify`` returns its
+        ``fallback="general"`` for empty/invalid input."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["company_name"] = ""
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        assert result.curation.company_slug == "general"
+
+    def test_unicode_and_punctuation_in_company_name(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Non-ASCII characters and punctuation get collapsed to hyphens
+        by ``slugify``. The slug is always a valid ID pattern match."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["company_name"] = "Café & Bar (Paris) — Joinery"
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # All non-[a-z0-9] becomes '-', collapsed and stripped.
+        # 'Café' -> 'caf' (é dropped, not transliterated).
+        assert result.curation.company_slug == "caf-bar-paris-joinery"
+
     def test_truncation_with_unparseable_json_surfaces_truncation_hint(
         self,
         mocker: Any,
@@ -1058,7 +1125,7 @@ class TestCurateGrammarSchemaAdapter:
                 {
                     "summary": "x",
                     "suggested_label": "y",
-                    "company_slug": "z",
+                    "company_name": "Z",
                     "work_highlights_by_id": [],  # wrong: should be object
                     "skills": [],
                     "projects": [],

@@ -28,6 +28,7 @@ from curator.exceptions import (
     APISpendGuardError,
     CurationValidationError,
 )
+from curator.io_utils import slugify
 from curator.models import (
     CoverLetterCuration,
     PortfolioData,
@@ -289,10 +290,11 @@ def _adapt_curation_dict(
         {"skill_id": gid, "keywords": kws} for gid, kws in group_keywords.items()
     ]
 
+    company_name = resume_dict.get("company_name") or ""
     resume_payload = {
         "summary": resume_dict.get("summary"),
         "suggested_label": resume_dict.get("suggested_label"),
-        "company_slug": resume_dict.get("company_slug"),
+        "company_slug": slugify(company_name),
         "work_highlights": work_highlights,
         "skills": skills,
         "projects": resume_dict.get("projects", []),

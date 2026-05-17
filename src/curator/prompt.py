@@ -67,7 +67,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-13"
+PROMPT_VERSION: str = "2026-05-16"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -271,11 +271,14 @@ differentiator that must appear regardless of the target role.
 strictly on the candidate's actual job titles. If the highest title is \
 "Senior Engineer", do not suggest "Director" or "Principal".
 
-``company_slug``: extract the company name from the job description and \
-convert to kebab-case (for example, "Acme Corp" to "acme-corp", \
-"DataDog" to "datadog"). Strip corporate suffixes (Inc, Ltd, LLC, GmbH). \
-For subsidiaries like "DataLabs (a Google company)" return the primary \
-subsidiary name ("datalabs"). Max 64 characters.
+``company_name``: extract the company's display name from the job \
+description. Return as written in the wild (for example, "DataDog", \
+"Anthropic, PBC", "Hugging Face"); preserve the canonical capitalization \
+and spacing the company uses for itself. Strip surrounding boilerplate \
+("Job at ...", "Careers - ...") but not corporate suffixes. For \
+subsidiaries like "DataLabs (a Google company)" return the primary \
+subsidiary name ("DataLabs"). The client converts this to a URL-safe \
+slug downstream; do not pre-slugify.
 
 ``work_highlights_by_id``: an object keyed by portfolio work entry ID. \
 For each key (one per portfolio work entry; the schema requires all of \

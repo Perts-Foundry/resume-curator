@@ -101,7 +101,7 @@ class TestTopLevelShape:
         assert list(schema["properties"].keys()) == [
             "summary",
             "suggested_label",
-            "company_slug",
+            "company_name",
             "work_highlights_by_id",
             "skills",
             "projects",
@@ -114,7 +114,7 @@ class TestTopLevelShape:
         assert set(schema["required"]) == {
             "summary",
             "suggested_label",
-            "company_slug",
+            "company_name",
             "work_highlights_by_id",
             "skills",
             "projects",

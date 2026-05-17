@@ -503,11 +503,11 @@ class ResumeCuration(BaseModel):
         pattern=ID_PATTERN,
         max_length=64,
         description=(
-            "Kebab-case company name extracted from the job description. "
-            "Use only [a-z0-9-], start with [a-z0-9]. For 'Acme Corp.' "
-            "return 'acme-corp'. For subsidiaries like 'DataLabs (a Google "
-            "company)' return the primary subsidiary name ('datalabs'). "
-            "Strip corporate suffixes (Inc, Ltd, LLC, GmbH)."
+            "Kebab-case slug of the company name. Populated by the "
+            "client adapter via ``slugify(company_name)`` on the API "
+            "path, or by ``slugify(--name)`` on the static path. The "
+            "wire schema sent to the AI carries a free-text "
+            "``company_name``, not this slug."
         ),
     )
     work_highlights: list[WorkHighlightRanking] = Field(

@@ -17,7 +17,7 @@ Shape (top-level):
 
     summary                 string
     suggested_label         string
-    company_slug            string
+    company_name            string  (free-text; client slugifies)
     work_highlights_by_id   object[work_id -> array[items.enum]]
     skills                  array[string]  (flat keyword list)
     projects                array[items.enum]
@@ -118,15 +118,20 @@ def _build_suggested_label_schema() -> dict[str, Any]:
     }
 
 
-def _build_company_slug_schema() -> dict[str, Any]:
+def _build_company_name_schema() -> dict[str, Any]:
     return {
         "type": "string",
         "description": (
-            "Kebab-case company name extracted from the JD. Use only "
-            "[a-z0-9-], starting with [a-z0-9]. For 'Acme Corp.' return "
-            "'acme-corp'. For subsidiaries like 'DataLabs (a Google "
-            "company)' return the primary subsidiary name ('datalabs'). "
-            "Strip corporate suffixes (Inc, Ltd, LLC, GmbH)."
+            "Company display name extracted from the JD, written as it "
+            "appears in the wild (e.g., 'DataDog', 'Anthropic, PBC', "
+            "'Hugging Face'). Preserve the canonical capitalization and "
+            "spacing the company uses for itself. Strip surrounding "
+            "boilerplate ('Job at ...', 'Careers - ...') but not "
+            "corporate suffixes. For subsidiaries like 'DataLabs (a "
+            "Google company)' return the primary subsidiary name "
+            "('DataLabs'). 200 characters max (soft cap; client slugifies "
+            "and truncates downstream). The client converts this to a "
+            "URL-safe slug; do not pre-slugify."
         ),
     }
 
@@ -254,7 +259,7 @@ def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
         "required": [
             "summary",
             "suggested_label",
-            "company_slug",
+            "company_name",
             "work_highlights_by_id",
             "skills",
             "projects",
@@ -262,7 +267,7 @@ def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
         "properties": {
             "summary": _build_summary_schema(),
             "suggested_label": _build_suggested_label_schema(),
-            "company_slug": _build_company_slug_schema(),
+            "company_name": _build_company_name_schema(),
             "work_highlights_by_id": _build_work_highlights_by_id_schema(portfolio),
             "skills": _build_skills_schema(portfolio),
             "projects": _build_projects_schema(portfolio),
