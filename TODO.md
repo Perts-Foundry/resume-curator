@@ -69,6 +69,10 @@ redistributed work between the AI and the code-side bookkeeping:
   - Doc sync: CLAUDE.md and docs/testing-protocol.md cover-letter
     range updated to 250-360; docs/architecture.md prompt-caching
     section gains an on-path/off-path partitioning note.
+  - Per-paragraph doc drift fix: testing-protocol.md per-paragraph
+    range corrected to 40-90 (was incorrectly "40-130") and body
+    paragraph count corrected to "exactly 2" (was "2-3", stale since
+    2026-04-24's bound-the-total tightening).
   - TODO follow-ups filed (see below).
 
 ## Follow-ups from the AI/code reallocation series
@@ -151,20 +155,6 @@ at current Sonnet 4.6 rates.
   markers; pin the placement so future prompt edits don't accidentally
   drop one.
 
-### Cover-letter doc drift in testing-protocol.md per-paragraph range
-
-`docs/testing-protocol.md:235` lists "40-130 per body paragraph" for
-the cover-letter validator. The actual hard cap is `40-90`
-(`COVER_LETTER_PARAGRAPH_WORD_MIN/MAX` in `rules.py`). Pre-existing
-doc drift discovered while updating the total-word-count range in
-the 2026-05-17 doc-sync commit; left in place there to keep that
-commit single-concern.
-
-- [ ] Update `docs/testing-protocol.md:235` "40-130 per body
-  paragraph" -> "40-90 per body paragraph". Cross-check the
-  "2-3 body paragraphs" claim on the next line: the actual constant
-  has been `COVER_LETTER_BODY_MIN_COUNT == COVER_LETTER_BODY_MAX_COUNT
-  == 2` since 2026-04-24, so this should read "exactly 2".
 
 ### Mechanical-tailored mode (was Task 9 in the plan, deferred)
 
