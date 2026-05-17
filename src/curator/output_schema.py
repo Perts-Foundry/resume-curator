@@ -55,9 +55,11 @@ subset:
 
 from __future__ import annotations
 
+import math
 import re
 from typing import TYPE_CHECKING, Any
 
+from curator.page_caps import _caps_for_pages
 from curator.rules import (
     COVER_LETTER_VALID_SIGN_OFFS,
     SUMMARY_MANDATORY_MENTION,
@@ -67,6 +69,30 @@ from curator.rules import (
 
 if TYPE_CHECKING:
     from curator.models import PortfolioData
+
+
+def _per_entry_emit_cap(work_position: int, max_pages: int) -> int:
+    """Soft cap on highlight IDs the model should emit for one work entry.
+
+    Anthropic's structured-output keyword subset does NOT include
+    ``maxItems`` (verified empirically; see TestNoUnsupportedKeywords in
+    test_output_schema.py and the API documentation). The cap is
+    communicated to the model via the property's ``description`` text
+    and enforced post-parse by the client adapter
+    (``_trim_work_highlights_to_cap``); both layers exist so the model
+    has a clear target and the adapter guarantees the renderer never
+    sees over-emission.
+
+    Formula: ``ceil(floor * 1.5)`` for the renderer floor at this
+    position, clamped to a minimum of 2 so the model has room even on
+    positions where the renderer's per-position floor is 0 (1-page mode
+    positions 2..4). ``ceil`` is used (not ``round``) to avoid Python's
+    banker's rounding edge cases and to always give the model a hair
+    more headroom than the strict 1.5x scale.
+    """
+    caps = _caps_for_pages(max_pages)
+    floor = caps.floor_for_position(work_position)
+    return max(2, math.ceil(floor * 1.5))
 
 _ID_PATTERN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -136,7 +162,9 @@ def _build_company_name_schema() -> dict[str, Any]:
     }
 
 
-def _build_work_highlights_by_id_schema(portfolio: PortfolioData) -> dict[str, Any]:
+def _build_work_highlights_by_id_schema(
+    portfolio: PortfolioData, max_pages: int
+) -> dict[str, Any]:
     """Object keyed by work entry ID; each value is enum-constrained items.
 
     Work entries with zero highlights are omitted (Anthropic rejects
@@ -144,23 +172,30 @@ def _build_work_highlights_by_id_schema(portfolio: PortfolioData) -> dict[str, A
     ``WorkHighlightRanking`` instances for omitted entries to satisfy
     the validator's "every portfolio work entry has a ranking"
     invariant.
+
+    The per-entry description carries a soft cap on emitted IDs derived
+    from the renderer's per-position floor and the current
+    ``max_pages``. The cap is enforced post-parse by the client adapter
+    (Anthropic's structured-output API does not honor ``maxItems``).
     """
     properties: dict[str, Any] = {}
     required: list[str] = []
-    for w in portfolio.work:
+    for position, w in enumerate(portfolio.work):
         wid = _check_id(w.id, "work entry")
         if not w.highlights:
             continue
         highlight_ids = [_check_id(h.id, f"highlight in {wid}") for h in w.highlights]
+        emit_cap = _per_entry_emit_cap(position, max_pages)
         properties[wid] = {
             "type": "array",
             "description": (
                 f"Highlights belonging to work entry '{wid}', ordered "
                 f"strongest-first for the JD. Every emitted string "
-                f"must be one of this entry's highlight IDs. Return ALL "
-                f"of this entry's highlight IDs in ranked order; do not "
-                f"omit highlights. The renderer trims from the bottom "
-                f"based on page fit."
+                f"must be one of this entry's highlight IDs. Emit at "
+                f"most {emit_cap} IDs (your top picks). The renderer "
+                f"keeps the top entries that fit the {max_pages}-page "
+                f"budget; emitting more than {emit_cap} wastes tokens "
+                f"on IDs the renderer will discard."
             ),
             "items": {"type": "string", "enum": highlight_ids},
         }
@@ -245,7 +280,7 @@ def _build_projects_schema(portfolio: PortfolioData) -> dict[str, Any]:
     }
 
 
-def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
+def _build_resume_schema(portfolio: PortfolioData, max_pages: int) -> dict[str, Any]:
     """The resume-only schema body.
 
     Top-level field declaration order is load-bearing under constrained
@@ -268,7 +303,9 @@ def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
             "summary": _build_summary_schema(),
             "suggested_label": _build_suggested_label_schema(),
             "company_name": _build_company_name_schema(),
-            "work_highlights_by_id": _build_work_highlights_by_id_schema(portfolio),
+            "work_highlights_by_id": _build_work_highlights_by_id_schema(
+                portfolio, max_pages
+            ),
             "skills": _build_skills_schema(portfolio),
             "projects": _build_projects_schema(portfolio),
         },
@@ -354,7 +391,10 @@ def _build_cover_letter_schema() -> dict[str, Any]:
 
 
 def build_curation_schema(
-    portfolio: PortfolioData, *, with_cover_letter: bool = False
+    portfolio: PortfolioData,
+    *,
+    with_cover_letter: bool = False,
+    max_pages: int = 2,
 ) -> dict[str, Any]:
     """Build the JSON schema sent to Anthropic for a single ``curate()`` call.
 
@@ -366,15 +406,23 @@ def build_curation_schema(
         with_cover_letter: When True, wrap the resume schema with a
             sibling ``cover_letter`` property mirroring
             ``CoverLetterCuration``.
+        max_pages: Page budget for the current call. Drives the
+            per-work-entry highlight-emission cap surfaced in each
+            property's ``description`` text (Anthropic does not enforce
+            ``maxItems``; the cap is a soft hint to the model and a
+            hard limit applied post-parse by the client adapter).
+            Defaults to 2 to match the project-wide default page
+            budget.
 
     Returns:
         A dict ready to pass as the ``schema`` field of
         ``output_config.format`` on ``messages.stream``. Construction
-        is deterministic: ``build_curation_schema(p) ==
-        build_curation_schema(p)`` byte-for-byte across fresh process
-        invocations as long as the input portfolio is byte-stable.
+        is deterministic: ``build_curation_schema(p, max_pages=N) ==
+        build_curation_schema(p, max_pages=N)`` byte-for-byte across
+        fresh process invocations as long as the input portfolio is
+        byte-stable.
     """
-    resume = _build_resume_schema(portfolio)
+    resume = _build_resume_schema(portfolio, max_pages)
     if not with_cover_letter:
         return resume
     return {

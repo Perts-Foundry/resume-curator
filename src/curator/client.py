@@ -36,7 +36,7 @@ from curator.models import (
     validate_cover_letter,
     validate_curation_ids,
 )
-from curator.output_schema import build_curation_schema
+from curator.output_schema import _per_entry_emit_cap, build_curation_schema
 from curator.prompt import build_system_prompt, build_user_message
 from curator.rules import COVER_LETTER_MAX_TOKENS_HEADROOM
 
@@ -154,6 +154,7 @@ def _adapt_curation_dict(
     *,
     with_cover_letter: bool,
     request_id: str,
+    max_pages: int,
 ) -> tuple[ResumeCuration, CoverLetterCuration | None]:
     """Convert the wire dict to ``ResumeCuration`` (+ optional cover letter).
 
@@ -224,6 +225,33 @@ def _adapt_curation_dict(
         for w in portfolio.work
         if w.id not in present_work_ids
     )
+
+    # Enforce the per-entry highlight emission cap surfaced in the
+    # schema's description text. Anthropic does not honor ``maxItems``
+    # at decode time, so the cap reaches the model as guidance only.
+    # The renderer's page-fit cascade discards anything beyond
+    # ``floor[i]`` anyway; trimming here at ``floor[i] * 1.5`` keeps a
+    # small headroom margin while preventing run-away over-emission
+    # from reaching the validator or audit log.
+    work_id_to_position = {w.id: i for i, w in enumerate(portfolio.work)}
+    over_emit_counts: dict[str, int] = {}
+    for wh in work_highlights:
+        position = work_id_to_position.get(wh["work_id"])
+        if position is None:
+            continue  # unknown work_id is caught downstream by validator
+        cap = _per_entry_emit_cap(position, max_pages)
+        original = wh["highlight_ids"]
+        if isinstance(original, list) and len(original) > cap:
+            over_emit_counts[wh["work_id"]] = len(original) - cap
+            wh["highlight_ids"] = original[:cap]
+    if over_emit_counts:
+        logger.warning(
+            "Adapter trimmed work-highlight over-emission to per-position "
+            "caps (max_pages={}): {} (request_id={})",
+            max_pages,
+            over_emit_counts,
+            request_id,
+        )
 
     # Skills: walk each flat keyword back to its parent portfolio group.
     # Precompute two lookups in one pass:
@@ -480,7 +508,11 @@ class CuratorClient:
         # own property whose value carries items.enum scoped to that
         # parent's children. The grammar then makes cross-parent ID
         # emission decode-time impossible (verified 2026-05-13).
-        schema = build_curation_schema(portfolio, with_cover_letter=with_cover_letter)
+        schema = build_curation_schema(
+            portfolio,
+            with_cover_letter=with_cover_letter,
+            max_pages=self._settings.max_pages,
+        )
         output_config: dict[str, Any] = {
             "format": {"type": "json_schema", "schema": schema},
         }
@@ -568,6 +600,7 @@ class CuratorClient:
                 portfolio,
                 with_cover_letter=with_cover_letter,
                 request_id=message.id,
+                max_pages=self._settings.max_pages,
             )
 
             # 7. Application-level ID validation (Layer 3) for the resume.

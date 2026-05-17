@@ -658,7 +658,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-17"
+        assert PROMPT_VERSION == "2026-05-18"
 
 
 class TestSystemPromptByteIdentity:

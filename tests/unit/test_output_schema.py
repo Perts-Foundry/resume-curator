@@ -205,6 +205,80 @@ class TestWorkHighlightsByID:
         assert wh["required"] == ["with-highlights"]
 
 
+class TestPerEntryEmitCap:
+    """Per-entry highlight emission caps surfaced in description text.
+
+    Anthropic's structured-output API does not enforce ``maxItems`` at
+    decode time (verified by ``TestNoUnsupportedKeywords``). The cap
+    reaches the model as guidance via the property's ``description``
+    text and is enforced post-parse by the client adapter. These tests
+    pin the formula: ``max(2, round(floor[i] * 1.5))`` from
+    ``page_caps._caps_for_pages``.
+    """
+
+    def test_two_page_caps_match_formula(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # 2-page floors: (8, 6, 6, 2, 2) -> caps: (12, 9, 9, 3, 3).
+        # realistic_portfolio has two work entries (positions 0 and 1).
+        wh = build_curation_schema(realistic_portfolio, max_pages=2)["properties"][
+            "work_highlights_by_id"
+        ]
+        pos0 = wh["properties"]["pf-senior-engineer"]["description"]
+        pos1 = wh["properties"]["aws-support-engineer"]["description"]
+        assert "at most 12 IDs" in pos0
+        assert "at most 9 IDs" in pos1
+
+    def test_one_page_caps_match_formula(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # 1-page floors: (3, 3, 0, 0, 0) -> caps: (5, 5, 2, 2, 2).
+        wh = build_curation_schema(realistic_portfolio, max_pages=1)["properties"][
+            "work_highlights_by_id"
+        ]
+        for prop in wh["properties"].values():
+            assert "at most 5 IDs" in prop["description"]
+
+    def test_three_page_caps_match_formula(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # 3+-page floors: (10, 8, 8, 4, 4) -> caps: (15, 12, 12, 6, 6).
+        wh = build_curation_schema(realistic_portfolio, max_pages=3)["properties"][
+            "work_highlights_by_id"
+        ]
+        pos0 = wh["properties"]["pf-senior-engineer"]["description"]
+        pos1 = wh["properties"]["aws-support-engineer"]["description"]
+        assert "at most 15 IDs" in pos0
+        assert "at most 12 IDs" in pos1
+
+    def test_floor_of_two_for_zero_floor_positions(self) -> None:
+        # 1-page positions 2..4 have floor 0; the cap should still be
+        # at least 2 so the model isn't forbidden from emitting
+        # anything (the cap is a ceiling, not a target).
+        portfolio = _portfolio(
+            work=[
+                _work(f"w{i}", [f"w{i}-h{j}" for j in range(5)]) for i in range(5)
+            ]
+        )
+        wh = build_curation_schema(portfolio, max_pages=1)["properties"][
+            "work_highlights_by_id"
+        ]
+        # Positions 2, 3, 4 inherit the floor=2 minimum.
+        for i in (2, 3, 4):
+            assert "at most 2 IDs" in wh["properties"][f"w{i}"]["description"]
+
+    def test_max_pages_in_description_text(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # The page budget is mentioned in the cap description so the
+        # operator reading the rendered schema knows which budget it
+        # was built for.
+        wh = build_curation_schema(realistic_portfolio, max_pages=2)["properties"][
+            "work_highlights_by_id"
+        ]
+        assert "2-page" in wh["properties"]["pf-senior-engineer"]["description"]
+
+
 # ---------------------------------------------------------------------------
 # skills (flat top-level array, no items.enum)
 # ---------------------------------------------------------------------------

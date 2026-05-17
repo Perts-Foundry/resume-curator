@@ -704,6 +704,59 @@ class TestCurateGrammarSchemaAdapter:
         # 'Café' -> 'caf' (é dropped, not transliterated).
         assert result.curation.company_slug == "caf-bar-paris-joinery"
 
+    def test_over_emission_trimmed_to_per_entry_cap(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """If the model emits more highlight IDs for a work entry than
+        the per-position cap (Anthropic does not enforce ``maxItems``),
+        the adapter trims to the cap and logs a WARNING. The renderer's
+        cascade would discard them anyway; trimming here ensures the
+        audit log and validator never see over-emission."""
+        # ``mock_settings`` uses max_pages=2 by default. The portfolio's
+        # first work entry has at most 1 highlight in fixtures; build a
+        # wire dict that explicitly over-emits.
+        wire = _curation_to_wire_dict(valid_curation)
+        work_id = "acme-senior-engineer"
+        # Duplicate a valid highlight ID 20 times. The cap formula for
+        # 2-page position 0 is max(2, round(8*1.5))=12.
+        wire["work_highlights_by_id"][work_id] = ["acme-deployed-k8s"] * 20
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # The post-parse trim limits the ranking to the cap; the
+        # validator may further filter duplicates downstream.
+        entry = next(
+            wh for wh in result.curation.work_highlights if wh.work_id == work_id
+        )
+        assert len(entry.highlight_ids) <= 12
+
+    def test_under_cap_emission_left_untouched(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """A response that stays under the per-position cap is not
+        trimmed and produces no WARN log."""
+        wire = _curation_to_wire_dict(valid_curation)
+        # Default fixture has one highlight per entry; well under any cap.
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # Round-trip preserved exactly.
+        assert result.curation == valid_curation
+
     def test_truncation_with_unparseable_json_surfaces_truncation_hint(
         self,
         mocker: Any,
