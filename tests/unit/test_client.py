@@ -667,7 +667,11 @@ class TestCurateGrammarSchemaAdapter:
 
         result = client.curate(portfolio_data, "Job description.")
 
-        assert result.curation.company_slug == "acme-corp-inc"
+        # ``slugify`` strips the trailing ``Inc`` legal-entity suffix
+        # (``CORPORATE_SLUG_SUFFIXES``) on 2026-05-17; ``Corp`` is not
+        # in the suffix set because it is often part of the public-
+        # facing brand. Pre-strip slug was ``acme-corp-inc``.
+        assert result.curation.company_slug == "acme-corp"
 
     def test_empty_company_name_falls_back_to_slugify_default(
         self,

@@ -182,7 +182,11 @@ class TestSynthesizeCuration:
 
     def test_custom_name_becomes_slug(self, rich_portfolio: PortfolioData) -> None:
         curation = synthesize_curation(rich_portfolio, name="Acme Corp, Inc.")
-        assert curation.company_slug == "acme-corp-inc"
+        # ``slugify`` strips the trailing ``Inc`` legal-entity suffix
+        # on 2026-05-17 (CORPORATE_SLUG_SUFFIXES). ``Corp`` is not in
+        # the suffix set because it is often part of the public-facing
+        # brand. Pre-strip slug was ``acme-corp-inc``.
+        assert curation.company_slug == "acme-corp"
 
     def test_every_work_entry_gets_ranking(self, rich_portfolio: PortfolioData) -> None:
         curation = synthesize_curation(rich_portfolio)

@@ -478,6 +478,22 @@ SKILL_GROUPS_MAX: int = 12  # max skill groups in one curated resume
 SKILL_KEYWORDS_PER_GROUP_MAX: int = 10  # max keywords filled per group
 SKILL_KEYWORDS_TOTAL_MAX: int = 140  # absolute total across all groups
 
+# Corporate suffixes that ``curator.io_utils.slugify`` strips from the
+# tail of the kebab-cased slug. The wire-side ``company_name`` field
+# (post-PR12) is free text "as it appears in the wild" (e.g.,
+# "DataDog", "Anthropic, PBC", "Archesys Inc"); the client adapter
+# then slugifies via ``slugify(company_name)``. Without the strip,
+# "Archesys Inc" -> "archesys-inc" (vs the pre-PR12 prompt-stripped
+# "archesys"). This restores the old slug shape for the common
+# legal-entity suffixes without affecting brand-name-with-suffix
+# inputs ("Hugging Face Inc" -> "hugging-face" is intentional;
+# "Acme Corp" -> "acme-corp" is preserved because Corp is too often
+# part of the public-facing brand to strip safely). Strip is
+# iterative so "Acme LLC Inc" -> "acme".
+CORPORATE_SLUG_SUFFIXES: frozenset[str] = frozenset(
+    {"inc", "llc", "ltd", "gmbh", "pbc"},
+)
+
 # Work highlight weight range (optional AI hint, see
 # ResumeCuration.work_highlight_weights). Anthropic's structured-output
 # does not honor minimum/maximum at decode time; the range is enforced
