@@ -142,20 +142,22 @@ class TestBuildSystemPrompt:
         # 2026-05-14); the exclusion still applies to skill keywords.
         assert "``skills``" in strategy_block
 
-    def test_rank_every_work_entry_rule_in_constraints(
+    def test_portfolio_order_fallback_rule_in_constraints(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # The behavioral fallback rule (return portfolio-order highlights
+        # when no JD-relevant ones exist) lives in the constraints
+        # block. The previous "you must populate every key; schema
+        # declares them required" text was removed because the schema
+        # already enforces it via ``required``; only the behavioral
+        # guidance (not derivable from the schema) remains.
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
         constraints_start = text.index("<constraints>")
         constraints_end = text.index("</constraints>")
         constraints_block = text[constraints_start:constraints_end]
-        # Field renamed: work_highlights_by_id is an object with one
-        # required key per portfolio work entry. The legacy
-        # "WorkHighlightRanking" type name no longer appears on the
-        # wire so we assert the new field name instead.
-        assert "work_highlights_by_id" in constraints_block
-        assert "portfolio work entry" in constraints_block.lower()
+        assert "portfolio order" in constraints_block.lower()
+        assert "renderer handles trimming" in constraints_block.lower()
 
     def test_rank_every_work_entry_rule_in_output_guidance(
         self, portfolio_data: PortfolioData
@@ -656,7 +658,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-16"
+        assert PROMPT_VERSION == "2026-05-17"
 
 
 class TestSystemPromptByteIdentity:
@@ -673,7 +675,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "d3580055deddb9ace5bc44846de96093d5fc4f9f4d31afa94d45112363ef6eb4"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "0e4bc86f299802a6fe07c2d83af994efb471193a56daff0c875b64d8a47167c0"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()

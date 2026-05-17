@@ -67,7 +67,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-16"
+PROMPT_VERSION: str = "2026-05-17"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -243,11 +243,8 @@ The schema does NOT enforce this at decode time; the post-response \
 adapter drops non-verbatim keywords and surfaces them as WARN log \
 lines. If a JD mentions a technology that is not in any portfolio \
 skill group, leave it out.
-- The ``work_highlights_by_id`` object has one property per portfolio \
-work entry, keyed by the entry's ID. You must populate every key; the \
-schema declares them all as required. If a work entry has no \
-JD-relevant highlights, return its highlights in portfolio order \
-anyway; the renderer handles trimming.
+- If a work entry has no JD-relevant highlights, return its highlights \
+in portfolio order anyway; the renderer handles trimming.
 - For highlights within a work entry, list the strongest ones first. The \
 renderer trims from the bottom when the page overflows.
 </constraints>
@@ -280,14 +277,12 @@ subsidiaries like "DataLabs (a Google company)" return the primary \
 subsidiary name ("DataLabs"). The client converts this to a URL-safe \
 slug downstream; do not pre-slugify.
 
-``work_highlights_by_id``: an object keyed by portfolio work entry ID. \
-For each key (one per portfolio work entry; the schema requires all of \
-them), the value is a list of highlight IDs from THAT work entry only, \
-ordered strongest-first for the JD. The grammar enforces this scoping: \
-you cannot emit a highlight ID under the wrong parent. List ALL of an \
-entry's highlights in ranked order; the renderer trims from the bottom \
-based on page fit. The order in which you populate the keys does not \
-affect the rendered resume (the renderer sorts reverse chronologically).
+``work_highlights_by_id``: for each portfolio work entry, return the \
+list of its highlight IDs ordered strongest-first for the JD. List ALL \
+of an entry's highlights in ranked order; the renderer trims from the \
+bottom based on page fit. The order in which you populate the keys \
+does not affect the rendered resume (the renderer sorts reverse \
+chronologically).
 
 ``skills``: a flat array of skill keyword strings, ordered \
 strongest-JD-fit first across all relevant portfolio skill groups. \
