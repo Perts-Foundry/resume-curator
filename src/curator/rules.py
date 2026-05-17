@@ -478,6 +478,29 @@ SKILL_GROUPS_MAX: int = 12  # max skill groups in one curated resume
 SKILL_KEYWORDS_PER_GROUP_MAX: int = 10  # max keywords filled per group
 SKILL_KEYWORDS_TOTAL_MAX: int = 140  # absolute total across all groups
 
+# Work highlight weight range (optional AI hint, see
+# ResumeCuration.work_highlight_weights). Anthropic's structured-output
+# does not honor minimum/maximum at decode time; the range is enforced
+# post-parse by ResumeCuration._validate_weights_range and surfaced to
+# the model via property + aggregate description text in
+# output_schema._build_work_highlight_weights_schema. Out-of-range
+# emissions fail the entire response - there is no clamping.
+#
+# Design invariant: per_entry_emit_cap == ceil(floor * 1.5) is tuned
+# to give the AI 50% headroom over the renderer floor while remaining
+# tight enough that weights up to about 1.5 stay effective at every
+# work position. Weights between 1.5 and WORK_HIGHLIGHT_WEIGHT_MAX
+# progressively become inert at the most-recent role because the
+# per-entry cap clamps total retained highlights below the
+# weight-scaled effective floor. Raising WORK_HIGHLIGHT_WEIGHT_MAX
+# without also raising the cap multiplier would shift the inertness
+# threshold to lower positions; raising the cap multiplier above 1.5
+# would re-introduce the portfolio-order silent-override bug that the
+# safety-net cap was designed to close. Change both in lockstep or
+# document the asymmetry explicitly.
+WORK_HIGHLIGHT_WEIGHT_MIN: float = 0.5
+WORK_HIGHLIGHT_WEIGHT_MAX: float = 2.0
+
 CATEGORY_WEIGHTS: dict[str, float] = {
     "jd_alignment": 0.25,
     "writing_quality": 0.25,

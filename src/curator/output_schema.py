@@ -59,6 +59,8 @@ from curator.rules import (
     SUMMARY_MANDATORY_MENTION,
     SUMMARY_WORD_TARGET_MAX,
     SUMMARY_WORD_TARGET_MIN,
+    WORK_HIGHLIGHT_WEIGHT_MAX,
+    WORK_HIGHLIGHT_WEIGHT_MIN,
 )
 
 if TYPE_CHECKING:
@@ -241,11 +243,13 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
     """Per-work-entry priority weights (optional AI hint).
 
     Each property is a portfolio work entry ID; values are floats with
-    a soft target range of [0.5, 2.0]. The renderer multiplies the
-    per-position floor by the weight when deciding how aggressively to
-    trim each entry, allowing the AI to surface JD signals like "this
-    role is much more relevant than that one." Defaults to 1.0 (no
-    adjustment) for entries the AI omits.
+    a soft target range of
+    ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]`` (see
+    ``curator.rules``). The renderer multiplies the per-position floor
+    by the weight when deciding how aggressively to trim each entry,
+    allowing the AI to surface JD signals like "this role is much more
+    relevant than that one." Defaults to 1.0 (no adjustment) for
+    entries the AI omits.
 
     Mirrors ``work_highlights_by_id`` in omitting work entries with
     zero highlights: a weight on a zero-highlight entry has no
@@ -276,7 +280,8 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
             "type": "number",
             "description": (
                 f"Relative priority weight for work entry '{wid}'. "
-                "Stay strictly within [0.5, 2.0] - out-of-range values "
+                f"Stay strictly within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
+                f"{WORK_HIGHLIGHT_WEIGHT_MAX}] - out-of-range values "
                 "are rejected post-parse and fail the entire response. "
                 "1.0 = no adjustment; >1 keeps more highlights from "
                 "this role; <1 keeps fewer."
@@ -289,7 +294,8 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
             "Optional per-work-entry priority weights. Emit only when "
             "the JD signals a strong preference for one role's content "
             "over another. Keys are portfolio work entry IDs; values "
-            "MUST stay within [0.5, 2.0] (out-of-range values are "
+            f"MUST stay within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
+            f"{WORK_HIGHLIGHT_WEIGHT_MAX}] (out-of-range values are "
             "rejected post-parse and fail the entire response - there "
             "is no clamping). Omitted entries default to 1.0. The "
             "per-entry highlight emission cap (see "

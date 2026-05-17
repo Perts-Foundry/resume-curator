@@ -34,6 +34,8 @@ from curator.rules import (
     SUMMARY_WORD_HARD_MAX,
     SUMMARY_WORD_TARGET_MAX,
     SUMMARY_WORD_TARGET_MIN,
+    WORK_HIGHLIGHT_WEIGHT_MAX,
+    WORK_HIGHLIGHT_WEIGHT_MIN,
 )
 
 # ---------------------------------------------------------------------------
@@ -539,7 +541,8 @@ class ResumeCuration(BaseModel):
         default_factory=dict,
         description=(
             "Optional per-work-entry priority weights. Keys are "
-            "portfolio work IDs; values are floats in [0.5, 2.0]. "
+            "portfolio work IDs; values are floats in "
+            f"[{WORK_HIGHLIGHT_WEIGHT_MIN}, {WORK_HIGHLIGHT_WEIGHT_MAX}]. "
             "Renderer scales the per-position highlight floor by the "
             "weight; absent entries default to 1.0 (no adjustment). "
             "Range is enforced post-parse by the Pydantic validator "
@@ -581,17 +584,19 @@ class ResumeCuration(BaseModel):
         """Reject out-of-range weights; preserve in-range values verbatim.
 
         Anthropic does not honor ``minimum``/``maximum`` at decode
-        time, so this is the only enforcement layer for the [0.5, 2.0]
+        time, so this is the only enforcement layer for the
+        ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]``
         range. A single out-of-range emission fails the entire
         response (no clamp fallback); this is the load-bearing trip
         that surfaces an AI overshoot to the operator.
         """
         validated: dict[str, float] = {}
         for work_id, weight in v.items():
-            if not (0.5 <= weight <= 2.0):
+            if not (WORK_HIGHLIGHT_WEIGHT_MIN <= weight <= WORK_HIGHLIGHT_WEIGHT_MAX):
                 msg = (
                     f"work_highlight_weights['{work_id}'] = {weight} "
-                    "out of range [0.5, 2.0]"
+                    f"out of range [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
+                    f"{WORK_HIGHLIGHT_WEIGHT_MAX}]"
                 )
                 raise ValueError(msg)
             validated[work_id] = float(weight)
