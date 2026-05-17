@@ -105,23 +105,26 @@ src/curator/
                       #   via scripts/rerender.py --partial. Total word count
                       #   above COVER_LETTER_WORD_MAX is a soft warning only;
                       #   the letter still ships and no partial is written.
-  output_schema.py    # Builds the per-call JSON schema from PortfolioData;
-                      #   grammar-enforces cross-parent highlight ID scoping
-                      #   under work_highlights_by_id (items.enum per work
-                      #   entry) and projects (items.enum top-level), so
-                      #   cross-parent highlight attribution is decode-time
-                      #   impossible. Skills ship as a flat top-level
-                      #   `skills: array[string]` with no items.enum: the
-                      #   354-string production enum surface exceeded
-                      #   Anthropic's compiled-grammar budget on 2026-05-13,
-                      #   and the 22-property object replacement (Option A)
-                      #   hit the same 400 on 2026-05-14 because the binding
-                      #   axis is inner-property count under required+
-                      #   additionalProperties:false. Skill keyword
-                      #   verbatim-match is reconstructed adapter-side in
-                      #   client.py. Pure function build_curation_schema(
-                      #   portfolio, *, with_cover_letter); deterministic,
+  output_schema.py    # Builds the per-call JSON schema from PortfolioData
+                      #   and max_pages; grammar-enforces cross-parent
+                      #   highlight ID scoping under work_highlights_by_id
+                      #   (items.enum per work entry), portfolio skill
+                      #   group IDs under skills (items.enum top-level),
+                      #   and projects (items.enum top-level). Per-entry
+                      #   highlight emission caps surface in description
+                      #   text via _per_entry_emit_cap (Anthropic doesn't
+                      #   honor maxItems). Optional fields work_highlight_
+                      #   weights (object) and trim_priority (enum-array)
+                      #   carry AI hints consumed by the renderer. Pure
+                      #   function build_curation_schema(portfolio, *,
+                      #   with_cover_letter, max_pages); deterministic,
                       #   no I/O.
+  jd_scorer.py        # Lexical JD-relevance scorer used by the client
+                      #   adapter to fill skill-group keywords from
+                      #   portfolio data. score_keywords_for_jd(jd_text,
+                      #   keywords, *, top_n) returns the top-N portfolio
+                      #   keywords ranked by JD-token presence, stable
+                      #   tie-break by portfolio order.
   renderer.py         # Curated YAML writer, Typst compilation, page-fitting trimmer.
                       #   _render_cover_letter writes data/cover_letter.yaml and
                       #   compiles cover_letter.pdf (single pass, no trim cascade).
@@ -380,13 +383,21 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
    static-path issues
 9. pipeline.py: renderer.py applies selections, writes per-section YAML, compiles PDF
 10. renderer.py: if PDF exceeds max_pages, trims content deterministically and re-compiles
-    - 8-tier trim cascade: interests > project highlights (lowest project first,
-      drained to 0) > lowest-ranked project wholesale (keep >=2 so weight-1 and
-      weight-2 survive) > certificates bottom-up (keep top `certificate_floor`,
-      page-budget-aware: 3/3/5 for max_pages 1/2/3+) > education > work
-      highlights to per-position floor (graduated `work_position_floors` tuple,
-      bottom-up scan, fall-through to last value) > skill groups removed
-      atomically (lowest-priority group first) > below-floor last resort
+    - 8-tier trim cascade with pinned guardrails: interests is ALWAYS
+      first to drop; work highlights (to-floor + below-floor) are
+      ALWAYS the last two tiers. The AI controls the order of the
+      middle band via the optional `trim_priority` field; omitted
+      items inherit the default order `(project_highlights, projects,
+      certificates, education, skill_groups)`.
+    - Default cascade order: interests > project highlights (lowest
+      project first, drained to 0) > lowest-ranked project wholesale
+      (keep >=2 so weight-1 and weight-2 survive) > certificates
+      bottom-up (keep top `certificate_floor`, page-budget-aware:
+      3/3/5 for max_pages 1/2/3+) > education > skill groups removed
+      atomically (lowest-priority group first) > work highlights to
+      per-position floor (graduated `work_position_floors` tuple,
+      bottom-up scan, fall-through to last value, scaled per entry by
+      AI-emitted `work_highlight_weights`) > below-floor last resort
       (any work position, oldest-first, sets `below_floor=True`)
     - Per-position floors via `_caps_for_pages(max_pages).work_position_floors`:
       `(3, 3, 0, 0, 0)` on 1-page (older roles drain to 0; "ghost rows"
@@ -401,8 +412,9 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
       the whole entry. Work entries are never removed wholesale: every
       AI-selected work entry stays (as a header-only row if drained) to preserve
       the employment timeline
-    - Skill groups are removed atomically at tier 7, one whole group per
-      iteration (lowest-priority first). Dropping a group frees a full section
+    - Skill groups are removed atomically in the middle band (default
+      position 5, AI-reorderable), one whole group per iteration
+      (lowest-priority first). Dropping a group frees a full section
       of vertical space, which converges the page-fit loop in dramatically fewer
       iterations than the old keyword-at-a-time drain
     - Certificates trim bottom-up at tier 4 but the top `certificate_floor`
@@ -517,35 +529,58 @@ renderer, validator, static-mode synthesizer, and on-disk
 ```python
 class WorkHighlightRanking(BaseModel):
     work_id: str                     # Portfolio work entry ID
-    highlight_ids: list[str]         # ALL highlights, strongest-first for JD;
-                                     # renderer trims from the bottom for page fit
+    highlight_ids: list[str]         # Top highlights, strongest-first for JD;
+                                     # bounded per-call by floor[i] * 1.5 cap
+                                     # (see "Schema caps" below); renderer
+                                     # trims from the bottom for page fit
 
 class SkillRanking(BaseModel):
     skill_id: str                    # Portfolio skill group ID
-    keywords: list[str]              # Verbatim subset of the portfolio group's
-                                     # keywords list; validator rejects on mismatch
+    keywords: list[str]              # Filled by client adapter from portfolio
+                                     # data via JD-relevance scoring; verbatim
+                                     # subset of the portfolio group's keywords
 
 class ResumeCuration(BaseModel):
     summary: str              # 50-65 word tailored paragraph (must include founder mention)
     suggested_label: str      # Professional title tailored to JD (2-5 words)
-    company_slug: str         # Kebab-case company name for output dir naming
+    company_slug: str         # Kebab-case slug; client-computed via
+                              # slugify(wire company_name) on the API path
+                              # or slugify(--name) on the static path
     work_highlights: list[WorkHighlightRanking]  # One per portfolio work entry (all required)
-    skills: list[SkillRanking]                   # Relevant groups, JD-ordered
+    skills: list[SkillRanking]                   # Adapter-built from AI's
+                                                 # ordered group-ID list
     projects: list[str]                           # 3-5 project IDs ordered by (JD fit x weight)
+    work_highlight_weights: dict[str, float]      # Optional AI hint: per-entry
+                                                  # weight in [0.5, 2.0] scales
+                                                  # the renderer's per-position
+                                                  # highlight floor
+    trim_priority: list[str]                      # Optional AI hint: order of
+                                                  # {project_highlights, projects,
+                                                  # certificates, education,
+                                                  # skill_groups} for cascade
+                                                  # drop priority (middle band only)
 ```
 
 ### Dynamic schema construction (API path)
 
 On the API path, the JSON schema sent to Anthropic is **NOT** generated
-from the Pydantic class. Instead `curator.output_schema.build_curation_schema(portfolio, *, with_cover_letter)`
+from the Pydantic class. Instead `curator.output_schema.build_curation_schema(portfolio, *, with_cover_letter, max_pages)`
 constructs a per-call dict schema from `PortfolioData` and the client
 injects it via `output_config.format` on `messages.stream`. The wire
-shape differs from the domain shape on two fields:
+shape differs from the domain shape on several fields:
 
 | Domain field (Pydantic)                       | Wire field (schema)                       |
 |-----------------------------------------------|--------------------------------------------|
+| `company_slug: str` (client-computed)         | `company_name: str` (free text)            |
 | `work_highlights: list[WorkHighlightRanking]` | `work_highlights_by_id: object`            |
-| `skills: list[SkillRanking]`                  | `skills: array[string]` (flat keywords)    |
+| `skills: list[SkillRanking]`                  | `skills: array[string]` (group IDs)        |
+| (same)                                        | `work_highlight_weights: object` (optional)|
+| (same)                                        | `trim_priority: array[string]` (optional)  |
+
+`company_name` is free text on the wire (e.g., "DataDog",
+"Anthropic, PBC"); the client adapter slugifies it via
+`io_utils.slugify` into the `company_slug` domain field. The AI never
+emits a pre-slugified value.
 
 `work_highlights_by_id` is keyed by portfolio work entry IDs; each
 property's value is an array whose `items.enum` is scoped to that
@@ -553,13 +588,34 @@ entry's highlight IDs. This makes cross-parent emission (a highlight
 ID emitted under a different parent work entry) decode-time-impossible:
 the grammar literally cannot sample a token sequence the schema forbids.
 
-`skills` is a flat top-level array of keyword strings with no
-`items.enum`. The adapter at `client._adapt_curation_dict` walks each
-emitted keyword back to its parent portfolio group using a first-match
-lookup against `portfolio.skills` (preserving model emit order within
-and across groups; deduping within group; logging
-ambiguous-attribution decisions at INFO and unknown keywords at WARN)
-to reconstruct `list[SkillRanking]` for the domain model.
+`skills` is a top-level array of portfolio skill group IDs, enum-
+constrained. The hybrid design (2026-05-18) moves keyword-level
+selection out of the AI: the model picks groups (judgment); the client
+adapter fills each group's keywords from portfolio data using a
+JD-relevance scorer (`curator.jd_scorer.score_keywords_for_jd`). Three
+caps in `rules.py` bound the section deterministically:
+`SKILL_GROUPS_MAX = 12`, `SKILL_KEYWORDS_PER_GROUP_MAX = 10`,
+`SKILL_KEYWORDS_TOTAL_MAX = 140`. Over-cap group emissions are dropped
+with WARN; repeated groups are de-duped with INFO; unknown group IDs
+(unreachable on the API path under the enum) are dropped with WARN as
+defense in depth.
+
+`work_highlight_weights` (optional) is an object keyed by portfolio
+work IDs with float values in [0.5, 2.0]. The renderer multiplies the
+per-position highlight floor by the weight in tier 6 (work-highlights-
+to-floor), letting the AI signal JD-driven preference for one role's
+content over another. Default 1.0 (no adjustment). Schema enforces the
+range at decode time; Pydantic validator double-checks and rejects
+keys that aren't portfolio work IDs.
+
+`trim_priority` (optional) is an ordered array from the enum
+`{project_highlights, projects, certificates, education, skill_groups}`.
+The renderer treats it as the drop order for middle-band tiers in the
+page-fit cascade. Two pinned guardrails: `interests` is always the
+first tier dropped, work highlights (tier 6 + tier 8) are always the
+last. The AI controls only the middle band, with omitted items
+appending in default order so partial lists still produce a complete
+cascade.
 
 `projects` carries `items.enum` over portfolio project IDs at the top
 level; no nested object needed.
@@ -597,10 +653,25 @@ Decision history:
   or description bytes: a probe with 8 enum strings across the same
   27-property shape still 400'd, while collapsing `skills_by_id`
   into a flat `skills: array[string]` (5 inner properties total)
-  passed cleanly. Option E ships that flat shape;
-  `work_highlights_by_id` and `projects` retain their grammar-level
-  enforcement (the load-bearing cross-parent-highlight bug fix).
-  Probe results live in the investigation plan referenced by `TODO.md`.
+  passed cleanly. Option E shipped that flat shape on 2026-05-15.
+- **2026-05-18 hybrid skill design.** The flat-keyword Option E
+  required four prompt-side defenses to guard verbatim-match of
+  free-text keywords and let the AI conflate two distinct decisions
+  (which groups belong + which keywords within each). Re-shaping
+  `skills` to an enum-constrained array of portfolio **group IDs**
+  collapses the verbatim-match concern (group IDs are grammar-
+  enforced; the 354-keyword surface is no longer on the wire) and
+  separates the judgment work (group selection) from the lexical
+  work (per-group keyword scoring, now in `curator.jd_scorer`).
+  Group-ID enum is small (~30 IDs), well under the compiled-grammar
+  budget. The four prompt-side defenses were collapsed in lockstep
+  (see prompt.py header comment for the simplified architecture).
+- **2026-05-19 AI cascade hints.** Added two optional output
+  fields (`work_highlight_weights`, `trim_priority`) so the AI can
+  inform two decisions the renderer previously made JD-blind: per-
+  entry highlight count and drop-priority order. Renderer guardrails
+  pin interests first and work highlights last so the AI cannot
+  reorder the highest-value content out of the protected slots.
 
 **Edge cases handled by the builder:**
 
@@ -609,10 +680,16 @@ Decision history:
   The client adapter synthesizes an empty `WorkHighlightRanking` for
   each omitted work entry to satisfy the validator's "every portfolio
   work entry has a ranking" invariant.
-- `skills` is a flat unconstrained string array, so the empty-enum
-  rule does not apply to skill groups. The model expresses "skip this
-  group" by omitting all of its keywords from the array; empty
-  `skills` is valid when no portfolio group is JD-relevant.
+- Each work entry's `highlight_ids` array carries a soft cap in its
+  description text: `max(2, ceil(floor[i] * 1.5))` where `floor[i]`
+  is the renderer's per-position floor from `_caps_for_pages(max_pages)`.
+  Anthropic does not honor `maxItems` at decode time; the cap reaches
+  the model as guidance and the client adapter trims over-emission
+  post-parse with a WARN log. Concrete caps: 1-page (5, 5, 2, 2, 2),
+  2-page (12, 9, 9, 3, 3), 3+-page (15, 12, 12, 6, 6).
+- Portfolio with zero skill groups: `skills.items` falls back to an
+  unconstrained string-array `items` so the schema remains well-
+  formed. Adapter-side group lookup still catches anything bogus.
 - Portfolio with zero projects: `projects.items` falls back to an
   unconstrained string array (since `items.enum: []` would 400). The
   application-level validator catches any bogus ID.
@@ -632,19 +709,21 @@ construction. Two calls with the same `PortfolioData` produce
 byte-identical schemas. A test in `tests/unit/test_output_schema.py`
 pins this invariant.
 
-**Validator retention:** `validate_curation_ids` runs unchanged on the
-adapted curation. Under Option E the following rows are
+**Validator retention:** `validate_curation_ids` runs on the adapted
+curation. Under the 2026-05-18 hybrid schema the following rows are
 decode-time-unreachable on the API path: unknown `work_id`, unknown
-`highlight_id` inside a known `work_id`, unknown `project_id`,
-duplicate `work_id`, and missing rankings. Unknown `skill_group_id`
-and non-verbatim skill keywords are NOT decode-time-blocked (no enum
-on `skills`); the adapter's keyword→group lookup filters both before
-the validator runs, and `validate_curation_ids` keeps the same
-soft-drop branches as defense-in-depth against an adapter regression.
-All hard-fail rows remain reachable on the **static** path (which
-builds `ResumeCuration` directly from portfolio data without going
-through the adapter), so the validator is also the primary defense
-there. Defense-in-depth is justified.
+`highlight_id` inside a known `work_id`, unknown `skill_group_id`
+(group IDs are now enum-constrained), unknown `project_id`, duplicate
+`work_id`, missing rankings, and out-of-range
+`work_highlight_weights` values (number-range enforced at decode
+time). Hallucinated skill *keywords* are unreachable by construction
+because keywords are filled by code from portfolio data, not by the
+AI. All hard-fail rows remain reachable on the **static** path (which
+builds `ResumeCuration` directly without going through the adapter),
+so the validator is also the primary defense there. The validator
+additionally rejects `work_highlight_weights` keys that don't match
+any portfolio work ID; this is the only rule that catches a class of
+adapter bypass not already covered by Pydantic or the schema.
 
 ### Portfolio signal fields
 

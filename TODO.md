@@ -5,6 +5,75 @@ files point here; `docs/architecture.md` describes current state only.
 
 ---
 
+## Recently landed (2026-05-20, AI/code reallocation series)
+
+Six commits on branch `ai-code-reallocation` redistributed work between
+the AI and the code-side bookkeeping:
+
+- **company_slug → code.** AI emits free-text `company_name`; client
+  adapter slugifies into the existing `company_slug` Pydantic field.
+- **Prompt cleanup.** Removed schema-enforced rules (structural
+  invariants the JSON schema already guarantees); kept behavioral
+  guidance and the load-bearing skill-keyword warning at the time.
+- **Per-entry highlight emission caps.** `output_schema.build_curation_schema`
+  threads `max_pages` and surfaces `max(2, ceil(floor[i] * 1.5))` per
+  work entry as a soft cap (description text + adapter post-trim).
+- **Hybrid skill selection.** Wire `skills` becomes an ordered array
+  of portfolio skill group IDs (enum-constrained); new
+  `curator.jd_scorer` fills each group's keywords from portfolio data
+  using JD-relevance scoring. Three caps in `rules.py` bound density.
+- **AI cascade hints.** Two new optional `ResumeCuration` fields:
+  `work_highlight_weights` (per-entry float [0.5, 2.0] scales tier 6
+  floor) and `trim_priority` (ordered middle-band drop priority with
+  pinned guardrails — interests first, work last).
+
+## Follow-ups from the AI/code reallocation series
+
+### Cover-letter word-count strategy (was Task 5 in the plan)
+
+The current word-count target band (250-300 total, 40-90 per body
+paragraph) is enforced post-hoc by the validator but **the model does
+not respect it reliably** (62.5% over-cap rate observed across the
+10-profile review on 2026-05-16). Tightening prompt-side targets is a
+band-aid; the deeper question is whether word-count enforcement is the
+right tool at all. Options to evaluate:
+
+- [ ] Lean on single-page render constraint (Typst will not overflow
+  one page) + per-paragraph hard band (structural quality signal) only;
+  drop the total-target enforcement and accept whatever length the
+  model produces inside those constraints.
+- [ ] Replace numeric targets with structural guidance ("3-4 sentences
+  per body paragraph, opening hook + 2-3 closing sentences").
+- [ ] Keep the cap but stop publishing internal numeric targets to the
+  model (calibrate via the validator only, not the prompt).
+
+This needs its own design conversation; do not change calibration
+constants in isolation.
+
+### Mechanical-tailored mode (was Task 9 in the plan, deferred)
+
+A third tier between `curator static` (zero AI, zero JD-awareness) and
+`curator curate` (full AI). Would reuse the `jd_scorer` module to
+score highlights, projects, and skill keywords against the JD, then
+render deterministically without an API call. Estimated quality
+~70-80% of full AI on selection; missing summary and cover letter.
+Pays off only if bulk-application throughput becomes a binding
+constraint. Skipped in the 2026-05-20 series; revisit when a real
+workflow demands it.
+
+### PROMPT_VERSION drift detection in CI
+
+Each commit in this series bumped `PROMPT_VERSION` manually. A CI test
+that asserts `PROMPT_HASH` matches a pinned value for each
+`PROMPT_VERSION` would force the bump whenever the system prompt text
+changes. The hash mismatch already surfaces in `curation_log.json` for
+manual operators; CI enforcement would catch it before merge.
+
+- [ ] Add `tests/unit/test_prompt_version_hash_map.py` with a frozen
+  `{PROMPT_VERSION: PROMPT_HASH}` mapping; fail-fast on mismatch.
+
+---
+
 ## Curation Reliability
 
 Cross-parent highlight attribution and unknown work/project IDs are
