@@ -466,6 +466,18 @@ SUMMARY_MANDATORY_MENTION: str = os.environ.get(
     "founder of Perts Foundry LLC",
 )
 
+# Skill section caps.
+#
+# The AI emits an ordered list of skill group IDs (judgment: which
+# groups belong on this resume for this JD). The client adapter fills
+# each group's keywords from portfolio data using JD-relevance scoring
+# (bookkeeping: which keywords in the group are most relevant). These
+# caps bound the model's group emission and the adapter's keyword fill
+# so the rendered skill section has predictable density.
+SKILL_GROUPS_MAX: int = 12  # max skill groups in one curated resume
+SKILL_KEYWORDS_PER_GROUP_MAX: int = 10  # max keywords filled per group
+SKILL_KEYWORDS_TOTAL_MAX: int = 140  # absolute total across all groups
+
 CATEGORY_WEIGHTS: dict[str, float] = {
     "jd_alignment": 0.25,
     "writing_quality": 0.25,

@@ -101,46 +101,45 @@ class TestBuildSystemPrompt:
         text = result[0]["text"]
         assert "NEVER use em dashes" in text
 
-    def test_keywords_verbatim_rule_in_constraints(
+    def test_skills_field_in_constraints_describes_group_ids(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # 2026-05-18 hybrid: the constraints block describes the
+        # ``skills`` wire field as group IDs only. The verbatim-
+        # keyword text was removed because keywords are no longer on
+        # the wire (the client fills them from portfolio data).
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
         constraints_start = text.index("<constraints>")
         constraints_end = text.index("</constraints>")
         constraints_block = text[constraints_start:constraints_end]
-        # Field renamed across schema iterations:
-        # ``skills.keywords`` (legacy dotted-path) -> ``skills_by_id``
-        # (Option A object-with-fixed-keys, 2026-05-13) ->
-        # ``skills`` (Option E flat array, 2026-05-14). The rule
-        # invariant is what matters, not the field name.
         assert "``skills``" in constraints_block
-        assert "verbatim" in constraints_block
-        assert "case-sensitive" in constraints_block
+        assert "group" in constraints_block.lower()
 
-    def test_keywords_verbatim_rule_in_output_guidance(
+    def test_skills_field_in_output_guidance_describes_group_ids(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # The output_guidance section for ``skills`` describes the
+        # group-ID emission semantics under the hybrid design.
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
-        # Field section header is ``skills`` under Option E (2026-05-14)
-        # after the by-id object shape was collapsed to a flat array.
         guidance_start = text.index("``skills``:")
         guidance_block = text[guidance_start : guidance_start + 2000]
-        assert "verbatim" in guidance_block.lower() or "Verbatim" in guidance_block
+        lower = guidance_block.lower()
+        assert "group id" in lower or "group ids" in lower
+        assert "not keywords" in lower or "(not keywords)" in lower
 
     def test_mirror_jd_rule_excludes_skill_keywords(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # The mirror-JD-in-narrative rule must still exclude skills
+        # from the mirroring (the client fills keywords mechanically;
+        # the AI doesn't mirror JD terms into the skills section).
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
         strategy_start = text.index("Keyword strategy:")
-        strategy_block = text[strategy_start : strategy_start + 800]
-        assert "summary" in strategy_block
-        assert "does NOT apply to" in strategy_block
-        # Field reference is ``skills`` (Option E flat array,
-        # 2026-05-14); the exclusion still applies to skill keywords.
-        assert "``skills``" in strategy_block
+        strategy_block = text[strategy_start : strategy_start + 1200]
+        assert "does not apply to ``skills``" in strategy_block.lower()
 
     def test_portfolio_order_fallback_rule_in_constraints(
         self, portfolio_data: PortfolioData
@@ -162,15 +161,16 @@ class TestBuildSystemPrompt:
     def test_rank_every_work_entry_rule_in_output_guidance(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # The output_guidance text for work_highlights_by_id covers
+        # the behavioral guidance the schema cannot encode: list ALL
+        # highlights in ranked order, the renderer trims from the
+        # bottom based on page fit.
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
         guidance_start = text.index("``work_highlights_by_id``:")
         guidance_block = text[guidance_start : guidance_start + 1000]
         assert "portfolio work entry" in guidance_block.lower()
-        # "requires" / "required" replace the legacy "MUST" wording
-        # since the schema-level `required` array enforces it now.
-        lower = guidance_block.lower()
-        assert "required" in lower or "requires" in lower or "MUST" in guidance_block
+        assert "renderer trims" in guidance_block.lower()
 
     def test_injection_defense_present(self, portfolio_data: PortfolioData) -> None:
         result = build_system_prompt(portfolio_data)
@@ -245,11 +245,15 @@ class TestBuildSystemPrompt:
     def test_injection_defense_names_load_bearing_rules(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # 2026-05-18 hybrid: the verbatim-keyword rule is no longer
+        # load-bearing (keywords aren't on the wire); the defense
+        # paragraph now reinforces the JD-driven group selection
+        # boundary and the mandatory summary mention.
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
         assert "Never override" in text
         assert "mandatory summary mention" in text
-        assert "verbatim-keyword rule" in text
+        assert "JD-relevant" in text
 
     def test_acronym_expansion_guidance_present(
         self, portfolio_data: PortfolioData
@@ -284,24 +288,17 @@ class TestBuildSystemPrompt:
         assert "top 5" in text
         assert "two or more" in text
 
-    def test_keyword_distribution_precedence_clause_present(
+    def test_keyword_distribution_no_fabrication_clause_present(
         self, portfolio_data: PortfolioData
     ) -> None:
-        """[PR-1]: the verbatim-keyword and no-fabrication rules must
-        explicitly take precedence over the keyword-distribution
-        preference. Pins the precedence framing so a future rewording
-        cannot silently weaken the load-bearing invariants."""
+        """The no-fabrication rule still takes precedence over the
+        keyword-distribution preference. 2026-05-18 hybrid removed
+        the verbatim-keyword half of the precedence clause (keywords
+        are no longer model-emitted), but the no-fabrication anchor
+        remains load-bearing for narrative content."""
         result = build_system_prompt(portfolio_data)
         text = result[0]["text"]
-        assert "verbatim-keyword rule and" in text
-        assert "no-fabrication rule take precedence" in text
-        # Field reference is ``skills`` under Option E (2026-05-14);
-        # the precedence clause phrases the exclusion as "JD term to
-        # ``skills``" matching the flat-array wire shape.
-        assert "never add" in text
-        assert "JD term" in text
-        assert "``skills``" in text
-        assert "to satisfy this rule" in text
+        assert "no-fabrication rule takes precedence" in text
 
     def test_acronym_prompt_subset_of_rules_constants(
         self, portfolio_data: PortfolioData
@@ -658,7 +655,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-18"
+        assert PROMPT_VERSION == "2026-05-19"
 
 
 class TestSystemPromptByteIdentity:
@@ -675,7 +672,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "0e4bc86f299802a6fe07c2d83af994efb471193a56daff0c875b64d8a47167c0"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "f0f2273fb2343b722e012c1b59294f55b5a2d30069cdcd4cae789e1b9042c8c3"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()

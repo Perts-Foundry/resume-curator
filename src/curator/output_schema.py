@@ -4,14 +4,7 @@ The schema is constructed from the loaded ``PortfolioData`` at curate
 time and injected via ``output_config.format`` on ``messages.stream``.
 The grammar makes cross-parent ``highlight_id`` emission
 decode-time-impossible (via per-property ``items.enum`` on
-``work_highlights_by_id``). Skill keyword verbatim-match is enforced
-only post-hoc by ``client._adapt_curation_dict`` and
-``validate_curation_ids``, NOT at decode time: the 2026-05-13
-production schema (object-keyed-by-skill-group, 27 inner properties)
-exceeded Anthropic's compiled-grammar budget; the 2026-05-14 Haiku
-probe sequence localized the binding axis to inner-property count
-under ``required`` + ``additionalProperties: false``, forcing the
-collapse to a flat top-level array that shipped 2026-05-15.
+``work_highlights_by_id``).
 
 Shape (top-level):
 
@@ -19,15 +12,16 @@ Shape (top-level):
     suggested_label         string
     company_name            string  (free-text; client slugifies)
     work_highlights_by_id   object[work_id -> array[items.enum]]
-    skills                  array[string]  (flat keyword list)
+    skills                  array[items.enum]  (skill group IDs)
     projects                array[items.enum]
 
-Only ``work_highlights_by_id`` carries nested per-property
-``items.enum``; the adapter walks each emitted ``skills`` keyword back
-to its parent portfolio group (first-match by portfolio order) to
-reconstruct ``list[SkillRanking]`` for the domain model. Anthropic's
-grammar compiles per-property constraints independently (verified
-empirically 2026-05-13).
+The 2026-05-18 hybrid skill design moves keyword selection out of
+the AI: ``skills`` is an ordered list of portfolio skill group IDs
+(judgment), and the client adapter fills each group's keywords from
+portfolio data using JD-relevance scoring (see ``curator.jd_scorer``).
+The group-ID enum surface is small (typically <30 IDs), well under
+Anthropic's compiled-grammar budget; the 354-keyword surface that
+forced the 2026-05-14 flat-array workaround is no longer on the wire.
 
 The Pydantic models in ``models.py`` remain the single source of truth
 for application-level shape and validation. This module produces only
@@ -42,12 +36,12 @@ subset:
   ``work_highlights_by_id``; the adapter synthesizes empty
   ``WorkHighlightRanking`` instances for omitted entries to keep the
   Pydantic "every portfolio work entry has a ranking" invariant.
-  ``skills`` is a flat unconstrained string array (no nested
-  per-group structure on the wire), so the empty-enum rule has no
-  surface here.
+  ``skills.items.enum`` falls back to an unconstrained string when
+  the portfolio has zero skill groups.
 - ``minLength`` / ``maxLength`` / ``pattern`` / ``minimum`` /
-  ``maximum`` are not enforced at decode time. Constraints survive
-  only as post-hoc Pydantic re-validation on the parsed dict.
+  ``maximum`` / ``maxItems`` are not enforced at decode time.
+  Constraints survive only as post-hoc Pydantic re-validation and
+  adapter-side trimming on the parsed dict.
 - ``oneOf`` / ``dependentSchemas`` / ``if-then-else`` are
   unsupported; the design uses ``properties`` directly rather than
   any union construct.
@@ -62,6 +56,7 @@ from typing import TYPE_CHECKING, Any
 from curator.page_caps import _caps_for_pages
 from curator.rules import (
     COVER_LETTER_VALID_SIGN_OFFS,
+    SKILL_GROUPS_MAX,
     SUMMARY_MANDATORY_MENTION,
     SUMMARY_WORD_TARGET_MAX,
     SUMMARY_WORD_TARGET_MIN,
@@ -93,6 +88,7 @@ def _per_entry_emit_cap(work_position: int, max_pages: int) -> int:
     caps = _caps_for_pages(max_pages)
     floor = caps.floor_for_position(work_position)
     return max(2, math.ceil(floor * 1.5))
+
 
 _ID_PATTERN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -216,45 +212,41 @@ def _build_work_highlights_by_id_schema(
 
 
 def _build_skills_schema(portfolio: PortfolioData) -> dict[str, Any]:
-    """Flat top-level array of skill keyword strings.
+    """Top-level array of skill group IDs (hybrid AI/code skill selection).
 
-    Wire shape: ``{"skills": ["EC2", "S3", "Kubernetes", ...]}``. The
-    model emits keywords ordered by JD fit across all relevant
-    portfolio skill groups. The client adapter walks each emitted
-    keyword back to its parent portfolio group (first-match by
-    portfolio iteration order) to reconstruct ``list[SkillRanking]``.
+    Wire shape: ``{"skills": ["skill-aws", "skill-devops", ...]}``. The
+    model emits an *ordered* list of portfolio skill group IDs ranked
+    by JD relevance (judgment). The client adapter then fills each
+    group's keywords from portfolio data using a JD-relevance scorer
+    (bookkeeping; see ``curator.jd_scorer``). The reconstructed
+    ``list[SkillRanking]`` is what reaches the renderer.
 
-    There is NO ``items.enum``: the 354-string production surface
-    across 22 skill groups exceeded Anthropic's compiled-grammar
-    budget (HTTP 400 "compiled grammar is too large" on 2026-05-13).
-    Verbatim-match enforcement lives in
-    ``client._adapt_curation_dict`` (drops + WARN logs unknown
-    keywords) and ``validate_curation_ids`` (defense in depth).
-
-    The argument is unused at present (the flat shape carries no
-    portfolio-derived enum), but the signature mirrors the other
-    ``_build_*_schema`` builders so future tightening can hook in
-    without a call-site change.
+    The group ID space is small enough (typically <30 groups) to
+    encode as an ``items.enum`` without hitting Anthropic's
+    compiled-grammar budget; the per-keyword 354-string surface that
+    forced the earlier flat-array design (2026-05-13) is no longer on
+    the wire. ``maxItems`` is not supported in structured output, so
+    the cap on group count surfaces in the description text and is
+    enforced post-parse by the adapter.
     """
-    del portfolio  # see docstring
+    group_ids = [_check_id(g.id, "skill group") for g in portfolio.skills]
+    items: dict[str, Any] = {"type": "string"}
+    if group_ids:
+        items["enum"] = group_ids
     return {
         "type": "array",
         "description": (
-            "Flat list of skill keywords ordered by JD fit, strongest "
-            "first across all relevant portfolio skill groups. Every "
-            "emitted string MUST be a verbatim (case-sensitive) match "
-            "of a keyword already present in some portfolio skill "
-            "group's ``keywords`` list. The schema does not enforce "
-            "this at decode time (compile-budget constraint, see "
-            "module docstring); non-verbatim keywords are dropped "
-            "post-hoc by the client adapter and surface as WARN log "
-            "lines. If a keyword appears in multiple portfolio groups, "
-            "include it only once. If a portfolio group is irrelevant "
-            "to the JD, omit all of its keywords; do NOT pad with "
-            "weak keywords to keep a group represented. May be empty "
-            "when no portfolio group is sufficiently JD-relevant."
+            f"Ordered list of portfolio skill group IDs, strongest "
+            f"JD-fit first. Each ID must be the ID of a portfolio "
+            f"skill group; the client fills in the keywords for each "
+            f"group from portfolio data using JD-relevance scoring. "
+            f"Emit at most {SKILL_GROUPS_MAX} groups. Omit any group "
+            f"that is irrelevant to the JD; fewer well-targeted "
+            f"groups beat broad coverage. May be empty when no group "
+            f"is sufficiently JD-relevant. Order matters: the first "
+            f"emitted group renders first in the skill section."
         ),
-        "items": {"type": "string"},
+        "items": items,
     }
 
 

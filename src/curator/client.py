@@ -29,6 +29,7 @@ from curator.exceptions import (
     CurationValidationError,
 )
 from curator.io_utils import slugify
+from curator.jd_scorer import score_keywords_for_jd
 from curator.models import (
     CoverLetterCuration,
     PortfolioData,
@@ -38,7 +39,12 @@ from curator.models import (
 )
 from curator.output_schema import _per_entry_emit_cap, build_curation_schema
 from curator.prompt import build_system_prompt, build_user_message
-from curator.rules import COVER_LETTER_MAX_TOKENS_HEADROOM
+from curator.rules import (
+    COVER_LETTER_MAX_TOKENS_HEADROOM,
+    SKILL_GROUPS_MAX,
+    SKILL_KEYWORDS_PER_GROUP_MAX,
+    SKILL_KEYWORDS_TOTAL_MAX,
+)
 
 if TYPE_CHECKING:
     from curator.config import CuratorSettings
@@ -155,13 +161,14 @@ def _adapt_curation_dict(
     with_cover_letter: bool,
     request_id: str,
     max_pages: int,
+    jd_text: str,
 ) -> tuple[ResumeCuration, CoverLetterCuration | None]:
     """Convert the wire dict to ``ResumeCuration`` (+ optional cover letter).
 
     The wire schema encodes ``work_highlights_by_id`` as an object keyed
     by portfolio work entry IDs (for grammar enforcement of cross-parent
-    highlight attribution) and ``skills`` as a flat top-level array of
-    keyword strings. The domain model uses
+    highlight attribution) and ``skills`` as a top-level array of
+    portfolio skill group IDs. The domain model uses
     ``list[WorkHighlightRanking]`` and ``list[SkillRanking]``. This
     adapter converts shapes:
 
@@ -169,23 +176,23 @@ def _adapt_curation_dict(
       are synthesized as empty ``WorkHighlightRanking`` instances so
       the validator's "every portfolio entry has a ranking" invariant
       continues to hold.
-    - Each emitted ``skills`` keyword is walked back to its parent
-      portfolio group via a precomputed first-match lookup
-      (``portfolio.skills`` iteration order). Within-group order
-      preserves model emit order; duplicates within a group are
-      de-duped. Unknown keywords (not present in any portfolio group)
-      are dropped with one WARN log per call. Keywords that exist in
-      multiple portfolio groups are attributed to the first one (the
-      prompt instructs the model to emit each keyword once); the
-      adapter logs one INFO per call listing every such tie-break
-      decision so the signal isn't lost.
+    - Work-entry highlight emissions are trimmed to the per-position
+      cap (``_per_entry_emit_cap``) when the model exceeds the soft
+      cap surfaced in the schema description (Anthropic does not
+      enforce ``maxItems``). Over-emission is WARN-logged.
+    - Each emitted ``skills`` group ID is looked up in the portfolio;
+      ``score_keywords_for_jd`` fills the group's keywords from
+      portfolio data ranked by JD relevance. Three caps apply:
+      ``SKILL_GROUPS_MAX`` (per-resume), ``SKILL_KEYWORDS_PER_GROUP_MAX``
+      (per-group), and ``SKILL_KEYWORDS_TOTAL_MAX`` (absolute total).
+      Unknown group IDs are dropped with WARN; repeated emissions are
+      de-duped with INFO; over-cap emissions are dropped with WARN.
     - JSON validation failures surface as :class:`APIResponseError` with
       the request_id and a brief shape description for debuggability.
 
     See ``docs/architecture.md`` "Dynamic schema construction (API
-    path)" for why ``skills`` is flat rather than object-keyed (the
-    27-property required-strict object exceeded Anthropic's
-    compiled-grammar budget on 2026-05-13).
+    path)" for the design rationale behind moving keyword selection
+    from the AI to the client adapter (2026-05-18 hybrid).
     """
     if with_cover_letter:
         resume_dict = parsed.get("resume")
@@ -253,70 +260,75 @@ def _adapt_curation_dict(
             request_id,
         )
 
-    # Skills: walk each flat keyword back to its parent portfolio group.
-    # Precompute two lookups in one pass:
-    #   keyword_to_group: first-match attribution (portfolio order)
-    #   keyword_to_all_groups: every group containing the keyword
-    #     (drives the ambiguous-attribution INFO log below)
-    keyword_to_group: dict[str, str] = {}
-    keyword_to_all_groups: dict[str, list[str]] = {}
-    for group in portfolio.skills:
-        for kw in group.keywords:
-            keyword_to_group.setdefault(kw, group.id)
-            keyword_to_all_groups.setdefault(kw, []).append(group.id)
-
-    group_keywords: dict[str, list[str]] = {}  # insertion-ordered
-    unknown_keywords: list[str] = []
-    ambiguous_attributions: list[tuple[str, str, list[str]]] = []
-    seen_ambiguous: set[str] = set()  # dedupe INFO log when a keyword repeats
-    for kw in raw_skills:
-        # Defense-in-depth: the schema declares ``items: {"type": "string"}``
-        # so a non-string emission would already be a grammar regression,
-        # but ``dict.get(unhashable)`` would raise ``TypeError`` that
-        # escapes the project's ``APIResponseError`` convention. Coerce
-        # to str via ``repr`` and route through the unknown-keyword path
-        # so the operator sees what the model produced.
-        if not isinstance(kw, str):
-            unknown_keywords.append(repr(kw))
+    # Skills: AI emits an ordered list of skill group IDs (judgment).
+    # Code fills each group's keywords from portfolio data using the
+    # JD-relevance scorer (bookkeeping). Three caps apply:
+    #   - SKILL_GROUPS_MAX: max number of groups (excess groups dropped)
+    #   - SKILL_KEYWORDS_PER_GROUP_MAX: max keywords per group
+    #   - SKILL_KEYWORDS_TOTAL_MAX: absolute total across all groups
+    portfolio_groups = {g.id: g for g in portfolio.skills}
+    seen_groups: set[str] = set()
+    dedup_emit_count = 0
+    unknown_group_ids: list[str] = []
+    skills: list[dict[str, Any]] = []
+    total_keywords = 0
+    over_groups_cap_count = 0
+    for gid in raw_skills:
+        # Defense-in-depth: the schema declares ``items: {"type":
+        # "string", "enum": [<portfolio group IDs>]}`` so a non-string
+        # or unknown-ID emission would already be a grammar regression
+        # on the API path. Coerce non-strings and route unknowns
+        # through the dropped-IDs log so the operator sees what the
+        # model produced.
+        if not isinstance(gid, str):
+            unknown_group_ids.append(repr(gid))
             continue
-        gid = keyword_to_group.get(kw)
-        if gid is None:
-            unknown_keywords.append(kw)
+        if gid not in portfolio_groups:
+            unknown_group_ids.append(gid)
             continue
-        bucket = group_keywords.setdefault(gid, [])
-        if kw not in bucket:  # in-group dedupe
-            bucket.append(kw)
-        all_groups = keyword_to_all_groups[kw]
-        if len(all_groups) > 1 and kw not in seen_ambiguous:
-            seen_ambiguous.add(kw)
-            alternatives = [g for g in all_groups if g != gid]
-            ambiguous_attributions.append((kw, gid, alternatives))
+        if gid in seen_groups:
+            dedup_emit_count += 1
+            continue
+        if len(skills) >= SKILL_GROUPS_MAX:
+            over_groups_cap_count += 1
+            continue
+        seen_groups.add(gid)
+        group = portfolio_groups[gid]
+        per_group_cap = min(
+            SKILL_KEYWORDS_PER_GROUP_MAX,
+            SKILL_KEYWORDS_TOTAL_MAX - total_keywords,
+        )
+        keywords = score_keywords_for_jd(jd_text, group.keywords, top_n=per_group_cap)
+        if not keywords:
+            # Empty SkillRanking would fail the model's min_length=1
+            # constraint. Skip groups with zero keywords (unusual:
+            # would require a portfolio group with no keywords at
+            # all).
+            continue
+        skills.append({"skill_id": gid, "keywords": keywords})
+        total_keywords += len(keywords)
 
-    # NOTE: request_id is interpolated into the format string here for
-    # consistency with the rest of curator.client. The architecture-review
-    # 2026-05-15 suggested `logger.bind(request_id=...).info(...)` for
-    # structured logging, but no other call site in this module uses
-    # bind(); moving them all in lockstep is a follow-up worth its own
-    # commit. See TODO.md.
-    if unknown_keywords:
+    if unknown_group_ids:
         logger.warning(
-            "Adapter dropped {} keyword(s) not in any portfolio skill "
-            "group: {} (request_id={})",
-            len(unknown_keywords),
-            unknown_keywords,
+            "Adapter dropped {} skill group ID(s) not in portfolio: {} (request_id={})",
+            len(unknown_group_ids),
+            unknown_group_ids,
             request_id,
         )
-    if ambiguous_attributions:
+    if dedup_emit_count:
         logger.info(
-            "Adapter resolved {} ambiguous keyword attribution(s) via "
-            "first-match by portfolio order: {} (request_id={})",
-            len(ambiguous_attributions),
-            ambiguous_attributions,
+            "Adapter de-duplicated {} repeated skill group emission(s) (request_id={})",
+            dedup_emit_count,
             request_id,
         )
-    skills: list[dict[str, Any]] = [
-        {"skill_id": gid, "keywords": kws} for gid, kws in group_keywords.items()
-    ]
+    if over_groups_cap_count:
+        logger.warning(
+            "Adapter dropped {} skill group emission(s) over the "
+            "per-resume cap of {} (request_id={})",
+            over_groups_cap_count,
+            SKILL_GROUPS_MAX,
+            request_id,
+        )
 
     company_name = resume_dict.get("company_name") or ""
     resume_payload = {
@@ -601,6 +613,7 @@ class CuratorClient:
                 with_cover_letter=with_cover_letter,
                 request_id=message.id,
                 max_pages=self._settings.max_pages,
+                jd_text=job_description,
             )
 
             # 7. Application-level ID validation (Layer 3) for the resume.

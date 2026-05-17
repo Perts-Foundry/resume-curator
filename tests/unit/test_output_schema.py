@@ -256,9 +256,7 @@ class TestPerEntryEmitCap:
         # at least 2 so the model isn't forbidden from emitting
         # anything (the cap is a ceiling, not a target).
         portfolio = _portfolio(
-            work=[
-                _work(f"w{i}", [f"w{i}-h{j}" for j in range(5)]) for i in range(5)
-            ]
+            work=[_work(f"w{i}", [f"w{i}-h{j}" for j in range(5)]) for i in range(5)]
         )
         wh = build_curation_schema(portfolio, max_pages=1)["properties"][
             "work_highlights_by_id"
@@ -302,22 +300,25 @@ class TestSkills:
         assert sk["type"] == "array"
         assert sk["items"]["type"] == "string"
 
-    def test_skills_items_have_no_enum(
+    def test_skills_items_enum_is_portfolio_group_ids(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        # Lock-in: the 354-keyword production enum surface 400'd in
-        # production on 2026-05-13. Any future enum here is a regression.
+        # 2026-05-18 hybrid: items.enum constrains skill emissions to
+        # portfolio skill group IDs. Surface is small (typically <30
+        # groups), well under the 354-keyword surface that 400'd on
+        # 2026-05-13 with the prior flat-keyword design.
         sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
-        assert "enum" not in sk["items"]
+        portfolio_group_ids = [g.id for g in realistic_portfolio.skills]
+        assert sk["items"]["enum"] == portfolio_group_ids
 
-    def test_skills_items_dict_is_structural_only(
+    def test_skills_items_dict_has_only_type_and_enum(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        # Beyond no-enum: items must be exactly {"type": "string"} so a
-        # future drive-by adding pattern/minLength/etc. also trips this
-        # test rather than silently shrinking the grammar budget.
+        # Beyond items.enum: no drive-by additions of pattern, minLength,
+        # etc., that would shrink the grammar budget unnecessarily.
         sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
-        assert sk["items"] == {"type": "string"}
+        assert set(sk["items"].keys()) == {"type", "enum"}
+        assert sk["items"]["type"] == "string"
 
     def test_skills_in_required_list(self, realistic_portfolio: PortfolioData) -> None:
         schema = build_curation_schema(realistic_portfolio)
@@ -342,11 +343,13 @@ class TestSkills:
         assert "skills_by_id" not in schema["properties"]
         assert "skills_by_id" not in schema.get("required", [])
 
-    def test_zero_keyword_portfolio_still_emits_flat_skills(self) -> None:
-        # Under Option A's by-id shape, zero-keyword groups had to be
-        # omitted (Anthropic rejected empty enums). Option E has no
-        # nested structure, so even a portfolio with every group at
-        # zero keywords still emits a flat ``skills`` field.
+    def test_zero_keyword_portfolio_still_emits_group_id_enum(self) -> None:
+        # 2026-05-18 hybrid: groups are emitted by ID regardless of
+        # their keyword count. A portfolio whose every group has zero
+        # keywords still produces a valid enum (the adapter would
+        # later skip such groups because SkillRanking requires
+        # min_length=1 keywords, but the schema itself remains well-
+        # formed).
         portfolio = _portfolio(
             skills=[
                 _skill("group-no-kw-a", []),
@@ -356,7 +359,7 @@ class TestSkills:
         schema = build_curation_schema(portfolio)
         sk = schema["properties"]["skills"]
         assert sk["type"] == "array"
-        assert sk["items"] == {"type": "string"}
+        assert sk["items"]["enum"] == ["group-no-kw-a", "group-no-kw-b"]
         assert "skills" in schema["required"]
 
 
@@ -588,16 +591,15 @@ class TestDescriptions:
         desc = wh["properties"]["pf-senior-engineer"]["description"]
         assert "pf-senior-engineer" in desc
 
-    def test_skills_description_mentions_verbatim_and_omission(
+    def test_skills_description_mentions_group_ids_and_omission(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        # The flat `skills` field has no per-group descriptions under
-        # Option E. The top-level description carries two load-bearing
-        # signals to the model: (1) verbatim-match against portfolio
-        # keywords, (2) omit keywords from JD-irrelevant groups rather
-        # than padding. Both reinforce prompt content; pin them here
-        # so a future doc-tweak doesn't quietly drop either.
+        # 2026-05-18 hybrid: the `skills` field carries group IDs
+        # only (the adapter fills keywords via JD scoring). The
+        # top-level description must signal (1) the model emits
+        # group IDs not keywords and (2) omit JD-irrelevant groups
+        # rather than padding. Both reinforce prompt content.
         sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
         desc = sk["description"].lower()
-        assert "verbatim" in desc
+        assert "group" in desc
         assert "omit" in desc or "irrelevant" in desc
