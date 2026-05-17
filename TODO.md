@@ -7,8 +7,10 @@ files point here; `docs/architecture.md` describes current state only.
 
 ## Recently landed (2026-05-16/17, AI/code reallocation series)
 
-Six commits on branch `ai-code-reallocation` (five source commits +
-one docs-sync + one consolidated pre-PR-review-feedback commit)
+Fourteen commits on branch `ai-code-reallocation` (the original
+five source commits, one docs-sync, one consolidated
+pre-PR-review-feedback commit, plus seven post-validation follow-ups
+addressing items surfaced by the 10-profile real-world re-run)
 redistributed work between the AI and the code-side bookkeeping:
 
 - **company_slug → code.** AI emits free-text `company_name`; client
@@ -39,17 +41,47 @@ redistributed work between the AI and the code-side bookkeeping:
   validator weight-key rejection / `ai_hints` audit log / skill-cap
   paths, bumped `format_version` to 2.4, plus the doc-sync items
   the original 5aea4be docs commit missed.
+- **Post-validation follow-ups (2026-05-17).** Seven commits closing
+  items surfaced by the 10-profile real-world re-run:
+  - Cap `_reorder_with_safety_net` additions at
+    `per_entry_emit_cap`. The AI's ranked subset becomes the
+    authoritative ceiling; ~70 of ~88 trim iterations per run
+    eliminated; weights >1.5 at pos 0 are now-deliberately inert
+    rather than silently overridden by portfolio-order padding.
+  - Refresh the wire-side `work_highlight_weights` description
+    (output_schema.py and models.py Field) to tell the model the
+    practical consequence and how to recover the intent (emit more
+    highlight IDs, not a higher weight).
+  - Promote the `[0.5, 2.0]` weight range to
+    `WORK_HIGHLIGHT_WEIGHT_MIN/MAX` constants in `rules.py`;
+    centralizes the validator + schema description references.
+  - Bump `COVER_LETTER_WORD_MAX` 300 -> 360 and re-center
+    `COVER_LETTER_WORD_TARGET` at 305 to track the model's natural
+    band; 7/9 false-alarm `over_cap=true` flags on the validation
+    run eliminated. Retuned `valid_cover_letter()` fixture to ~340
+    words and bumped `HIGH_WATER_MARK_FLOOR` to 340 to preserve the
+    near-the-cap geometry check.
+  - Strip trailing legal-entity suffixes (`inc`, `llc`, `ltd`,
+    `gmbh`, `pbc`) in `slugify`; restores `archesys-inc -> archesys`
+    that drifted in PR12 when `company_slug` became free-text
+    `company_name`. `corp` and `co` intentionally excluded
+    (too-often-brand).
+  - Doc sync: CLAUDE.md and docs/testing-protocol.md cover-letter
+    range updated to 250-360; docs/architecture.md prompt-caching
+    section gains an on-path/off-path partitioning note.
+  - TODO follow-ups filed (see below).
 
 ## Follow-ups from the AI/code reallocation series
 
 ### Cover-letter word-count strategy (was Task 5 in the plan)
 
-The current word-count target band (250-300 total, 40-90 per body
-paragraph) is enforced post-hoc by the validator but **the model does
-not respect it reliably** (62.5% over-cap rate observed across the
-10-profile review on 2026-05-16). Tightening prompt-side targets is a
-band-aid; the deeper question is whether word-count enforcement is the
-right tool at all. Options to evaluate:
+The current word-count target band (now 250-360 total since
+2026-05-17, 40-90 per body paragraph) is enforced post-hoc by the
+validator but **the model does not respect numeric targets reliably**
+(62.5% over-the-old-300-cap rate observed across the 10-profile review
+on 2026-05-16; the cap bump to 360 absorbs that band, but the deeper
+question — whether word-count enforcement is the right tool at all —
+remains open). Options to evaluate:
 
 - [ ] Lean on single-page render constraint (Typst will not overflow
   one page) + per-paragraph hard band (structural quality signal) only;
@@ -62,6 +94,77 @@ right tool at all. Options to evaluate:
 
 This needs its own design conversation; do not change calibration
 constants in isolation.
+
+### Align client-side per-entry cap with renderer chronological order
+
+`client.py:_adapt_curation_dict` (around line 244) computes
+``work_id_to_position = {w.id: i for i, w in enumerate(portfolio.work)}``
+for the per-entry emit cap. The renderer (post-safety-net-cap-commit)
+computes the same position via `_sort_work_chronologically`. For
+portfolios that already list work entries chronologically the two
+agree, but a portfolio in alphabetical or insertion-order would
+mis-align the client cap and the renderer cascade on which entry is
+"pos 0." Out-of-scope for the safety-net-cap PR because the user's
+portfolio is chronological; documented as a known limitation in
+`page_caps.per_entry_emit_cap`'s docstring.
+
+- [ ] In `client._adapt_curation_dict`, replace the
+  `enumerate(portfolio.work)` lookup with the same chronological
+  ordering helper the renderer uses; share via `io_utils` or a small
+  helper in `page_caps`. Add a unit test pinning that a portfolio
+  with a deliberately scrambled `work` order produces consistent
+  per-entry caps on both sides.
+
+### Tighten the skill-group emission cap to actually be a cap
+
+Observation from the 10-profile validation re-run: the AI fills the
+`SKILL_GROUPS_MAX = 12` cap exactly in 10 of 10 runs, regardless of
+JD breadth. The cap is being treated as a target rather than a
+maximum. 3-4 of 10 profiles had a clearly weak bottom group (agile,
+scripting, ai-tooling without JD support). Defer-by-default because
+the worst case is one weak group and tightening risks under-filling
+on broad JDs.
+
+- [ ] Add language to `prompt.py:_SYSTEM_PROMPT_TEXT`'s skill-groups
+  section: "Select **only as many groups as the JD justifies** (up
+  to 12). Most roles need 8-10; omit groups that are not directly
+  relevant to the JD." Re-run a sample of validation JDs to verify
+  the tighter framing does not under-fill on broad-scope roles
+  (DevSecOps Engineer, Cloud Solutions Architect, etc.).
+
+### Split prompt cache breakpoints for on/off-path sharing
+
+Validation surfaced that toggling `with_cover_letter` between
+requests drops the prompt cache: run 3 (the only
+`--no-cover-letter` run in the 10-profile batch) paid full
+`cache_creation_input_tokens`. Documented at
+`prompt.py:build_system_prompt:642-645` and the new
+`docs/architecture.md` on-path/off-path note. Anthropic supports up
+to 4 `cache_control` markers; moving one to the end of
+`_SYSTEM_PROMPT_TEXT` (shared by both paths) and keeping the existing
+one at the portfolio block (path-specific) would let the system-prompt
+prefix cache-hit across path-flips. Saves ~$0.10 per cold path-flip
+at current Sonnet 4.6 rates.
+
+- [ ] Implement multi-breakpoint cache in `prompt.build_system_prompt`.
+  Add a unit test that asserts both blocks carry `cache_control`
+  markers; pin the placement so future prompt edits don't accidentally
+  drop one.
+
+### Cover-letter doc drift in testing-protocol.md per-paragraph range
+
+`docs/testing-protocol.md:235` lists "40-130 per body paragraph" for
+the cover-letter validator. The actual hard cap is `40-90`
+(`COVER_LETTER_PARAGRAPH_WORD_MIN/MAX` in `rules.py`). Pre-existing
+doc drift discovered while updating the total-word-count range in
+the 2026-05-17 doc-sync commit; left in place there to keep that
+commit single-concern.
+
+- [ ] Update `docs/testing-protocol.md:235` "40-130 per body
+  paragraph" -> "40-90 per body paragraph". Cross-check the
+  "2-3 body paragraphs" claim on the next line: the actual constant
+  has been `COVER_LETTER_BODY_MIN_COUNT == COVER_LETTER_BODY_MAX_COUNT
+  == 2` since 2026-04-24, so this should read "exactly 2".
 
 ### Mechanical-tailored mode (was Task 9 in the plan, deferred)
 
