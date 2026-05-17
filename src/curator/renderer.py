@@ -34,6 +34,7 @@ from curator.page_caps import (  # noqa: F401 (re-exported for back-compat)
     CERTIFICATE_FLOOR,
     _caps_for_pages,
     _PageCaps,
+    per_entry_emit_cap,
 )
 from curator.prompt import PROMPT_HASH, PROMPT_VERSION
 from curator.rules import COVER_LETTER_WORD_MAX
@@ -139,11 +140,22 @@ class RenderOutput:
 def _reorder_with_safety_net(
     portfolio_highlights: list[Any],
     ai_highlight_ids: list[str],
+    *,
+    cap: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Reorder highlights per AI ranking, appending omitted ones.
 
-    Returns (reordered_highlights, missing_ids). Missing IDs are highlights
-    the AI omitted; they are appended in portfolio order as a safety net.
+    Returns ``(reordered_highlights, missing_ids)``. ``missing_ids`` are
+    the portfolio IDs that the AI omitted and that the safety net
+    actually appended (cap-rejected IDs are silently dropped, so the
+    caller's safety-net accounting stays accurate).
+
+    When ``cap`` is set, ``len(ordered)`` will never exceed it; the cap
+    measures **total** ordered length (AI-emitted plus safety-net
+    additions), not safety-net alone. Once the cap is hit, further
+    portfolio-order items are dropped without being recorded in
+    ``missing_ids``. The default ``cap=None`` is the pre-cap behavior
+    (append every portfolio item the AI omitted).
     """
     highlight_by_id = {h.id: h for h in portfolio_highlights}
     seen: set[str] = set()
@@ -152,6 +164,8 @@ def _reorder_with_safety_net(
     for hid in ai_highlight_ids:
         if hid in seen:
             continue
+        if cap is not None and len(ordered) >= cap:
+            break
         seen.add(hid)
         h = highlight_by_id.get(hid)
         if h is not None:
@@ -159,9 +173,12 @@ def _reorder_with_safety_net(
 
     missing_ids: list[str] = []
     for h in portfolio_highlights:
-        if h.id not in seen:
-            missing_ids.append(h.id)
-            ordered.append(h.model_dump(exclude_none=True))
+        if h.id in seen:
+            continue
+        if cap is not None and len(ordered) >= cap:
+            break
+        missing_ids.append(h.id)
+        ordered.append(h.model_dump(exclude_none=True))
 
     return ordered, missing_ids
 
@@ -238,6 +255,7 @@ def _apply_selections(
     portfolio: PortfolioData,
     *,
     safety_net: bool = True,
+    max_pages: int | None = None,
 ) -> tuple[dict[str, Any], int, int]:
     """Apply curation rankings to portfolio data.
 
@@ -253,6 +271,16 @@ def _apply_selections(
             ``curation.work_highlights`` are appended in portfolio order.
             Set False for the static path where omissions are intentional
             (``--max-highlights`` cap).
+        max_pages: When set with ``safety_net=True``, safety-net additions
+            are bounded by :func:`curator.page_caps.per_entry_emit_cap`,
+            keyed on each work entry's chronological position. This keeps
+            the AI's ranked subset as the authoritative ceiling so
+            portfolio-order items do not silently override AI rank when
+            ``work_highlight_weights`` push effective floors above the
+            cap. ``None`` (default) preserves the pre-cap behavior of
+            appending every AI-omitted portfolio highlight; the static
+            path (``safety_net=False``) short-circuits before this cap
+            applies.
 
     Returns:
         ``(sections, skipped_count, safety_net_additions)``.
@@ -260,6 +288,24 @@ def _apply_selections(
     sections: dict[str, Any] = {}
     skipped = 0
     safety_net_total = 0
+
+    # Pre-compute chronological position for each work entry. The cap
+    # in ``_reorder_with_safety_net`` must agree with the renderer's
+    # ``floor_for_position`` (also chronological-position-keyed) so
+    # the cap and the cascade speak the same indexing convention.
+    chrono_position: dict[str, int] = {}
+    if max_pages is not None and safety_net:
+        sorted_work_lite = _sort_work_chronologically(
+            [
+                {
+                    "id": w.id,
+                    "start_date": w.start_date,
+                    "end_date": w.end_date,
+                }
+                for w in portfolio.work
+            ]
+        )
+        chrono_position = {w["id"]: i for i, w in enumerate(sorted_work_lite)}
 
     # Work: all portfolio entries, highlights reordered per AI ranking.
     wh_by_id = {wh.work_id: wh for wh in curation.work_highlights}
@@ -276,8 +322,11 @@ def _apply_selections(
                 h.model_dump(exclude_none=True) for h in entry.highlights
             ]
         elif safety_net:
+            cap: int | None = None
+            if max_pages is not None:
+                cap = per_entry_emit_cap(chrono_position[entry.id], max_pages)
             ordered, missing = _reorder_with_safety_net(
-                entry.highlights, wh.highlight_ids
+                entry.highlights, wh.highlight_ids, cap=cap
             )
             if missing:
                 logger.warning(
@@ -1226,9 +1275,16 @@ def render(
         # Create output directory.
         output_dir = _make_output_dir(settings.output_dir, rc.company_slug)
 
-        # Apply selections to portfolio data.
+        # Apply selections to portfolio data. ``max_pages`` is forwarded
+        # so the safety-net additions inside ``_reorder_with_safety_net``
+        # respect ``per_entry_emit_cap`` and the AI's ranked subset stays
+        # the authoritative ceiling (matches the per-entry cap the client
+        # adapter already enforces on the wire side).
         sections, skipped_count, safety_net_count = _apply_selections(
-            rc, portfolio, safety_net=resolved_safety_net
+            rc,
+            portfolio,
+            safety_net=resolved_safety_net,
+            max_pages=settings.max_pages,
         )
 
         # Log render statistics.

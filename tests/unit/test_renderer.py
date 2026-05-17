@@ -143,6 +143,75 @@ class TestReorderWithSafetyNet:
         assert ordered == []
         assert missing == []
 
+    def test_cap_none_is_pre_cap_behavior(self) -> None:
+        # Regression pin: callers that do not pass a cap must see the
+        # pre-cap behavior verbatim (every AI-omitted portfolio
+        # highlight appended in portfolio order).
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["b"], cap=None)
+        assert [h["id"] for h in ordered] == ["b", "a", "c"]
+        assert missing == ["a", "c"]
+
+    def test_cap_equal_to_ai_emission_no_safety_net_adds(self) -> None:
+        # AI fills the cap exactly; safety net contributes 0; missing
+        # tracks only actually-appended IDs (empty here).
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["c", "a"], cap=2)
+        assert [h["id"] for h in ordered] == ["c", "a"]
+        assert missing == []
+
+    def test_cap_loose_above_total_behaves_like_no_cap(self) -> None:
+        # cap > total portfolio items must not change behavior vs no cap.
+        highlights = [_FakeHighlight("a"), _FakeHighlight("b")]
+        ordered, missing = _reorder_with_safety_net(highlights, ["b"], cap=99)
+        assert [h["id"] for h in ordered] == ["b", "a"]
+        assert missing == ["a"]
+
+    def test_cap_truncates_ai_overshoot(self) -> None:
+        # If AI emits more than cap (shouldn't happen on the API path
+        # because the client adapter trims first, but a defense-in-depth
+        # test pins the rejection semantic so a regression elsewhere
+        # cannot smuggle extra items past the renderer-side ceiling).
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["a", "b", "c"], cap=2)
+        assert [h["id"] for h in ordered] == ["a", "b"]
+        assert missing == []
+
+    def test_cap_zero_returns_empty(self) -> None:
+        # Documented behavior for degenerate cap=0: nothing is appended.
+        highlights = [_FakeHighlight("a"), _FakeHighlight("b")]
+        ordered, missing = _reorder_with_safety_net(highlights, ["a"], cap=0)
+        assert ordered == []
+        assert missing == []
+
+    def test_cap_bounds_safety_net_padding(self) -> None:
+        # Cap > AI emission but < total portfolio: safety net pads up to
+        # the cap and then stops. missing tracks the items actually
+        # appended, not the items dropped by the cap.
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+            _FakeHighlight("d"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["c"], cap=3)
+        # AI emits c first; safety-net loops portfolio order and adds
+        # a, then b (cap of 3 hit), and stops before d.
+        assert [h["id"] for h in ordered] == ["c", "a", "b"]
+        assert missing == ["a", "b"]
+
 
 # ---------------------------------------------------------------------------
 # _apply_selections
@@ -677,6 +746,194 @@ class TestApplySelectionsSafetyNet:
         sections, _, _ = _apply_selections(curation, portfolio, safety_net=False)
         ids = [h["id"] for h in sections["work"][0]["highlights"]]
         assert ids == ["h1"]
+
+
+class TestApplySelectionsMaxPagesCap:
+    """``max_pages`` caps safety-net padding via ``per_entry_emit_cap``."""
+
+    @staticmethod
+    def _portfolio_with_many_highlights() -> Any:
+        from curator.models import Basics, InterestData, PortfolioData, WorkEntry
+
+        # Single recent work entry (chrono position 0) with 20 highlights.
+        # In 2-page mode the per_entry_emit_cap at pos 0 is
+        # ceil(8 * 1.5) = 12.
+        highlights = [{"id": f"h{i}", "text": f"text {i}"} for i in range(20)]
+        return PortfolioData(
+            basics=Basics(name="X"),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "w1",
+                        "name": "Co",
+                        "position": "Eng",
+                        "startDate": "2024-01",
+                        "highlights": highlights,
+                    }
+                )
+            ],
+            education=[],
+            skills=[],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=InterestData.model_validate({"hobbies": [], "fun_facts": []}),
+            services=[],
+        )
+
+    @staticmethod
+    def _curation_with_ai_subset(ai_ids: list[str], *, weight: float = 1.0) -> Any:
+        from curator.models import ResumeCuration
+
+        payload: dict[str, Any] = {
+            "summary": "s " * 10 + "founder",
+            "suggested_label": "Eng",
+            "company_slug": "x",
+            "work_highlights": [{"work_id": "w1", "highlight_ids": ai_ids}],
+            "skills": [],
+            "projects": [],
+        }
+        if weight != 1.0:
+            payload["work_highlight_weights"] = {"w1": weight}
+        return ResumeCuration.model_validate(payload)
+
+    def test_max_pages_caps_safety_net_padding(self) -> None:
+        # AI ranks 4 highlights; portfolio has 20. Under max_pages=2 at
+        # chrono pos 0, the cap is ceil(8 * 1.5) = 12, so safety net
+        # pads to 12 total, not all 20.
+        from curator.renderer import _apply_selections
+
+        portfolio = self._portfolio_with_many_highlights()
+        curation = self._curation_with_ai_subset(["h3", "h7", "h1", "h12"])
+        sections, _, safety_net_count = _apply_selections(
+            curation, portfolio, safety_net=True, max_pages=2
+        )
+        ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        assert len(ids) == 12  # the per_entry_emit_cap at chrono pos 0
+        # AI-ranked items come first in AI order; safety-net items come
+        # in portfolio order. Verify the AI's selection survives at the
+        # head of the list (the bug 1A closes was AI rank being silently
+        # replaced by portfolio-order tail items).
+        assert ids[:4] == ["h3", "h7", "h1", "h12"]
+        # safety_net_count counts only items the safety net appended,
+        # which is 8 (cap 12 minus 4 AI-ranked emissions).
+        assert safety_net_count == 8
+
+    def test_weight_18_at_pos_zero_pinned_to_cap_with_ai_rank(self) -> None:
+        # Headline integration: weight 1.8 at pos 0 makes the cascade's
+        # effective floor round(8 * 1.8) = 14, but the safety-net cap
+        # bounds total retained highlights to per_entry_emit_cap(0, 2)
+        # = 12. The 12 retained highlights must be the AI's top 12 in
+        # AI order, not the portfolio-order tail; without this assertion
+        # the bug being fixed could silently return.
+        from curator.renderer import _apply_selections
+
+        portfolio = self._portfolio_with_many_highlights()
+        # AI emits 12 explicit highlights at the cap — reversed from
+        # portfolio order so the assertion is meaningful.
+        ai_ids = [f"h{i}" for i in (19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8)]
+        curation = self._curation_with_ai_subset(ai_ids, weight=1.8)
+        sections, _, _ = _apply_selections(
+            curation, portfolio, safety_net=True, max_pages=2
+        )
+        ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        assert len(ids) == 12
+        assert ids == ai_ids  # AI rank survives verbatim, not portfolio order
+
+    def test_max_pages_with_safety_net_false_is_noop(self) -> None:
+        # Static-path regression guard: max_pages is silently ignored
+        # when safety_net=False so static --max-highlights behavior is
+        # preserved exactly.
+        from curator.renderer import _apply_selections
+
+        portfolio = self._portfolio_with_many_highlights()
+        curation = self._curation_with_ai_subset(["h5", "h1"])
+        sections, _, safety_net_count = _apply_selections(
+            curation, portfolio, safety_net=False, max_pages=2
+        )
+        ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        # AI subset is honored verbatim; no safety net even though
+        # max_pages was passed.
+        assert ids == ["h5", "h1"]
+        assert safety_net_count == 0
+
+    def test_missing_work_ranking_falls_through_with_max_pages_set(self) -> None:
+        # Defense against a regression in the wh-is-None branch
+        # (renderer.py error path when a portfolio work entry is absent
+        # from AI ranking). Must not crash on the new max_pages code
+        # path: chrono_position is computed but the safety-net branch
+        # is skipped for the missing entry, so it uses portfolio order
+        # without consulting the cap.
+        from curator.models import (
+            Basics,
+            InterestData,
+            PortfolioData,
+            ResumeCuration,
+            WorkEntry,
+        )
+        from curator.renderer import _apply_selections
+
+        portfolio = PortfolioData(
+            basics=Basics(name="X"),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "w1",
+                        "name": "Co",
+                        "position": "Eng",
+                        "startDate": "2024-01",
+                        "highlights": [
+                            {"id": f"h{i}", "text": f"t{i}"} for i in range(5)
+                        ],
+                    }
+                ),
+                WorkEntry.model_validate(
+                    {
+                        "id": "w2",
+                        "name": "Older",
+                        "position": "Eng",
+                        "startDate": "2018-01",
+                        "endDate": "2020-12",
+                        "highlights": [
+                            {"id": f"o{i}", "text": f"t{i}"} for i in range(20)
+                        ],
+                    }
+                ),
+            ],
+            education=[],
+            skills=[],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=InterestData.model_validate({"hobbies": [], "fun_facts": []}),
+            services=[],
+        )
+        # AI ranks only the most recent entry; the older one falls
+        # through to the wh-is-None branch in _apply_selections.
+        curation = ResumeCuration.model_validate(
+            {
+                "summary": "s " * 10 + "founder",
+                "suggested_label": "Eng",
+                "company_slug": "x",
+                "work_highlights": [{"work_id": "w1", "highlight_ids": ["h0"]}],
+                "skills": [],
+                "projects": [],
+            }
+        )
+        sections, _, _ = _apply_selections(
+            curation, portfolio, safety_net=True, max_pages=2
+        )
+        # The ranked entry (w1, chrono pos 0) gets the cap-12 safety net.
+        w1_ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        assert len(w1_ids) == 5  # portfolio had 5; cap of 12 is loose here
+        # The un-ranked entry (w2, chrono pos 1) falls through to
+        # portfolio order without crashing on the new max_pages path.
+        w2_ids = [h["id"] for h in sections["work"][1]["highlights"]]
+        assert len(w2_ids) == 20
 
 
 class TestAtomicYamlWrite:

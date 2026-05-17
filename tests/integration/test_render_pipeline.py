@@ -300,6 +300,141 @@ class TestRenderPipeline:
         assert "gamma-inc" in result.profile_dir.name
 
 
+class TestSafetyNetCapEndToEnd:
+    """``render()`` applies the per-entry safety-net cap end-to-end.
+
+    Pins the cap-bounds-safety-net invariant at the function boundary
+    we care about (``render`` consumed by pipeline), without a live
+    API call. The unit tests cover ``_apply_selections`` directly; this
+    one proves the cap survives the ``render(... , settings)``
+    plumbing and the final ``data/work.yaml`` written to disk.
+    """
+
+    @staticmethod
+    def _portfolio_with_overstocked_pos0() -> PortfolioData:
+        # Single recent role with 20 portfolio highlights. Under
+        # 2-page mode (work_position_floors[0] = 8), the per-entry cap
+        # at chrono position 0 is ceil(8 * 1.5) = 12.
+        return PortfolioData(
+            basics=Basics(
+                name="Jane Doe",
+                label="DevOps Engineer",
+                email="jane@example.com",
+                summary="Original.",
+            ),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "acme-devops",
+                        "name": "Acme Corp",
+                        "position": "DevOps Engineer",
+                        "startDate": "2024-01",
+                        "highlights": [
+                            {"id": f"h{i}", "text": f"Highlight {i}."}
+                            for i in range(20)
+                        ],
+                    }
+                ),
+            ],
+            education=[],
+            skills=[
+                SkillEntry.model_validate(
+                    {"id": "kubernetes", "name": "K8s", "keywords": ["EKS"]}
+                ),
+            ],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=None,
+            services=[],
+        )
+
+    @staticmethod
+    def _curation_top_12_with_weight(weight: float) -> CurationResult:
+        from tests.helpers import make_curation_dict
+
+        # AI emits 12 highlight IDs (the cap) in a deliberately
+        # different order from portfolio order so the assertion that
+        # AI rank survives is meaningful.
+        ai_ids = [f"h{i}" for i in (19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8)]
+        curation = ResumeCuration.model_validate(
+            make_curation_dict(
+                suggested_label="Senior SRE",
+                company_slug="gamma",
+                work_highlights=[
+                    {"work_id": "acme-devops", "highlight_ids": ai_ids},
+                ],
+                skills=[{"skill_id": "kubernetes", "keywords": ["EKS"]}],
+                projects=[],
+                work_highlight_weights={"acme-devops": weight},
+            )
+        )
+        return CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6",
+            input_tokens=1000,
+            output_tokens=500,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+
+    def _render_with_max_pages_2(
+        self,
+        curation: CurationResult,
+        portfolio: PortfolioData,
+        tmp_path: Path,
+    ) -> Any:
+        # Re-uses ``_render_with_mock``'s pattern but with max_pages=2
+        # so the per-entry cap at pos 0 is 12, not 1-page mode's 5.
+        tpl = tmp_path / "tpl" / "curated.typ"
+        tpl.parent.mkdir(exist_ok=True)
+        tpl.write_text("// dummy template")
+        settings = type(
+            "S",
+            (),
+            {
+                "output_dir": tmp_path / "output",
+                "template_path": tpl,
+                "section_order": (
+                    "work",
+                    "skills",
+                    "projects",
+                    "certificates",
+                    "education",
+                ),
+                "max_pages": 2,
+                "max_trim_iterations": 15,
+            },
+        )()
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=_fake_typst_run),
+            patch("curator.renderer.get_page_count", return_value=2),
+        ):
+            return render(curation, portfolio, "Test JD.", settings)
+
+    def test_weight_18_at_pos_zero_pinned_to_cap_with_ai_rank(
+        self, tmp_path: Path
+    ) -> None:
+        portfolio = self._portfolio_with_overstocked_pos0()
+        curation = self._curation_top_12_with_weight(weight=1.8)
+        result = self._render_with_max_pages_2(curation, portfolio, tmp_path)
+
+        # Inspect the on-disk work.yaml the renderer wrote; this is
+        # what the Typst template consumes.
+        work = yaml.safe_load(result.data_files["work"].read_text())
+        kept_ids = [h["id"] for h in work[0]["highlights"]]
+        # Cap binds at 12 even though weight 1.8 would otherwise lift
+        # the effective floor to round(8 * 1.8) = 14.
+        assert len(kept_ids) == 12
+        # The 12 retained highlights are the AI's top 12 in AI order,
+        # NOT the portfolio-order tail. Without this assertion the
+        # safety-net silent override could return.
+        expected = [f"h{i}" for i in (19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8)]
+        assert kept_ids == expected
+
+
 # ---------------------------------------------------------------------------
 # Soft-hyphen ActualText regression (cover letter PDF)
 #

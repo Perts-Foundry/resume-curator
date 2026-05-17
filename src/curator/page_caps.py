@@ -109,8 +109,20 @@ def per_entry_emit_cap(work_position: int, max_pages: int) -> int:
 
     Lives here (not in ``output_schema``) because it is part of the
     cross-module contract between the schema description (advisory,
-    surfaced to the model) and the client adapter (hard enforcement
-    post-parse). Both consumers import this single source.
+    surfaced to the model), the client adapter (hard enforcement
+    post-parse), and the renderer's ``_reorder_with_safety_net`` (which
+    also caps its portfolio-order padding here so the AI's ranked subset
+    is the authoritative ceiling). All three consumers import this
+    single source.
+
+    ``work_position`` is the work entry's **chronological** position
+    after :func:`curator.renderer._sort_work_chronologically` (index 0
+    is the most recent role). Callers on both ends of the wire must
+    compute position consistently or the cap and the cascade will
+    disagree on which entry is "pos 0." The renderer uses chronological
+    position by construction; the client adapter currently uses portfolio
+    order — these agree only when ``portfolio.work`` is already
+    chronologically ordered. A TODO tracks aligning the adapter side.
 
     Anthropic's structured-output keyword subset does NOT include
     ``maxItems``; the cap is communicated to the model via the
@@ -122,6 +134,17 @@ def per_entry_emit_cap(work_position: int, max_pages: int) -> int:
     positions 2..4). ``ceil`` is used (not ``round``) to avoid Python's
     banker's rounding edge cases and to always give the model a hair
     more headroom than the strict 1.5x scale.
+
+    Design invariant on the 1.5x multiplier: it is tuned to give the
+    AI 50% headroom over the renderer floor while staying tight enough
+    that ``work_highlight_weights`` up to about 1.5 remain effective at
+    every position. Weights between 1.5 and 2.0 (the upper bound
+    enforced by Pydantic) progressively become inert at the most-recent
+    role because the per-entry cap clamps total retained highlights
+    below the weight-scaled effective floor. This is the deliberate
+    consequence of letting the AI's ranked subset be the deck; raising
+    the multiplier would re-introduce the portfolio-order silent
+    override that the safety-net cap was designed to remove.
     """
     caps = _caps_for_pages(max_pages)
     floor = caps.floor_for_position(work_position)
