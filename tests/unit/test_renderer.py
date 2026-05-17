@@ -17,6 +17,7 @@ from curator.io_utils import (
     atomic_text_write,
     atomic_yaml_write,
     get_page_count,
+    sort_work_chronologically,
 )
 from curator.models import (
     PortfolioData,
@@ -28,7 +29,6 @@ from curator.renderer import (
     _invoke_typst,
     _make_output_dir,
     _reorder_with_safety_net,
-    _sort_work_chronologically,
     _write_data_files,
     _write_layout,
     render,
@@ -304,7 +304,7 @@ class TestSortWorkChronologically:
             {"id": "current", "start_date": "2023-01", "end_date": None},
             {"id": "middle", "start_date": "2022-07", "end_date": "2022-12"},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["current", "middle", "old"]
 
     def test_multiple_past_roles_by_end_date_descending(self) -> None:
@@ -313,7 +313,7 @@ class TestSortWorkChronologically:
             {"id": "newest", "start_date": "2020-01", "end_date": "2023-06"},
             {"id": "middle", "start_date": "2018-07", "end_date": "2020-01"},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["newest", "middle", "oldest"]
 
     def test_end_date_empty_string_treated_as_current(self) -> None:
@@ -321,7 +321,7 @@ class TestSortWorkChronologically:
             {"id": "past", "start_date": "2020-01", "end_date": "2023-06"},
             {"id": "current", "start_date": "2023-07", "end_date": ""},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["current", "past"]
 
     def test_multiple_current_roles_by_start_date_descending(self) -> None:
@@ -329,7 +329,7 @@ class TestSortWorkChronologically:
             {"id": "older-current", "start_date": "2022-01", "end_date": None},
             {"id": "newer-current", "start_date": "2024-06", "end_date": None},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["newer-current", "older-current"]
 
     def test_non_zero_padded_months_sort_numerically(self) -> None:
@@ -342,7 +342,7 @@ class TestSortWorkChronologically:
             {"id": "jun22", "start_date": "2022-6", "end_date": None},
             {"id": "dec22", "start_date": "2022-12", "end_date": None},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         # Dec 2022 must come before Jun 2022 despite "2022-12" < "2022-6"
         # lexicographically.
         assert [e["id"] for e in result] == ["dec22", "jun22"]
@@ -354,7 +354,7 @@ class TestSortWorkChronologically:
             {"id": "year-only", "start_date": "2020", "end_date": "2023"},
             {"id": "with-month", "start_date": "2021-06", "end_date": "2024-01"},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["with-month", "year-only"]
 
 

@@ -28,6 +28,7 @@ from curator.io_utils import (
     compile_typst,
     get_page_count,
     priority_sort_key,
+    sort_work_chronologically,
 )
 from curator.models import EMPTY_INTERESTS, RENDERER_MANAGED_SECTIONS, RENDERER_SECTIONS
 from curator.page_caps import (  # noqa: F401 (re-exported for back-compat)
@@ -183,73 +184,6 @@ def _reorder_with_safety_net(
     return ordered, missing_ids
 
 
-def _parse_partial_date(raw: Any) -> tuple[int, int]:
-    """Parse a portfolio date string into a ``(year, month)`` tuple for sorting.
-
-    Accepts ``YYYY``, ``YYYY-M``, ``YYYY-MM``, ``YYYY-MM-DD``, as well as
-    integer years and empty/``None`` values. Returns ``(0, 0)`` for
-    anything unparseable so that empty/malformed dates sort as
-    oldest-first (they still end up after real dates under ``reverse=True``
-    because the rest of the values are larger).
-
-    Using a numeric tuple instead of a lexicographic string compare
-    avoids bugs on non-zero-padded months (``2022-6`` would otherwise
-    sort after ``2022-12``).
-    """
-    if raw is None or raw == "":
-        return (0, 0)
-    s = str(raw).strip()
-    if not s:
-        return (0, 0)
-    parts = s.split("-", 2)
-    try:
-        year = int(parts[0])
-    except ValueError:
-        return (0, 0)
-    month = 0
-    if len(parts) > 1 and parts[1]:
-        try:
-            month = int(parts[1])
-        except ValueError:
-            month = 0
-    return (year, month)
-
-
-def _sort_work_chronologically(
-    entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Return work entries in reverse chronological order.
-
-    Current roles (no ``end_date``) come first, ordered by ``start_date``
-    descending. Past roles follow, ordered by ``end_date`` descending
-    (then ``start_date`` descending as a tiebreaker).
-
-    Sort keys are numeric ``(year, month)`` tuples parsed via
-    ``_parse_partial_date`` to handle non-zero-padded month inputs
-    correctly.
-    """
-    current: list[dict[str, Any]] = []
-    past: list[dict[str, Any]] = []
-    for entry in entries:
-        end_date = entry.get("end_date") or ""
-        if end_date:
-            past.append(entry)
-        else:
-            current.append(entry)
-    current.sort(
-        key=lambda e: _parse_partial_date(e.get("start_date")),
-        reverse=True,
-    )
-    past.sort(
-        key=lambda e: (
-            _parse_partial_date(e.get("end_date")),
-            _parse_partial_date(e.get("start_date")),
-        ),
-        reverse=True,
-    )
-    return current + past
-
-
 def _apply_selections(
     curation: ResumeCuration,
     portfolio: PortfolioData,
@@ -295,7 +229,7 @@ def _apply_selections(
     # the cap and the cascade speak the same indexing convention.
     chrono_position: dict[str, int] = {}
     if max_pages is not None and safety_net:
-        sorted_work_lite = _sort_work_chronologically(
+        sorted_work_lite = sort_work_chronologically(
             [
                 {
                     "id": w.id,
@@ -346,7 +280,7 @@ def _apply_selections(
                 if hid in highlight_by_id
             ]
         work_entries.append(entry_dict)
-    sections["work"] = _sort_work_chronologically(work_entries)
+    sections["work"] = sort_work_chronologically(work_entries)
 
     # Skills: filter keywords per group, order by AI ranking.
     skill_by_id = {s.id: s for s in portfolio.skills}

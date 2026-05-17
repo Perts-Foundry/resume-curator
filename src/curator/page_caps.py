@@ -32,10 +32,11 @@ class _PageCaps:
 
     ``work_position_floors`` indexes by work-entry position
     (``index 0`` = most recent role) after
-    ``_sort_work_chronologically``. Positions beyond the tuple length
-    receive the last value, so a 7-entry portfolio under 2-page caps
-    gets ``(8, 6, 6, 2, 2, 2, 2)`` implicitly. Any change to the work
-    sort order must update this profile in lockstep.
+    :func:`curator.io_utils.sort_work_chronologically`. Positions
+    beyond the tuple length receive the last value, so a 7-entry
+    portfolio under 2-page caps gets ``(8, 6, 6, 2, 2, 2, 2)``
+    implicitly. Any change to the work sort order must update this
+    profile in lockstep.
 
     Per-project bullet cap is intentionally NOT in this profile:
     ``ResumeCuration.projects`` is an ordered list of project IDs only,
@@ -116,13 +117,13 @@ def per_entry_emit_cap(work_position: int, max_pages: int) -> int:
     single source.
 
     ``work_position`` is the work entry's **chronological** position
-    after :func:`curator.renderer._sort_work_chronologically` (index 0
+    after :func:`curator.io_utils.sort_work_chronologically` (index 0
     is the most recent role). Callers on both ends of the wire must
     compute position consistently or the cap and the cascade will
-    disagree on which entry is "pos 0." The renderer uses chronological
-    position by construction; the client adapter currently uses portfolio
-    order — these agree only when ``portfolio.work`` is already
-    chronologically ordered. A TODO tracks aligning the adapter side.
+    disagree on which entry is "pos 0." Both the renderer (in
+    :func:`curator.renderer._apply_selections`) and the client adapter
+    (in :func:`curator.client._adapt_curation_dict`) import the same
+    helper so the convention is shared by construction.
 
     Anthropic's structured-output keyword subset does NOT include
     ``maxItems``; the cap is communicated to the model via the

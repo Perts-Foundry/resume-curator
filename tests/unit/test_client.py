@@ -2327,3 +2327,116 @@ class TestCurateWithCoverLetter:
         client = CuratorClient(mock_settings)
         with pytest.raises(APIResponseError):
             client.curate(portfolio_data, "JD text.", with_cover_letter=False)
+
+
+class TestPerEntryEmitCapUsesChronologicalPosition:
+    """Adapter trim-to-emit-cap uses chronological work position.
+
+    PR12 introduced ``per_entry_emit_cap`` to bound the AI's
+    over-emission of highlight IDs per work entry. The renderer's
+    safety-net cap (added 2026-05-17) also keys on chronological
+    position (via ``sort_work_chronologically`` in ``io_utils``). For
+    the cap and the cascade to agree on which entry is "pos 0," the
+    adapter must compute position the same way - chronologically,
+    not in ``portfolio.work`` listing order.
+
+    Pre-fix this was latent: ``client._adapt_curation_dict`` used
+    ``enumerate(portfolio.work)``. On a chronologically-ordered
+    portfolio (the common case) the two agreed. On a portfolio listed
+    in any other order they would silently disagree on which entry got
+    the largest cap, and the renderer's cascade would surface different
+    highlight counts than the adapter's per-entry trim implied.
+    """
+
+    @staticmethod
+    def _scrambled_portfolio() -> PortfolioData:
+        # Five work entries listed OLDEST-FIRST so portfolio order
+        # (0..4) is the REVERSE of chronological order (4..0). Each
+        # entry has 20 highlights so the adapter's per-entry cap
+        # (12, 9, 9, 3, 3 in 2-page mode, keyed chronologically) has
+        # something to trim.
+        from curator.models import Basics, InterestData, PortfolioData, WorkEntry
+
+        def _make_entry(eid: str, start: str, end: str | None) -> WorkEntry:
+            payload: dict[str, Any] = {
+                "id": eid,
+                "name": "Co",
+                "position": "Eng",
+                "startDate": start,
+                "highlights": [
+                    {"id": f"{eid}-h{i}", "text": f"t{i}"} for i in range(20)
+                ],
+            }
+            if end is not None:
+                payload["endDate"] = end
+            return WorkEntry.model_validate(payload)
+
+        return PortfolioData(
+            basics=Basics(name="X"),
+            work=[
+                # OLDEST listed first (deliberately reversed)
+                _make_entry("oldest", "2018-01", "2019-12"),
+                _make_entry("older", "2020-01", "2021-12"),
+                _make_entry("middle", "2022-01", "2023-06"),
+                _make_entry("recent", "2023-07", "2023-12"),
+                _make_entry("current", "2024-01", None),  # no end_date
+            ],
+            education=[],
+            skills=[],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=InterestData.model_validate({"hobbies": [], "fun_facts": []}),
+            services=[],
+        )
+
+    def test_caps_follow_chronological_order_not_portfolio_order(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+    ) -> None:
+        portfolio = self._scrambled_portfolio()
+        # AI emits 20 highlight IDs per entry (over-emission); the
+        # adapter must trim each entry to its per-position cap.
+        # Build the WIRE shape directly: ``work_highlights_by_id`` is
+        # an object keyed by work_id, NOT the model-side list shape.
+        wire: dict[str, Any] = {
+            "summary": (
+                "A seasoned platform engineer and founder of Perts Foundry LLC "
+                "with multi-cloud production experience across AWS and GCP, "
+                "shipping CI/CD pipelines, infrastructure-as-code, and SOC 2 "
+                "compliance evidence for engineering teams."
+            ),
+            "suggested_label": "Senior Engineer",
+            "company_name": "X",
+            "work_highlights_by_id": {
+                w.id: [h.id for h in w.highlights] for w in portfolio.work
+            },
+            "skills": [],
+            "projects": [],
+        }
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio, "JD text.")
+
+        # 2-page mode floors are (8, 6, 6, 2, 2); caps are (12, 9, 9,
+        # 3, 3) by CHRONOLOGICAL position (index 0 = most recent).
+        # Build a {work_id -> highlight_count} map from the trimmed
+        # output so we can assert against expected caps.
+        trimmed = {
+            wh.work_id: len(wh.highlight_ids) for wh in result.curation.work_highlights
+        }
+        # Most-recent role (listed LAST in portfolio order) must get
+        # cap 12 - the largest. Pre-fix it got cap 3 (because
+        # ``enumerate(portfolio.work)`` placed it at position 4).
+        assert trimmed["current"] == 12
+        assert trimmed["recent"] == 9
+        assert trimmed["middle"] == 9
+        assert trimmed["older"] == 3
+        # Oldest role (listed FIRST in portfolio order) must get cap
+        # 3 - the smallest. Pre-fix it got cap 12.
+        assert trimmed["oldest"] == 3

@@ -73,6 +73,13 @@ redistributed work between the AI and the code-side bookkeeping:
     range corrected to 40-90 (was incorrectly "40-130") and body
     paragraph count corrected to "exactly 2" (was "2-3", stale since
     2026-04-24's bound-the-total tightening).
+  - Client-side per-entry cap alignment: moved
+    ``sort_work_chronologically`` and ``parse_partial_date`` from
+    ``renderer.py`` to ``io_utils.py`` (cross-module utility);
+    ``client._adapt_curation_dict`` now uses the same chronological-
+    position lookup as the renderer's safety-net cap. Closes the
+    latent client/renderer disagreement on non-chronologically-
+    ordered portfolios.
   - TODO follow-ups filed (see below).
 
 ## Follow-ups from the AI/code reallocation series
@@ -98,26 +105,6 @@ remains open). Options to evaluate:
 
 This needs its own design conversation; do not change calibration
 constants in isolation.
-
-### Align client-side per-entry cap with renderer chronological order
-
-`client.py:_adapt_curation_dict` (around line 244) computes
-``work_id_to_position = {w.id: i for i, w in enumerate(portfolio.work)}``
-for the per-entry emit cap. The renderer (post-safety-net-cap-commit)
-computes the same position via `_sort_work_chronologically`. For
-portfolios that already list work entries chronologically the two
-agree, but a portfolio in alphabetical or insertion-order would
-mis-align the client cap and the renderer cascade on which entry is
-"pos 0." Out-of-scope for the safety-net-cap PR because the user's
-portfolio is chronological; documented as a known limitation in
-`page_caps.per_entry_emit_cap`'s docstring.
-
-- [ ] In `client._adapt_curation_dict`, replace the
-  `enumerate(portfolio.work)` lookup with the same chronological
-  ordering helper the renderer uses; share via `io_utils` or a small
-  helper in `page_caps`. Add a unit test pinning that a portfolio
-  with a deliberately scrambled `work` order produces consistent
-  per-entry caps on both sides.
 
 ### Tighten the skill-group emission cap to actually be a cap
 

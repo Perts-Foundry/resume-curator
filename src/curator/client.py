@@ -28,7 +28,7 @@ from curator.exceptions import (
     APISpendGuardError,
     CurationValidationError,
 )
-from curator.io_utils import slugify
+from curator.io_utils import slugify, sort_work_chronologically
 from curator.jd_scorer import score_keywords_for_jd
 from curator.models import (
     CoverLetterCuration,
@@ -241,7 +241,23 @@ def _adapt_curation_dict(
     # ``floor[i]`` anyway; trimming here at ``floor[i] * 1.5`` keeps a
     # small headroom margin while preventing run-away over-emission
     # from reaching the validator or audit log.
-    work_id_to_position = {w.id: i for i, w in enumerate(portfolio.work)}
+    #
+    # Position is chronological (index 0 = most recent role) via the
+    # same ``sort_work_chronologically`` helper the renderer uses. A
+    # non-chronologically-ordered ``portfolio.work`` would otherwise
+    # have the adapter's cap disagree with the renderer's cascade
+    # floor on which entry is "pos 0."
+    sorted_work_lite = sort_work_chronologically(
+        [
+            {
+                "id": w.id,
+                "start_date": w.start_date,
+                "end_date": w.end_date,
+            }
+            for w in portfolio.work
+        ]
+    )
+    work_id_to_position = {w["id"]: i for i, w in enumerate(sorted_work_lite)}
     over_emit_counts: dict[str, int] = {}
     for wh in work_highlights:
         position = work_id_to_position.get(wh["work_id"])
