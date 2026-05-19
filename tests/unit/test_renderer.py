@@ -2725,7 +2725,7 @@ class TestTrimToFit:
                     # below-floor branch is reachable; the floor itself
                     # is verified by ``TestSkillGroupFloor`` below.
                     skill_group_floor=0,
-            education_floor=1,
+                    education_floor=1,
                 )
         finally:
             logger.remove(sink_id)
@@ -2791,8 +2791,7 @@ class TestTrimToFit:
                 },
             ],
             "skills": [
-                {"id": f"s{i}", "keywords": [f"k{i}-1", f"k{i}-2"]}
-                for i in range(12)
+                {"id": f"s{i}", "keywords": [f"k{i}-1", f"k{i}-2"]} for i in range(12)
             ],
             "projects": [],
             "certificates": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}],
@@ -3889,7 +3888,7 @@ class TestPageCapsValidation:
             work_position_floors=(3,),
             certificate_floor=3,
             skill_group_floor=4,
-                education_floor=1,
+            education_floor=1,
         )
         with pytest.raises(ValueError, match="position must be non-negative"):
             caps.floor_for_position(-1)

@@ -741,7 +741,7 @@ class TestResumeCuration:
         opaque ``TypeError`` from ``dict(...)`` inside the pre-validator."""
         data = _make_curation_dict()
         data["work_highlight_weights"] = "not-a-dict"
-        with pytest.raises(ValidationError, match="dictionary|valid dict"):
+        with pytest.raises(ValidationError, match=r"dictionary|valid dict"):
             ResumeCuration.model_validate(data)
 
     def test_trim_priority_accepts_valid_items(self) -> None:
