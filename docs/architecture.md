@@ -255,7 +255,8 @@ renderer.py
   ├── models.py        (RENDERER_SECTIONS, RENDERER_MANAGED_SECTIONS,
   │                     EMPTY_INTERESTS)
   ├── page_caps.py     (_PageCaps, _caps_for_pages, CERTIFICATE_FLOOR,
-  │                     SKILL_GROUP_FLOOR; re-exported for back-compat)
+  │                     SKILL_GROUP_FLOOR, EDUCATION_FLOOR; re-exported
+  │                     for back-compat)
   ├── prompt.py        (PROMPT_VERSION for curation_log.json)
   └── exceptions.py    (CuratorError, RenderError)
 

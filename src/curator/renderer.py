@@ -33,6 +33,7 @@ from curator.io_utils import (
 from curator.models import EMPTY_INTERESTS, RENDERER_MANAGED_SECTIONS, RENDERER_SECTIONS
 from curator.page_caps import (  # noqa: F401 (re-exported for back-compat)
     CERTIFICATE_FLOOR,
+    EDUCATION_FLOOR,
     SKILL_GROUP_FLOOR,
     _caps_for_pages,
     _PageCaps,
@@ -426,6 +427,7 @@ def _generate_next_trim(
     work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
     skill_group_floor: int = SKILL_GROUP_FLOOR,
+    education_floor: int = EDUCATION_FLOOR,
     trim_priority: Sequence[str] | None = None,
     work_highlight_weight_hints: Mapping[str, float] | None = None,
 ) -> TrimStep | None:
@@ -540,14 +542,19 @@ def _generate_next_trim(
         return None
 
     def _eval_education() -> TrimStep | None:
+        # Mirrors the certificate / skill-group floor-check pattern.
+        # ``education_floor`` is page-budget-aware via ``_PageCaps`` but
+        # is currently constant 1 across budgets; sourcing it as a
+        # parameter keeps the cascade structurally consistent and opens
+        # the door to executive-CV profiles raising it.
         education = sections.get("education", [])
-        if len(education) > 1:
-            eid = education[-1].get("id", "unknown")
-            return TrimStep(
-                kind=TrimKind.EDUCATION,
-                description=f"Removed education: {eid}",
-            )
-        return None
+        if len(education) <= education_floor:
+            return None
+        eid = education[-1].get("id", "unknown")
+        return TrimStep(
+            kind=TrimKind.EDUCATION,
+            description=f"Removed education: {eid}",
+        )
 
     def _eval_skill_groups() -> TrimStep | None:
         # Mirror the ``_eval_certificates`` floor-check pattern: protect
@@ -729,6 +736,7 @@ def _trim_to_fit(
     work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
     skill_group_floor: int = SKILL_GROUP_FLOOR,
+    education_floor: int = EDUCATION_FLOOR,
     trim_priority: Sequence[str] | None = None,
     work_highlight_weight_hints: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int, bool]:
@@ -760,6 +768,9 @@ def _trim_to_fit(
             never trims below this count; there is no bypass path
             (skills are credible-breadth signal, not last-resort
             content). Defaults to ``SKILL_GROUP_FLOOR``.
+        education_floor: Hard minimum education entries preserved.
+            The cascade never trims below this count; defaults to
+            ``EDUCATION_FLOOR``. Constant across page budgets today.
         trim_priority: Optional AI-emitted ordering of middle-band
             sections by drop priority. Forwarded to
             ``_generate_next_trim``.
@@ -806,6 +817,7 @@ def _trim_to_fit(
             work_position_floors=work_position_floors,
             certificate_floor=certificate_floor,
             skill_group_floor=skill_group_floor,
+            education_floor=education_floor,
             trim_priority=trim_priority,
             work_highlight_weight_hints=work_highlight_weight_hints,
         )
@@ -1316,6 +1328,7 @@ def render(
                 work_position_floors=caps.work_position_floors,
                 certificate_floor=caps.certificate_floor,
                 skill_group_floor=caps.skill_group_floor,
+                education_floor=caps.education_floor,
                 trim_priority=rc.trim_priority or None,
                 work_highlight_weight_hints=rc.work_highlight_weights or None,
             )

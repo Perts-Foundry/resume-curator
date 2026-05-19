@@ -2031,6 +2031,7 @@ class TestGenerateNextTrim:
             sections,
             None,
             skill_group_floor=6,
+            education_floor=1,
             work_position_floors=(2,),
         )
         # Work highlights still trimmable above their position-0 floor of 2.
@@ -2724,6 +2725,7 @@ class TestTrimToFit:
                     # below-floor branch is reachable; the floor itself
                     # is verified by ``TestSkillGroupFloor`` below.
                     skill_group_floor=0,
+            education_floor=1,
                 )
         finally:
             logger.remove(sink_id)
@@ -3639,6 +3641,7 @@ class TestCapsForPages:
         assert caps.work_position_floors == (3, 3, 0, 0, 0)
         assert caps.certificate_floor == 3
         assert caps.skill_group_floor == 4
+        assert caps.education_floor == 1
 
     def test_two_page_caps(self) -> None:
         from curator.renderer import _caps_for_pages
@@ -3647,6 +3650,7 @@ class TestCapsForPages:
         assert caps.work_position_floors == (8, 6, 6, 2, 2)
         assert caps.certificate_floor == 3
         assert caps.skill_group_floor == 6
+        assert caps.education_floor == 1
 
     def test_plateau_at_three_or_more_pages(self) -> None:
         from curator.renderer import _caps_for_pages
@@ -3656,6 +3660,7 @@ class TestCapsForPages:
         assert caps_3.work_position_floors == (10, 8, 8, 4, 4)
         assert caps_3.certificate_floor == 5
         assert caps_3.skill_group_floor == 8
+        assert caps_3.education_floor == 1
         # Plateau: 4-5 page configs use the same profile as 3-page.
         assert caps_5 == caps_3
 
@@ -3683,6 +3688,7 @@ class TestCapsForPages:
             )
         assert cur.certificate_floor >= prev.certificate_floor
         assert cur.skill_group_floor >= prev.skill_group_floor
+        assert cur.education_floor >= prev.education_floor
 
     def test_zero_pages_treated_as_short_form(self) -> None:
         """Defensive: pages <= 1 returns the short-form profile."""
@@ -3707,6 +3713,7 @@ class TestPageCapsValidation:
                 work_position_floors=(),
                 certificate_floor=3,
                 skill_group_floor=4,
+                education_floor=1,
             )
 
     def test_rejects_negative_floor_values(self) -> None:
@@ -3718,6 +3725,7 @@ class TestPageCapsValidation:
                 work_position_floors=(3, -1, 0),
                 certificate_floor=3,
                 skill_group_floor=4,
+                education_floor=1,
             )
 
     def test_rejects_negative_certificate_floor(self) -> None:
@@ -3728,6 +3736,7 @@ class TestPageCapsValidation:
                 work_position_floors=(3, 3),
                 certificate_floor=-1,
                 skill_group_floor=4,
+                education_floor=1,
             )
 
     def test_rejects_negative_skill_group_floor(self) -> None:
@@ -3738,6 +3747,7 @@ class TestPageCapsValidation:
                 work_position_floors=(3, 3),
                 certificate_floor=3,
                 skill_group_floor=-1,
+                education_floor=1,
             )
 
     def test_accepts_zero_skill_group_floor(self) -> None:
@@ -3748,8 +3758,32 @@ class TestPageCapsValidation:
             work_position_floors=(3, 3),
             certificate_floor=3,
             skill_group_floor=0,
+            education_floor=1,
         )
         assert caps.skill_group_floor == 0
+
+    def test_rejects_negative_education_floor(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        with pytest.raises(ValueError, match="education_floor must be >= 0"):
+            _PageCaps(
+                work_position_floors=(3, 3),
+                certificate_floor=3,
+                skill_group_floor=4,
+                education_floor=-1,
+            )
+
+    def test_accepts_zero_education_floor(self) -> None:
+        """Floor of 0 is a legal degenerate (cascade may drain education)."""
+        from curator.page_caps import _PageCaps
+
+        caps = _PageCaps(
+            work_position_floors=(3, 3),
+            certificate_floor=3,
+            skill_group_floor=4,
+            education_floor=0,
+        )
+        assert caps.education_floor == 0
 
     def test_floor_for_position_falls_through_to_last_value(self) -> None:
         """Positions beyond the tuple length receive the last value."""
@@ -3759,6 +3793,7 @@ class TestPageCapsValidation:
             work_position_floors=(8, 6, 6, 2, 2),
             certificate_floor=4,
             skill_group_floor=6,
+            education_floor=1,
         )
         assert caps.floor_for_position(0) == 8
         assert caps.floor_for_position(4) == 2
@@ -3771,6 +3806,7 @@ class TestPageCapsValidation:
             work_position_floors=(3,),
             certificate_floor=3,
             skill_group_floor=4,
+                education_floor=1,
         )
         with pytest.raises(ValueError, match="position must be non-negative"):
             caps.floor_for_position(-1)

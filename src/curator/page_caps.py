@@ -33,6 +33,15 @@ CERTIFICATE_FLOOR = 3
 # is no late-stage skill-group drain to break this floor.
 SKILL_GROUP_FLOOR = 4
 
+# Default education-entry floor across all page budgets; the cascade
+# never trims education below this count. Constant rather than
+# page-budget-aware because the most-recent degree (or highest one
+# the candidate lists) is load-bearing on every resume length. A
+# future executive-CV profile may want a larger floor to expose
+# multiple degrees + thesis on 3+-page renders; tracked in the
+# ``_caps_for_pages`` docstring.
+EDUCATION_FLOOR = 1
+
 
 @dataclass(frozen=True)
 class _PageCaps:
@@ -62,6 +71,11 @@ class _PageCaps:
     6 surviving groups for the skills inventory to remain credible
     against a JD checklist.
 
+    ``education_floor`` is the cascade's lower bound on education
+    entries. Constant across all page budgets today (the most-recent
+    degree is load-bearing on every resume length); a future
+    executive-CV profile may want >=2 to expose thesis + degree.
+
     Per-project bullet cap is intentionally NOT in this profile:
     ``ResumeCuration.projects`` is an ordered list of project IDs only,
     so the AI does not rank highlights *within* a project. Per-project
@@ -75,6 +89,7 @@ class _PageCaps:
     work_position_floors: tuple[int, ...]
     certificate_floor: int
     skill_group_floor: int
+    education_floor: int
 
     def __post_init__(self) -> None:
         if not self.work_position_floors:
@@ -88,6 +103,9 @@ class _PageCaps:
             raise ValueError(msg)
         if self.skill_group_floor < 0:
             msg = "skill_group_floor must be >= 0"
+            raise ValueError(msg)
+        if self.education_floor < 0:
+            msg = "education_floor must be >= 0"
             raise ValueError(msg)
 
     def floor_for_position(self, position: int) -> int:
@@ -122,17 +140,20 @@ def _caps_for_pages(max_pages: int) -> _PageCaps:
             work_position_floors=(3, 3, 0, 0, 0),
             certificate_floor=3,
             skill_group_floor=4,
+            education_floor=1,
         )
     if max_pages == 2:
         return _PageCaps(
             work_position_floors=(8, 6, 6, 2, 2),
             certificate_floor=3,
             skill_group_floor=6,
+            education_floor=1,
         )
     return _PageCaps(
         work_position_floors=(10, 8, 8, 4, 4),
         certificate_floor=5,
         skill_group_floor=8,
+        education_floor=1,
     )
 
 
