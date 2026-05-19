@@ -1083,6 +1083,21 @@ feature invalidates the cache when `output_format` (the per-call JSON schema
 built from portfolio data) changes, so cache reuse also requires the same
 `max_pages` and the same portfolio.
 
+**5-minute TTL: successive runs lose the cache.** The ephemeral cache
+expires 5 minutes after the previous request. Sequential `curator curate`
+iterations spaced more than 5 minutes apart pay full
+`cache_creation_input_tokens` cost (~10x a cache hit) on each run, even
+when the prompt and portfolio are byte-identical. The observability
+surface is the `cache_read_input_tokens` field in `curation_log.json`:
+non-zero on hits, zero on misses. For workflows that iterate over the
+same portfolio with breaks longer than 5 minutes (typical interactive
+development), the per-run cost includes a cache-write surcharge that
+cannot be reduced without switching to the 1-hour tier (which costs 2x
+to write, only paying back after multiple reads within the hour).
+Documented here, not in `CLAUDE.md`, because `CLAUDE.md` is loaded into
+the assistant context on every turn and operator caveats belong in the
+architecture reference.
+
 ---
 
 ## Configuration
