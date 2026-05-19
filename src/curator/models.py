@@ -568,7 +568,13 @@ class ResumeCuration(BaseModel):
             "``curation_log.json`` written before this field existed "
             "(treat missing as ``raw == clamped`` on the reader path). "
             "Audit-only; the renderer reads only ``work_highlight_weights`` "
-            "(post-clamp)."
+            "(post-clamp). "
+            "Operationally, divergence between this field and "
+            "``work_highlight_weights`` indicates the AI emitted values "
+            "outside ``[WORK_HIGHLIGHT_WEIGHT_MIN, "
+            "WORK_HIGHLIGHT_WEIGHT_MAX]``; persistent divergence across "
+            "runs suggests the band is too narrow for the AI's natural "
+            "emission distribution and should be retuned."
         ),
     )
     trim_priority: list[str] = Field(

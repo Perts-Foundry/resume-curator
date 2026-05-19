@@ -285,12 +285,13 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
             "type": "number",
             "description": (
                 f"Relative priority weight for work entry '{wid}'. "
-                f"Stay within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
-                f"{WORK_HIGHLIGHT_WEIGHT_MAX}]; out-of-range values "
-                "are clamped post-parse (the raw value is preserved "
-                "in the curation_log.json audit trail). 1.0 = no "
-                "adjustment; >1 keeps more highlights from this role; "
-                "<1 keeps fewer."
+                f"MUST stay within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
+                f"{WORK_HIGHLIGHT_WEIGHT_MAX}]. 1.0 = no adjustment; "
+                f">1 keeps more highlights from this role; <1 keeps "
+                f"fewer. {WORK_HIGHLIGHT_WEIGHT_MAX} is the strongest "
+                "signal the cascade acts on; values above carry no "
+                "additional weight (the renderer cap is "
+                f"ceil(floor * {WORK_HIGHLIGHT_WEIGHT_MAX}))."
             ),
         }
     return {
@@ -300,18 +301,15 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
             "Optional per-work-entry priority weights. Emit only when "
             "the JD signals a strong preference for one role's content "
             "over another. Keys are portfolio work entry IDs; values "
-            f"SHOULD stay within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
-            f"{WORK_HIGHLIGHT_WEIGHT_MAX}]. Out-of-range values are "
-            "clamped post-parse to that range; the pre-clamp value is "
-            "preserved in the audit trail (curation_log.json "
-            "ai_hints.work_highlight_weights_raw) so over-emission is "
-            "observable without invalidating the whole response. "
-            "Omitted entries default to 1.0. The per-entry highlight "
-            "emission cap (ceil(floor * 1.5)) still applies; weights "
-            "affect only the renderer's per-position floor, not the "
-            "model's emission ceiling - to keep more highlights at the "
-            "most-recent role, emit additional highlight_id entries in "
-            "work_highlights_by_id rather than a higher weight."
+            f"MUST stay within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
+            f"{WORK_HIGHLIGHT_WEIGHT_MAX}]. Omitted entries default to "
+            "1.0. The per-entry highlight emission cap "
+            f"(ceil(floor * {WORK_HIGHLIGHT_WEIGHT_MAX})) still applies; "
+            "weights affect only the renderer's per-position floor, "
+            "not the model's emission ceiling. To keep more highlights "
+            "at the most-recent role, emit additional highlight_id "
+            "entries in work_highlights_by_id rather than a higher "
+            "weight."
         ),
         "properties": properties,
     }
