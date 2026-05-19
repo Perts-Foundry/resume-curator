@@ -6,8 +6,10 @@ agree with the on-page geometry the renderer produces for a given page
 budget. To prevent drift, both modules consume the same cap profile
 defined here.
 
-This module is import-leaf: it depends only on the standard library so it
-can be imported by both :mod:`curator.renderer` and
+This module is import-leaf relative to the rest of ``curator``: it
+depends only on the standard library and :mod:`curator.rules`
+(constants only, no transitive imports of other ``curator`` modules),
+so it can be imported by both :mod:`curator.renderer` and
 :mod:`curator.eval.report` without a cycle.
 """
 
@@ -15,6 +17,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+
+from curator.rules import WORK_HIGHLIGHT_WEIGHT_MAX
 
 # Default certificate floor for 1-page resumes; 2+-page renders use
 # ``_caps_for_pages(max_pages).certificate_floor``. Load-bearing
@@ -156,22 +160,23 @@ def per_entry_emit_cap(work_position: int, max_pages: int) -> int:
     ``maxItems``; the cap is communicated to the model via the
     property's ``description`` text and enforced by the client adapter.
 
-    Formula: ``ceil(floor * 1.5)`` for the renderer floor at this
-    position, clamped to a minimum of 2 so the model has room even on
-    positions where the renderer's per-position floor is 0 (1-page mode
-    positions 2..4). ``ceil`` is used (not ``round``) to avoid Python's
-    banker's rounding edge cases and to always give the model a hair
-    more headroom than the strict 1.5x scale.
+    Formula: ``ceil(floor * WORK_HIGHLIGHT_WEIGHT_MAX)`` for the
+    renderer floor at this position, clamped to a minimum of 2 so the
+    model has room even on positions where the renderer's per-position
+    floor is 0 (1-page mode positions 2..4). ``ceil`` is used (not
+    ``round``) to avoid Python's banker's rounding edge cases and to
+    always give the model a hair more headroom than the strict scale.
 
-    Design invariant on the 1.5x multiplier: it matches
-    ``WORK_HIGHLIGHT_WEIGHT_MAX`` (1.5) so weights at the ceiling stay
-    effective at every position (effective floor never exceeds the
-    emit cap). Raising one without the other would either re-introduce
-    portfolio-order silent overrides (cap multiplier > 1.5) or push
-    effective floors past the emit cap, making weights inert (MAX > cap
-    multiplier). Change both in lockstep or document the asymmetry
-    explicitly in ``rules.py``.
+    Design invariant: the multiplier IS ``WORK_HIGHLIGHT_WEIGHT_MAX``
+    (imported from :mod:`curator.rules`). Sourcing both from the same
+    constant makes the lockstep structural rather than a comment:
+    weights at the ceiling stay effective at every position
+    (effective floor never exceeds the emit cap), and a future bump
+    to ``WORK_HIGHLIGHT_WEIGHT_MAX`` automatically widens the cap in
+    step. Diverging the two would either re-introduce portfolio-order
+    silent overrides (cap multiplier > MAX) or push effective floors
+    past the emit cap, making weights inert (MAX > cap multiplier).
     """
     caps = _caps_for_pages(max_pages)
     floor = caps.floor_for_position(work_position)
-    return max(2, math.ceil(floor * 1.5))
+    return max(2, math.ceil(floor * WORK_HIGHLIGHT_WEIGHT_MAX))
