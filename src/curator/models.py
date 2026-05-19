@@ -598,23 +598,30 @@ class ResumeCuration(BaseModel):
 
         Runs before field validators so the audit trail captures the
         AI's raw emission even when the field validator clamps the
-        primary copy. Skipped when the caller already provided a
-        non-empty ``work_highlight_weights_raw`` (e.g., reloading a
-        curation_log.json that already carries it) so the round-trip
-        is idempotent.
+        primary copy. Round-trip-safe for any curation_log.json the
+        renderer wrote: a non-empty ``..._raw`` is preserved verbatim
+        on reload, and missing or empty ``..._raw`` is filled from
+        the current (post-clamp on reload) ``work_highlight_weights``.
+
+        Returns a shallow copy of ``data`` rather than mutating in
+        place so callers that pass a reused dict don't observe the
+        mirror key appearing on their reference.
+
+        Defers type validation of ``work_highlight_weights`` to the
+        field validator: a non-dict value here returns ``data``
+        unchanged so Pydantic's type-check produces its usual
+        "Input should be a valid dictionary" error rather than an
+        opaque ``TypeError`` from ``dict(...)``.
         """
         if not isinstance(data, dict):
             return data
         raw_input = data.get("work_highlight_weights")
-        if not raw_input:
+        if not isinstance(raw_input, dict) or not raw_input:
             return data
         existing_raw = data.get("work_highlight_weights_raw")
         if existing_raw:
             return data
-        # ``dict(raw_input)`` defends against the caller mutating the
-        # dict after model construction; floats are immutable.
-        data["work_highlight_weights_raw"] = dict(raw_input)
-        return data
+        return {**data, "work_highlight_weights_raw": dict(raw_input)}
 
     @field_validator("work_highlight_weights")
     @classmethod

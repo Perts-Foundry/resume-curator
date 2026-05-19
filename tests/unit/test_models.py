@@ -727,6 +727,23 @@ class TestResumeCuration:
         # from work_highlight_weights.
         assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 1.8}
 
+    def test_work_highlight_weights_validate_does_not_mutate_input(self) -> None:
+        """The pre-validator must not leak the ``_raw`` mirror back
+        onto the caller's dict reference."""
+        data = _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.8})
+        before_keys = set(data.keys())
+        ResumeCuration.model_validate(data)
+        assert set(data.keys()) == before_keys
+        assert "work_highlight_weights_raw" not in data
+
+    def test_work_highlight_weights_non_dict_yields_typed_error(self) -> None:
+        """Non-dict input must surface Pydantic's type error, not the
+        opaque ``TypeError`` from ``dict(...)`` inside the pre-validator."""
+        data = _make_curation_dict()
+        data["work_highlight_weights"] = "not-a-dict"
+        with pytest.raises(ValidationError, match="dictionary|valid dict"):
+            ResumeCuration.model_validate(data)
+
     def test_trim_priority_accepts_valid_items(self) -> None:
         curation = ResumeCuration.model_validate(
             _make_curation_dict(trim_priority=["certificates", "projects"])
