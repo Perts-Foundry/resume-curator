@@ -202,6 +202,22 @@ def main(argv: list[str] | None = None) -> int:
     new_prompt = (REPO_ROOT / "src/curator/prompt.py").read_text(encoding="utf-8")
     new_rules = (REPO_ROOT / "src/curator/rules.py").read_text(encoding="utf-8")
 
+    # Defense in depth: if the regex fails to extract the system-prompt
+    # literal from the CURRENT working tree, hash_blob will hash only
+    # rules.py text and produce a value that can spuriously compare
+    # equal across revisions where the same extraction failure happens
+    # at the merge base. Fail loud with exit 2 (config error) so a
+    # silently-passing gate is impossible after a prompt.py refactor.
+    if not extract_system_prompt_literal(new_prompt):
+        print(
+            "error: could not extract `_SYSTEM_PROMPT_TEXT` literal from "
+            "the current src/curator/prompt.py. The extraction regex is "
+            "out of sync with the source shape. Update SYSTEM_PROMPT_RE "
+            "in scripts/ci/check_prompt_version.py.",
+            file=sys.stderr,
+        )
+        return 2
+
     old_hash = hash_blob(old_prompt, old_rules)
     new_hash = hash_blob(new_prompt, new_rules)
     old_version = extract_prompt_version(old_prompt)
