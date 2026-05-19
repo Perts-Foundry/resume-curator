@@ -821,3 +821,54 @@ class TestSystemPromptIndependentOfPaging:
         result_a = build_system_prompt(portfolio_data, with_cover_letter=True)
         result_b = build_system_prompt(portfolio_data, with_cover_letter=True)
         assert result_a == result_b
+
+
+class TestPromptHashSplit:
+    """``SYSTEM_PROMPT_HASH`` and ``COVER_LETTER_PROMPT_HASH`` exist
+    independently so the CI version-gate can target system-prompt drift
+    without firing on cover-letter-only edits.
+
+    The combined ``PROMPT_HASH`` is retained for audit-log back-compat.
+    """
+
+    def test_all_three_hashes_have_expected_shape(self) -> None:
+        from curator.prompt import (
+            COVER_LETTER_PROMPT_HASH,
+            PROMPT_HASH,
+            SYSTEM_PROMPT_HASH,
+        )
+
+        for h in (SYSTEM_PROMPT_HASH, COVER_LETTER_PROMPT_HASH, PROMPT_HASH):
+            assert isinstance(h, str)
+            assert len(h) == 12
+            assert all(c in "0123456789abcdef" for c in h)
+
+    def test_split_hashes_differ_from_combined(self) -> None:
+        """The split hashes cover different inputs than the combined
+        hash, so all three values should be distinct in normal source."""
+        from curator.prompt import (
+            COVER_LETTER_PROMPT_HASH,
+            PROMPT_HASH,
+            SYSTEM_PROMPT_HASH,
+        )
+
+        assert SYSTEM_PROMPT_HASH != COVER_LETTER_PROMPT_HASH
+        assert SYSTEM_PROMPT_HASH != PROMPT_HASH
+        assert COVER_LETTER_PROMPT_HASH != PROMPT_HASH
+
+    def test_combined_hash_is_concat_of_blocks(self) -> None:
+        """``PROMPT_HASH`` is sha256 of system+cover concatenated;
+        verify directly so a future refactor that decomposes it
+        elsewhere stays consistent."""
+        import hashlib
+
+        from curator.prompt import (
+            _COVER_LETTER_PROMPT_BLOCK,  # type: ignore[attr-defined]
+            _SYSTEM_PROMPT_TEXT,  # type: ignore[attr-defined]
+            PROMPT_HASH,
+        )
+
+        expected = hashlib.sha256(
+            (_SYSTEM_PROMPT_TEXT + _COVER_LETTER_PROMPT_BLOCK).encode("utf-8")
+        ).hexdigest()[:12]
+        assert expected == PROMPT_HASH

@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           ref: ${{ github.event_name == 'issue_comment' && steps.comment-pr.outputs.ref || '' }}
-          fetch-depth: 1
+          fetch-depth: 0  # full history so `check_prompt_version` can resolve merge-base against origin/main
 
       - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82  # v7.5.0
         with:
@@ -126,6 +126,25 @@ jobs:
         run: |
           set +e
           OUTPUT=$(uv run mypy src/ 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<GHEOF"
+            echo "$OUTPUT" | tail -30
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── Prompt version check ────────────────────────────────────
+      # Fails when src/curator/prompt.py (the system-prompt block) or
+      # src/curator/rules.py changes content but PROMPT_VERSION is not
+      # bumped. Cover-letter-only edits are exempt. See
+      # scripts/ci/check_prompt_version.py for the gate logic.
+      - name: Prompt version check
+        id: prompt-version
+        run: |
+          set +e
+          OUTPUT=$(uv run python scripts/ci/check_prompt_version.py 2>&1)
           EXIT_CODE=$?
           echo "$OUTPUT"
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
@@ -225,6 +244,7 @@ jobs:
             "ruff-check:Lint:${{ steps.ruff-check.outputs.exit_code }}"
             "ruff-format:Format:${{ steps.ruff-format.outputs.exit_code }}"
             "mypy:Types:${{ steps.mypy.outputs.exit_code }}"
+            "prompt-version:Prompt Version:${{ steps.prompt-version.outputs.exit_code }}"
             "pytest:Tests:${{ steps.pytest.outputs.exit_code }}"
             "golden-eval:Golden Eval:${{ steps.golden-eval.outputs.exit_code }}"
             "pip-audit:Security:${{ steps.pip-audit.outputs.exit_code }}"
@@ -264,12 +284,14 @@ jobs:
           RUFF_CHECK_EXIT: ${{ steps.ruff-check.outputs.exit_code }}
           RUFF_FORMAT_EXIT: ${{ steps.ruff-format.outputs.exit_code }}
           MYPY_EXIT: ${{ steps.mypy.outputs.exit_code }}
+          PROMPT_VERSION_EXIT: ${{ steps.prompt-version.outputs.exit_code }}
           PYTEST_EXIT: ${{ steps.pytest.outputs.exit_code }}
           GOLDEN_EVAL_EXIT: ${{ steps.golden-eval.outputs.exit_code }}
           PIP_AUDIT_EXIT: ${{ steps.pip-audit.outputs.exit_code }}
           RUFF_CHECK_OUTPUT: ${{ steps.ruff-check.outputs.output }}
           RUFF_FORMAT_OUTPUT: ${{ steps.ruff-format.outputs.output }}
           MYPY_OUTPUT: ${{ steps.mypy.outputs.output }}
+          PROMPT_VERSION_OUTPUT: ${{ steps.prompt-version.outputs.output }}
           PYTEST_OUTPUT: ${{ steps.pytest.outputs.output }}
           GOLDEN_EVAL_OUTPUT: ${{ steps.golden-eval.outputs.output }}
           PIP_AUDIT_OUTPUT: ${{ steps.pip-audit.outputs.output }}
@@ -301,6 +323,7 @@ jobs:
             const ruffCheck = process.env.RUFF_CHECK_EXIT;
             const ruffFormat = process.env.RUFF_FORMAT_EXIT;
             const mypy = process.env.MYPY_EXIT;
+            const promptVersion = process.env.PROMPT_VERSION_EXIT;
             const pytest = process.env.PYTEST_EXIT;
             const goldenEval = process.env.GOLDEN_EVAL_EXIT;
             const pipAudit = process.env.PIP_AUDIT_EXIT;
@@ -310,6 +333,7 @@ jobs:
             const ruffCheckOutput = sanitize(process.env.RUFF_CHECK_OUTPUT) || 'No issues found';
             const ruffFormatOutput = sanitize(process.env.RUFF_FORMAT_OUTPUT) || 'No issues found';
             const mypyOutput = sanitize(process.env.MYPY_OUTPUT) || 'No issues found';
+            const promptVersionOutput = sanitize(process.env.PROMPT_VERSION_OUTPUT) || 'No drift';
             const pytestOutput = sanitize(process.env.PYTEST_OUTPUT) || 'No output';
             const goldenEvalOutput = sanitize(process.env.GOLDEN_EVAL_OUTPUT) || 'No output';
             const pipAuditOutput = sanitize(process.env.PIP_AUDIT_OUTPUT) || 'No issues found';
@@ -333,6 +357,7 @@ jobs:
               `| **Lint** | \`ruff check\` | ${status(ruffCheck)} |`,
               `| **Format** | \`ruff format\` | ${status(ruffFormat)} |`,
               `| **Type Check** | \`mypy\` | ${status(mypy)} |`,
+              `| **Prompt Version** | \`check_prompt_version.py\` | ${status(promptVersion)} |`,
               '',
               '### Testing',
               '',
@@ -371,6 +396,14 @@ jobs:
               '',
               '```',
               mypyOutput,
+              '```',
+              '',
+              '</details>',
+              '',
+              '<details><summary><strong>Prompt Version</strong> (<code>check_prompt_version.py</code>)</summary>',
+              '',
+              '```',
+              promptVersionOutput,
               '```',
               '',
               '</details>',

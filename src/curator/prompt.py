@@ -63,11 +63,13 @@ from curator.rules import (
 #: NOT bumped for cover-letter-only edits. The cover-letter prompt
 #: block (``_COVER_LETTER_PROMPT_BLOCK``) is conditionally appended to
 #: the system prompt based on the ``--cover-letter`` flag and is
-#: byte-different from the version off-path runs see. ``PROMPT_HASH``
-#: covers both blocks together so cover-letter content drift is
-#: detectable in the audit log without requiring a version bump that
-#: would mislead off-path log readers (whose effective prompt is
-#: byte-identical across cover-letter constant changes).
+#: byte-different from the version off-path runs see. ``SYSTEM_PROMPT_HASH``
+#: covers only ``_SYSTEM_PROMPT_TEXT`` and is the hash that the
+#: ``check_prompt_version`` CI gate compares against ``PROMPT_VERSION``;
+#: cover-letter drift is recorded separately via
+#: ``COVER_LETTER_PROMPT_HASH`` but does not require a version bump.
+#: The combined ``PROMPT_HASH`` is retained for audit-log
+#: backwards-compatibility with pre-2026-05-18 curation_log.json files.
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
@@ -537,12 +539,29 @@ _COVER_LETTER_PROMPT_BLOCK = _COVER_LETTER_PROMPT_BLOCK.format(
     forbidden_phrases=render_cover_letter_forbidden_phrases_for_prompt(),
 )
 
-#: Content hash of the curator prompts (system + cover-letter block).
+#: Content hashes of the curator prompt blocks.
 #: Symmetric to ``JUDGE_PROMPT_HASH`` in ``curator.eval.judge``: emitted
 #: into ``curation_log.json`` so an un-bumped ``PROMPT_VERSION`` after a
 #: prompt edit is detectable. First 12 hex chars of sha256 for log
 #: friendliness; full hash recoverable from source.
+#:
+#: The hash is split so cover-letter-only edits do not require bumping
+#: ``PROMPT_VERSION`` (per the docstring policy on that constant):
+#: ``SYSTEM_PROMPT_HASH`` covers ``_SYSTEM_PROMPT_TEXT`` alone and is
+#: the input to the ``check_prompt_version`` CI gate;
+#: ``COVER_LETTER_PROMPT_HASH`` covers ``_COVER_LETTER_PROMPT_BLOCK``
+#: alone and is auditable but not gated. ``PROMPT_HASH`` (combined)
+#: is retained for backwards-compatibility with pre-2026-05-18
+#: curation_log.json files and downstream tools that read it.
 import hashlib as _hashlib  # noqa: E402
+
+SYSTEM_PROMPT_HASH: str = _hashlib.sha256(
+    _SYSTEM_PROMPT_TEXT.encode("utf-8")
+).hexdigest()[:12]
+
+COVER_LETTER_PROMPT_HASH: str = _hashlib.sha256(
+    _COVER_LETTER_PROMPT_BLOCK.encode("utf-8")
+).hexdigest()[:12]
 
 PROMPT_HASH: str = _hashlib.sha256(
     (_SYSTEM_PROMPT_TEXT + _COVER_LETTER_PROMPT_BLOCK).encode("utf-8")

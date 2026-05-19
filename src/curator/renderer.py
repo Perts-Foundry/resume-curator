@@ -38,7 +38,12 @@ from curator.page_caps import (  # noqa: F401 (re-exported for back-compat)
     _PageCaps,
     per_entry_emit_cap,
 )
-from curator.prompt import PROMPT_HASH, PROMPT_VERSION
+from curator.prompt import (
+    COVER_LETTER_PROMPT_HASH,
+    PROMPT_HASH,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT_HASH,
+)
 from curator.rules import COVER_LETTER_WORD_MAX
 
 # ``_PageCaps``, ``_caps_for_pages``, and ``CERTIFICATE_FLOOR`` are imported
@@ -980,6 +985,8 @@ def _write_audit_artifacts(
         "format_version": "2.5",
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
+        "system_prompt_hash": SYSTEM_PROMPT_HASH,
+        "cover_letter_prompt_hash": COVER_LETTER_PROMPT_HASH,
         "source": curation.source,
         "model": curation.model,
         "input_tokens": curation.input_tokens,

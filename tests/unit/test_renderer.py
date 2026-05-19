@@ -523,15 +523,24 @@ class TestWriteAuditArtifacts:
         # digest (which would force an update on every prompt text edit
         # and is already covered by the byte-identity test), assert
         # presence and shape only.
-        from curator.prompt import PROMPT_HASH
+        from curator.prompt import (
+            COVER_LETTER_PROMPT_HASH,
+            PROMPT_HASH,
+            SYSTEM_PROMPT_HASH,
+        )
 
         assert log_data["format_version"] == "2.5"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
         assert log_data["prompt_version"] == "2026-05-21"
+        # Combined hash retained for back-compat readers; split hashes
+        # added in 2026-05-18 so the CI gate can target system-prompt
+        # drift without firing on cover-letter-only edits.
         assert log_data["prompt_hash"] == PROMPT_HASH
         assert isinstance(log_data["prompt_hash"], str)
         assert len(log_data["prompt_hash"]) == 12
+        assert log_data["system_prompt_hash"] == SYSTEM_PROMPT_HASH
+        assert log_data["cover_letter_prompt_hash"] == COVER_LETTER_PROMPT_HASH
         assert log_data["model"] == "claude-sonnet-4-6-20260217"
         assert log_data["input_tokens"] == 1000
         assert "timestamp" in log_data
