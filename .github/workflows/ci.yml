@@ -479,6 +479,7 @@ jobs:
           RUFF_CHECK_EXIT: ${{ steps.ruff-check.outputs.exit_code }}
           RUFF_FORMAT_EXIT: ${{ steps.ruff-format.outputs.exit_code }}
           MYPY_EXIT: ${{ steps.mypy.outputs.exit_code }}
+          PROMPT_VERSION_EXIT: ${{ steps.prompt-version.outputs.exit_code }}
           PYTEST_EXIT: ${{ steps.pytest.outputs.exit_code }}
           GOLDEN_EVAL_EXIT: ${{ steps.golden-eval.outputs.exit_code }}
           PIP_AUDIT_EXIT: ${{ steps.pip-audit.outputs.exit_code }}
@@ -499,6 +500,7 @@ jobs:
           check_exit "ruff check" "$RUFF_CHECK_EXIT"
           check_exit "ruff format" "$RUFF_FORMAT_EXIT"
           check_exit "mypy" "$MYPY_EXIT"
+          check_exit "prompt-version" "$PROMPT_VERSION_EXIT"
           check_exit "pytest" "$PYTEST_EXIT"
           check_exit "golden-eval" "$GOLDEN_EVAL_EXIT"
           check_exit "pip-audit" "$PIP_AUDIT_EXIT"
