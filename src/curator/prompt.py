@@ -45,6 +45,8 @@ from curator.rules import (
     COVER_LETTER_WORD_TARGET,
     MAX_JD_LENGTH,
     SUMMARY_MANDATORY_MENTION,
+    WORK_HIGHLIGHT_WEIGHT_MAX,
+    WORK_HIGHLIGHT_WEIGHT_MIN,
     render_ai_red_flag_phrases_for_prompt,
     render_ai_red_flag_words_for_prompt,
     render_cover_letter_forbidden_phrases_for_prompt,
@@ -73,7 +75,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-21"
+PROMPT_VERSION: str = "2026-05-22"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -289,14 +291,18 @@ the in-portfolio highlight ranking matters most for the top 1-2 \
 slots per project.
 
 ``work_highlight_weights`` (OPTIONAL): per-work-entry priority \
-weights in [0.5, 2.0]. Emit ONLY when the JD signals a strong \
-preference for one role's content over another. Default is 1.0 (no \
-adjustment); >1 keeps more highlights from that role, <1 keeps \
-fewer. Example: a security-heavy JD might warrant 1.5 for a security \
-role and 0.7 for a generalist role. Keys must be portfolio work IDs; \
-omit any role you do not want to adjust. The renderer applies \
-weights to the per-position floor only; the per-entry highlight \
-emission cap (see ``work_highlights_by_id``) is unchanged.
+weights in [{weight_min}, {weight_max}]. Emit ONLY when the JD \
+signals a strong preference for one role's content over another. \
+Default is 1.0 (no adjustment); >1 keeps more highlights from that \
+role, <1 keeps fewer. Example: a security-heavy JD might warrant \
+1.3 for a security role and 0.7 for a generalist role. Stay inside \
+the band; the renderer clamps out-of-range values to the boundary, \
+so emitting {weight_max} carries no more signal than {weight_max}, \
+and emitting above carries no additional effect. Keys must be \
+portfolio work IDs; omit any role you do not want to adjust. The \
+renderer applies weights to the per-position floor only; the \
+per-entry highlight emission cap (see ``work_highlights_by_id``) \
+is unchanged.
 
 ``trim_priority`` (OPTIONAL): ordered list of section names by drop \
 priority when the page overflows. Items must come from \
@@ -386,6 +392,8 @@ _SYSTEM_PROMPT_TEXT = _SYSTEM_PROMPT_TEXT.format(
     ai_red_flag_phrases=render_ai_red_flag_phrases_for_prompt(),
     summary_length_guidance=render_summary_length_guidance_for_prompt(),
     summary_mandatory_mention=SUMMARY_MANDATORY_MENTION,
+    weight_min=WORK_HIGHLIGHT_WEIGHT_MIN,
+    weight_max=WORK_HIGHLIGHT_WEIGHT_MAX,
 )
 
 _CURATION_INSTRUCTION = (
