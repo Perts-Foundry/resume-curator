@@ -2750,6 +2750,89 @@ class TestTrimToFit:
             f"expected below_floor WARNING, got: {log_messages}"
         )
 
+    def test_skill_group_floor_default_protects_section_under_pressure(
+        self, tmp_path: Path
+    ) -> None:
+        """End-to-end regression: ``_trim_to_fit`` running with the
+        default ``_caps_for_pages(max_pages).skill_group_floor`` must
+        never drain the skills section below the floor, even when the
+        renderer iterates through the full cascade trying to fit the
+        page. Pins the fp-markets regression fix at the integration
+        layer (the unit-level ``TestSkillGroupFloor`` covers the helper
+        closure; this test covers the multi-iteration cascade loop).
+        """
+        from curator.page_caps import _caps_for_pages
+        from curator.renderer import _trim_to_fit
+
+        output_dir = tmp_path / "profile"
+        output_dir.mkdir()
+        (output_dir / "data").mkdir()
+        tpl = tmp_path / "tpl" / "curated.typ"
+        tpl.parent.mkdir()
+        tpl.write_text("// dummy")
+
+        def fake_run(cmd: list[str], **kw: Any) -> Any:
+            Path(cmd[-1]).write_bytes(b"%PDF-1.4 fake")
+            return type("R", (), {"returncode": 0, "stderr": ""})()
+
+        # Heavily over-budget skills section (12 groups, well above the
+        # 2-page floor of 6). Reports overflow for several iterations
+        # before fitting, forcing the cascade to chew through the
+        # middle band; without the floor it would zero out skills.
+        sections: dict[str, Any] = {
+            "work": [
+                {
+                    "id": "w1",
+                    "highlights": [{"id": f"a{i}"} for i in range(8)],
+                },
+                {
+                    "id": "w2",
+                    "highlights": [{"id": f"b{i}"} for i in range(6)],
+                },
+            ],
+            "skills": [
+                {"id": f"s{i}", "keywords": [f"k{i}-1", f"k{i}-2"]}
+                for i in range(12)
+            ],
+            "projects": [],
+            "certificates": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}],
+            "education": [{"id": "e1"}],
+        }
+        basics = {"name": "Test"}
+
+        # Report 3 pages for several iterations to force the cascade
+        # to keep trimming, then return 2 so it converges.
+        page_counts = iter([3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            caps = _caps_for_pages(2)
+            final_sections, _, trim_log, pages, _safety = _trim_to_fit(
+                sections,
+                basics,
+                None,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=20,
+                work_position_floors=caps.work_position_floors,
+                certificate_floor=caps.certificate_floor,
+                skill_group_floor=caps.skill_group_floor,
+                education_floor=caps.education_floor,
+            )
+
+        # Floor invariant: at least 6 skill groups survive on 2-page.
+        assert len(final_sections["skills"]) >= caps.skill_group_floor, (
+            f"expected at least {caps.skill_group_floor} groups, "
+            f"got {len(final_sections['skills'])}"
+        )
+        # Sanity: the cascade did run.
+        assert len(trim_log) > 0
+        assert pages == 2
+
     def test_input_immutability(self, tmp_path: Path) -> None:
         """Original sections dict is not mutated by _trim_to_fit."""
         import copy as copy_mod
