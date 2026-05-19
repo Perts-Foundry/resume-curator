@@ -259,17 +259,22 @@ def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, 
     Range enforcement: Anthropic's structured-output keyword subset
     does NOT honor ``minimum``/``maximum`` (see module docstring); the
     range is communicated to the model via property and aggregate
-    description text and rejected post-parse by
-    ``ResumeCuration._validate_weights_range`` — there is no clamp,
-    out-of-range values fail the entire response.
+    description text and CLAMPED post-parse by
+    ``ResumeCuration._clamp_weights_range``. Out-of-range values are
+    bounded to ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]``
+    and the pre-clamp emission is preserved on the model in
+    ``work_highlight_weights_raw`` (and persisted to
+    ``curation_log.json.ai_hints.work_highlight_weights_raw``) for
+    audit.
 
-    Weight inertness at the most-recent role: the per-entry safety-net
-    cap (``ceil(floor * 1.5)``) bounds the total highlights retained
-    per work entry, so weights above 1.5 at the most-recent role
-    progressively become inert. The aggregate description below tells
-    the model how to recover the intent (emit more highlight IDs)
-    rather than over-spending tokens on weight signals that the
-    renderer will silently clamp.
+    Cap multiplier lockstep: the per-entry safety-net cap is
+    ``ceil(floor * WORK_HIGHLIGHT_WEIGHT_MAX)`` in
+    :func:`curator.page_caps.per_entry_emit_cap`. Matching the
+    multiplier to ``WORK_HIGHLIGHT_WEIGHT_MAX`` keeps weights at the
+    boundary effective at every position. The aggregate description
+    below tells the model how to recover headroom (emit more
+    highlight IDs) rather than over-spending tokens on out-of-range
+    weight signals the validator will clamp.
     """
     properties: dict[str, Any] = {}
     for w in portfolio.work:
