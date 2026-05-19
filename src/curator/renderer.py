@@ -992,6 +992,14 @@ def _write_audit_artifacts(
     # the primary field. Renderer caps are deterministic from
     # ``max_pages`` via ``_caps_for_pages`` and are intentionally not
     # persisted; storing both invites drift.
+    #
+    # Version semantics: a minor bump (2.x -> 2.y) covers all additive
+    # field surfaces shipped in the same PR. The number identifies the
+    # UNION of fields present in the renderer at the moment of the
+    # bump, not a per-field ratchet. Readers should use ``key in
+    # log_data`` per-field probes rather than minor-version feature
+    # detection. Major bumps (2.x -> 3.x) are reserved for
+    # non-additive changes that require reader updates.
     log_path = output_dir / "curation_log.json"
     log_data: dict[str, Any] = {
         "format_version": "2.5",
