@@ -1613,7 +1613,12 @@ class TestGenerateNextTrim:
         floor cert list: project-highlight tier 2 skips (no highlights),
         tier 3 skips (single project cannot be removed wholesale),
         tier 4 skips (cert count == floor), cascade falls through to
-        skill-group removal at tier 10. Certificate stays put."""
+        skill-group removal at tier 10. Certificate stays put.
+
+        Pass ``skill_group_floor=0`` to disable the new skill-group
+        floor and isolate the legacy drain-to-empty behavior; the
+        floor itself is exercised by ``TestSkillGroupFloor`` below.
+        """
         from curator.renderer import TrimKind, _apply_trim, _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -1624,14 +1629,14 @@ class TestGenerateNextTrim:
             "education": [],
         }
         # First trim: whole skill group removed (tier 10). Cert protected.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         assert step.description == "Removed skill group: s1"
 
         sections, _ = _apply_trim(sections, None, step)
         # No more skills, cert floor still protecting: returns None.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is None
         # Cert survived.
         assert sections["certificates"] == [{"id": "c1"}]
@@ -1842,7 +1847,12 @@ class TestGenerateNextTrim:
     def test_skill_group_removal_targets_lowest_priority_group_first(self) -> None:
         """Tier 10 removes whole skill groups, lowest-priority (``skills[-1]``)
         first. Atomic removal converges the page-fit loop faster than the
-        old keyword-at-a-time drain."""
+        old keyword-at-a-time drain.
+
+        Pass ``skill_group_floor=1`` so the floor permits trimming one
+        of the two groups; the floor itself is exercised by
+        ``TestSkillGroupFloor`` below.
+        """
         from curator.renderer import TrimKind, _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -1855,7 +1865,7 @@ class TestGenerateNextTrim:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=1)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         assert step.description == "Removed skill group: s2"
@@ -1887,7 +1897,12 @@ class TestGenerateNextTrim:
 
     def test_tier8_remove_skill_group(self) -> None:
         """With no other trimmable content, tier 10 removes the sole
-        skill group wholesale. (Legacy ``tier8`` name retained.)"""
+        skill group wholesale. (Legacy ``tier8`` name retained.)
+
+        Pass ``skill_group_floor=0`` so the legacy drain-to-empty
+        behavior is observable; the floor itself is exercised by
+        ``TestSkillGroupFloor`` below.
+        """
         from curator.renderer import _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -1897,9 +1912,117 @@ class TestGenerateNextTrim:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.description == "Removed skill group: s1"
+
+    def test_skill_group_floor_blocks_trim_at_or_below(self) -> None:
+        """Floor invariant: cascade returns ``None`` from tier 7 when
+        ``len(skills) <= skill_group_floor``. The floor is exact, not
+        approximate: at the floor the cascade falls through to tier 8
+        (below-floor) rather than emptying the skills section."""
+        from curator.renderer import _generate_next_trim
+
+        # Skills count exactly at the floor -> no trim.
+        sections: dict[str, Any] = {
+            "work": [{"id": "w1", "highlights": []}],
+            "skills": [{"id": f"s{i}", "keywords": [f"k{i}"]} for i in range(4)],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is None
+
+        # Below the floor -> still no trim.
+        sections["skills"] = [{"id": "s1", "keywords": ["k1"]}]
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is None
+
+    def test_skill_group_floor_allows_trim_above(self) -> None:
+        """Above the floor the cascade trims one group per iteration,
+        stopping when the surviving count equals the floor."""
+        from curator.renderer import TrimKind, _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [{"id": "w1", "highlights": []}],
+            "skills": [{"id": f"s{i}", "keywords": [f"k{i}"]} for i in range(5)],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # 5 > 4 -> one trim allowed.
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is not None
+        assert step.kind is TrimKind.SKILL_GROUP
+        assert step.target_id == "s4"
+
+        sections, _ = _apply_trim(sections, None, step)
+        # Now at floor exactly -> no further skill trim.
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is None
+        assert len(sections["skills"]) == 4
+
+    def test_skill_group_floor_zero_preserves_drain_behavior(self) -> None:
+        """A floor of 0 is the legacy drain-to-empty behavior."""
+        from curator.renderer import TrimKind, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [{"id": "w1", "highlights": []}],
+            "skills": [{"id": "s1", "keywords": ["k1"]}],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
+        assert step is not None
+        assert step.kind is TrimKind.SKILL_GROUP
+        assert step.target_id == "s1"
+
+    def test_skill_group_floor_default_matches_short_form(self) -> None:
+        """Default ``skill_group_floor`` matches the 1-page profile value
+        so test scaffolding without an explicit floor sees the most
+        conservative protection."""
+        from curator.page_caps import SKILL_GROUP_FLOOR, _caps_for_pages
+
+        assert _caps_for_pages(1).skill_group_floor == SKILL_GROUP_FLOOR
+
+    def test_skill_group_floor_under_floor_portfolio(self) -> None:
+        """Portfolio with fewer non-empty groups than the floor: cascade
+        never trims skills, falls through to whatever else is available."""
+        from curator.renderer import TrimKind, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {
+                    "id": "w1",
+                    "highlights": [
+                        {"id": "h1"},
+                        {"id": "h2"},
+                        {"id": "h3"},
+                        {"id": "h4"},
+                    ],
+                },
+            ],
+            # Only 2 groups, floor=6 -> skills never get touched.
+            "skills": [
+                {"id": "s1", "keywords": ["k1"]},
+                {"id": "s2", "keywords": ["k2"]},
+            ],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(
+            sections,
+            None,
+            skill_group_floor=6,
+            work_position_floors=(2,),
+        )
+        # Work highlights still trimmable above their position-0 floor of 2.
+        assert step is not None
+        assert step.kind is TrimKind.HIGHLIGHT
+        assert step.target_id == "w1"
 
     def test_work_entries_are_never_removed(self) -> None:
         """Work entries are preserved even with zero highlights so the
@@ -2583,6 +2706,10 @@ class TestTrimToFit:
                     max_pages=1,
                     max_trim_iterations=15,
                     work_position_floors=(3, 3, 0, 0, 0),
+                    # Exercise the legacy drain-to-empty cascade so the
+                    # below-floor branch is reachable; the floor itself
+                    # is verified by ``TestSkillGroupFloor`` below.
+                    skill_group_floor=0,
                 )
         finally:
             logger.remove(sink_id)
@@ -2884,7 +3011,12 @@ class TestGenerateNextTrimEdgeCases:
         """The cascade never removes a certificate that would leave the
         count below ``CERTIFICATE_FLOOR``. With a single cert present,
         the cert is treated as load-bearing: the cascade falls through
-        to skill-group removal instead."""
+        to skill-group removal instead.
+
+        Pass ``skill_group_floor=0`` so the cascade can still drain
+        the skill group; the floor itself is exercised by
+        ``TestSkillGroupFloor`` elsewhere in this module.
+        """
         from curator.renderer import TrimKind, _apply_trim, _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -2895,18 +3027,21 @@ class TestGenerateNextTrimEdgeCases:
             "education": [],
         }
         # Tier 4 skips (1 <= floor). Skill group removal fires instead.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         sections, _ = _apply_trim(sections, None, step)
 
         # Nothing else trimmable; cert remains.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is None
         assert sections["certificates"] == [{"id": "sole-cert"}]
 
     def test_tier8_removes_sole_skill_group(self) -> None:
-        """Tier 10 removes the sole remaining skill group wholesale."""
+        """Tier 10 removes the sole remaining skill group wholesale.
+
+        Pass ``skill_group_floor=0`` for the legacy drain behavior.
+        """
         from curator.renderer import _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -2916,7 +3051,7 @@ class TestGenerateNextTrimEdgeCases:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.description == "Removed skill group: s1"
         assert step.target_id == "s1"
@@ -2943,7 +3078,10 @@ class TestGenerateNextTrimEdgeCases:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        # Pass ``skill_group_floor=0`` to isolate the empty-skip
+        # behavior from the floor protection (the floor is tested by
+        # ``TestSkillGroupFloor`` elsewhere).
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         # Must target s2 (lowest non-empty), NOT empty-bottom.
@@ -3008,7 +3146,10 @@ class TestGenerateNextTrimEdgeCases:
 
         descriptions: list[str] = []
         while True:
-            step = _generate_next_trim(sections, interests)
+            # ``skill_group_floor=0`` for the legacy drain-to-empty
+            # cascade walk; the floor itself is exercised by
+            # ``TestSkillGroupFloor`` elsewhere.
+            step = _generate_next_trim(sections, interests, skill_group_floor=0)
             if step is None:
                 break
             descriptions.append(step.description)
@@ -3253,7 +3394,9 @@ class TestGenerateNextTrimEdgeCases:
 
         kinds: list[TrimKind] = []
         while True:
-            step = _generate_next_trim(sections, None)
+            # ``skill_group_floor=0`` for the legacy drain-to-empty
+            # behavior under test here.
+            step = _generate_next_trim(sections, None, skill_group_floor=0)
             if step is None:
                 break
             kinds.append(step.kind)
@@ -3481,6 +3624,7 @@ class TestCapsForPages:
         caps = _caps_for_pages(1)
         assert caps.work_position_floors == (3, 3, 0, 0, 0)
         assert caps.certificate_floor == 3
+        assert caps.skill_group_floor == 4
 
     def test_two_page_caps(self) -> None:
         from curator.renderer import _caps_for_pages
@@ -3488,6 +3632,7 @@ class TestCapsForPages:
         caps = _caps_for_pages(2)
         assert caps.work_position_floors == (8, 6, 6, 2, 2)
         assert caps.certificate_floor == 3
+        assert caps.skill_group_floor == 6
 
     def test_plateau_at_three_or_more_pages(self) -> None:
         from curator.renderer import _caps_for_pages
@@ -3496,6 +3641,7 @@ class TestCapsForPages:
         caps_5 = _caps_for_pages(5)
         assert caps_3.work_position_floors == (10, 8, 8, 4, 4)
         assert caps_3.certificate_floor == 5
+        assert caps_3.skill_group_floor == 8
         # Plateau: 4-5 page configs use the same profile as 3-page.
         assert caps_5 == caps_3
 
@@ -3522,6 +3668,7 @@ class TestCapsForPages:
                 f"position {i}: pages {n} floor {cur_val} < pages {n - 1} {prev_val}"
             )
         assert cur.certificate_floor >= prev.certificate_floor
+        assert cur.skill_group_floor >= prev.skill_group_floor
 
     def test_zero_pages_treated_as_short_form(self) -> None:
         """Defensive: pages <= 1 returns the short-form profile."""
@@ -3542,25 +3689,63 @@ class TestPageCapsValidation:
         from curator.page_caps import _PageCaps
 
         with pytest.raises(ValueError, match="work_position_floors must be non-empty"):
-            _PageCaps(work_position_floors=(), certificate_floor=3)
+            _PageCaps(
+                work_position_floors=(),
+                certificate_floor=3,
+                skill_group_floor=4,
+            )
 
     def test_rejects_negative_floor_values(self) -> None:
         from curator.page_caps import _PageCaps
 
-        with pytest.raises(ValueError, match=">= 0"):
-            _PageCaps(work_position_floors=(3, -1, 0), certificate_floor=3)
+        match_msg = "work_position_floors values must be >= 0"
+        with pytest.raises(ValueError, match=match_msg):
+            _PageCaps(
+                work_position_floors=(3, -1, 0),
+                certificate_floor=3,
+                skill_group_floor=4,
+            )
 
     def test_rejects_negative_certificate_floor(self) -> None:
         from curator.page_caps import _PageCaps
 
         with pytest.raises(ValueError, match="certificate_floor must be >= 0"):
-            _PageCaps(work_position_floors=(3, 3), certificate_floor=-1)
+            _PageCaps(
+                work_position_floors=(3, 3),
+                certificate_floor=-1,
+                skill_group_floor=4,
+            )
+
+    def test_rejects_negative_skill_group_floor(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        with pytest.raises(ValueError, match="skill_group_floor must be >= 0"):
+            _PageCaps(
+                work_position_floors=(3, 3),
+                certificate_floor=3,
+                skill_group_floor=-1,
+            )
+
+    def test_accepts_zero_skill_group_floor(self) -> None:
+        """Floor of 0 is a legal degenerate (cascade may drain skills fully)."""
+        from curator.page_caps import _PageCaps
+
+        caps = _PageCaps(
+            work_position_floors=(3, 3),
+            certificate_floor=3,
+            skill_group_floor=0,
+        )
+        assert caps.skill_group_floor == 0
 
     def test_floor_for_position_falls_through_to_last_value(self) -> None:
         """Positions beyond the tuple length receive the last value."""
         from curator.page_caps import _PageCaps
 
-        caps = _PageCaps(work_position_floors=(8, 6, 6, 2, 2), certificate_floor=4)
+        caps = _PageCaps(
+            work_position_floors=(8, 6, 6, 2, 2),
+            certificate_floor=4,
+            skill_group_floor=6,
+        )
         assert caps.floor_for_position(0) == 8
         assert caps.floor_for_position(4) == 2
         assert caps.floor_for_position(7) == 2  # falls through to last
@@ -3568,7 +3753,11 @@ class TestPageCapsValidation:
     def test_floor_for_position_rejects_negative(self) -> None:
         from curator.page_caps import _PageCaps
 
-        caps = _PageCaps(work_position_floors=(3,), certificate_floor=3)
+        caps = _PageCaps(
+            work_position_floors=(3,),
+            certificate_floor=3,
+            skill_group_floor=4,
+        )
         with pytest.raises(ValueError, match="position must be non-negative"):
             caps.floor_for_position(-1)
 

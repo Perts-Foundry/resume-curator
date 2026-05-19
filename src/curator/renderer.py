@@ -33,6 +33,7 @@ from curator.io_utils import (
 from curator.models import EMPTY_INTERESTS, RENDERER_MANAGED_SECTIONS, RENDERER_SECTIONS
 from curator.page_caps import (  # noqa: F401 (re-exported for back-compat)
     CERTIFICATE_FLOOR,
+    SKILL_GROUP_FLOOR,
     _caps_for_pages,
     _PageCaps,
     per_entry_emit_cap,
@@ -419,6 +420,7 @@ def _generate_next_trim(
     *,
     work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
+    skill_group_floor: int = SKILL_GROUP_FLOOR,
     trim_priority: Sequence[str] | None = None,
     work_highlight_weight_hints: Mapping[str, float] | None = None,
 ) -> TrimStep | None:
@@ -438,7 +440,12 @@ def _generate_next_trim(
     converge than draining keywords one-by-one: each iteration frees a
     whole section's worth of vertical space rather than a single line
     item. Empty groups are also dropped by ``_prune_empty_sections``
-    before each compile (defense in depth).
+    before each compile (defense in depth). Tier 7 stops at
+    ``skill_group_floor`` (page-budget-aware: 4 on 1-page, 6 on 2-page,
+    8 on 3+-page; see :func:`_caps_for_pages`) and the cascade falls
+    through to tier 8 (below-floor work highlights) rather than
+    emptying the skills section. There is no late-stage skill-group
+    drain to break this floor.
 
     Projects are cut early in the cascade so page budget preferentially
     goes to work and skills. Their highlights drain first (tier 2), then
@@ -470,7 +477,8 @@ def _generate_next_trim(
     intentional on 1-page where page space cannot support a non-zero
     older-role floor). For 2+-page profiles with non-zero older-role
     floors, tier 6 stops at the floor and the cascade falls through to
-    tier 7 (skill groups) before tier 8 (below-floor) breaks the floor.
+    tier 7 (skill groups, which also stops at ``skill_group_floor``)
+    before tier 8 (below-floor) breaks any floor.
 
     "Soft" floors: tier 8 is a last-resort cascade that CAN trim below
     any per-position floor once tiers 1-7 have nothing left to cut.
@@ -537,7 +545,15 @@ def _generate_next_trim(
         return None
 
     def _eval_skill_groups() -> TrimStep | None:
+        # Mirror the ``_eval_certificates`` floor-check pattern: protect
+        # ``skill_group_floor`` non-empty groups so the skills section
+        # never renders empty under page pressure. ``_prune_empty_sections``
+        # has already dropped keyword-empty groups before this point, so
+        # ``len(skills)`` counts surviving non-empty groups; the floor
+        # protects exactly that count.
         skills = sections.get("skills", [])
+        if len(skills) <= skill_group_floor:
+            return None
         for i in range(len(skills) - 1, -1, -1):
             if skills[i].get("keywords"):
                 sid = skills[i].get("id", "unknown")
@@ -707,6 +723,7 @@ def _trim_to_fit(
     max_trim_iterations: int,
     work_position_floors: tuple[int, ...] = (3, 3, 0, 0, 0),
     certificate_floor: int = CERTIFICATE_FLOOR,
+    skill_group_floor: int = SKILL_GROUP_FLOOR,
     trim_priority: Sequence[str] | None = None,
     work_highlight_weight_hints: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int, bool]:
@@ -734,6 +751,10 @@ def _trim_to_fit(
         certificate_floor: Hard minimum certificates preserved (top
             entries). Tier 4 never trims below this count; there is no
             bypass path. Defaults to ``CERTIFICATE_FLOOR``.
+        skill_group_floor: Hard minimum skill groups preserved. Tier 7
+            never trims below this count; there is no bypass path
+            (skills are credible-breadth signal, not last-resort
+            content). Defaults to ``SKILL_GROUP_FLOOR``.
         trim_priority: Optional AI-emitted ordering of middle-band
             sections by drop priority. Forwarded to
             ``_generate_next_trim``.
@@ -779,6 +800,7 @@ def _trim_to_fit(
             interests,
             work_position_floors=work_position_floors,
             certificate_floor=certificate_floor,
+            skill_group_floor=skill_group_floor,
             trim_priority=trim_priority,
             work_highlight_weight_hints=work_highlight_weight_hints,
         )
@@ -1272,6 +1294,7 @@ def render(
                 max_trim_iterations=settings.max_trim_iterations,
                 work_position_floors=caps.work_position_floors,
                 certificate_floor=caps.certificate_floor,
+                skill_group_floor=caps.skill_group_floor,
                 trim_priority=rc.trim_priority or None,
                 work_highlight_weight_hints=rc.work_highlight_weights or None,
             )

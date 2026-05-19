@@ -149,7 +149,7 @@ src/curator/
   io_utils.py         # Shared I/O: atomic file writes, YAML safe loading, PDF page
                       #   counting, Typst compilation, slugify, priority_sort_key
   page_caps.py        # _PageCaps + _caps_for_pages (work_position_floors,
-                      #   certificate_floor); leaf module shared by renderer.py and
+                      #   certificate_floor, skill_group_floor); leaf module shared by renderer.py and
                       #   eval/report.py to keep cascade and eval bands aligned
   templates/
     curated.typ       # Typst resume template (packaged as resource;
@@ -254,8 +254,8 @@ renderer.py
   ├── io_utils.py      (atomic writes, Typst compilation)
   ├── models.py        (RENDERER_SECTIONS, RENDERER_MANAGED_SECTIONS,
   │                     EMPTY_INTERESTS)
-  ├── page_caps.py     (_PageCaps, _caps_for_pages, CERTIFICATE_FLOOR;
-  │                     re-exported for back-compat)
+  ├── page_caps.py     (_PageCaps, _caps_for_pages, CERTIFICATE_FLOOR,
+  │                     SKILL_GROUP_FLOOR; re-exported for back-compat)
   ├── prompt.py        (PROMPT_VERSION for curation_log.json)
   └── exceptions.py    (CuratorError, RenderError)
 
@@ -432,7 +432,13 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
       position 5, AI-reorderable), one whole group per iteration
       (lowest-priority first). Dropping a group frees a full section
       of vertical space, which converges the page-fit loop in dramatically fewer
-      iterations than the old keyword-at-a-time drain
+      iterations than the old keyword-at-a-time drain. The top
+      `skill_group_floor` groups are treated as breadth-signal and never
+      cut: the floor scales with the page budget via `_caps_for_pages`:
+      4 on max_pages=1, 6 on max_pages=2, 8 on max_pages=3+. There is
+      no late-stage skill-group drain to break this floor; once the
+      floor is reached the cascade falls through to below-floor
+      work-highlight removal
     - Certificates trim bottom-up at tier 4 but the top `certificate_floor`
       entries are treated as load-bearing credentials and never cut. The floor
       scales with the page budget via `_caps_for_pages`: 3 on max_pages=1, 3

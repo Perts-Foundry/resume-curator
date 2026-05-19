@@ -22,6 +22,13 @@ from dataclasses import dataclass
 # floor. The constant is retained for test-import compatibility.
 CERTIFICATE_FLOOR = 3
 
+# Default skill-group floor for 1-page resumes; 2+-page renders use
+# ``_caps_for_pages(max_pages).skill_group_floor``. The floor protects
+# breadth-signal skill groups under page pressure: the cascade can
+# trim individual groups down to the floor but never below it. There
+# is no late-stage skill-group drain to break this floor.
+SKILL_GROUP_FLOOR = 4
+
 
 @dataclass(frozen=True)
 class _PageCaps:
@@ -38,6 +45,19 @@ class _PageCaps:
     implicitly. Any change to the work sort order must update this
     profile in lockstep.
 
+    ``skill_group_floor`` protects N skill groups under page pressure.
+    The cascade's tier-7 skill-group drain stops at this floor and
+    falls through to tier 8 (below-floor work) rather than emptying
+    the skills section. Profile values:
+
+      - 1-page:  4 groups
+      - 2-page:  6 groups
+      - 3+-page: 8 groups
+
+    Calibration: a 2-page DevSecOps-style portfolio needs at least
+    6 surviving groups for the skills inventory to remain credible
+    against a JD checklist.
+
     Per-project bullet cap is intentionally NOT in this profile:
     ``ResumeCuration.projects`` is an ordered list of project IDs only,
     so the AI does not rank highlights *within* a project. Per-project
@@ -50,6 +70,7 @@ class _PageCaps:
 
     work_position_floors: tuple[int, ...]
     certificate_floor: int
+    skill_group_floor: int
 
     def __post_init__(self) -> None:
         if not self.work_position_floors:
@@ -60,6 +81,9 @@ class _PageCaps:
             raise ValueError(msg)
         if self.certificate_floor < 0:
             msg = "certificate_floor must be >= 0"
+            raise ValueError(msg)
+        if self.skill_group_floor < 0:
+            msg = "skill_group_floor must be >= 0"
             raise ValueError(msg)
 
     def floor_for_position(self, position: int) -> int:
@@ -93,15 +117,18 @@ def _caps_for_pages(max_pages: int) -> _PageCaps:
         return _PageCaps(
             work_position_floors=(3, 3, 0, 0, 0),
             certificate_floor=3,
+            skill_group_floor=4,
         )
     if max_pages == 2:
         return _PageCaps(
             work_position_floors=(8, 6, 6, 2, 2),
             certificate_floor=3,
+            skill_group_floor=6,
         )
     return _PageCaps(
         work_position_floors=(10, 8, 8, 4, 4),
         certificate_floor=5,
+        skill_group_floor=8,
     )
 
 
