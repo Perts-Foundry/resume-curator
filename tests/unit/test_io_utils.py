@@ -27,7 +27,7 @@ class TestSlugify:
             ("Acme LLC", "acme"),
             ("Anthropic, PBC", "anthropic"),
             ("Hugging Face Inc", "hugging-face"),
-            ("Archesys Inc", "archesys"),
+            ("Foobar Inc", "foobar"),
             ("Acme GmbH", "acme"),
             ("Acme Ltd", "acme"),
             ("Acme LLC Inc", "acme"),  # iterative strip

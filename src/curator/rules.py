@@ -481,10 +481,10 @@ SKILL_KEYWORDS_TOTAL_MAX: int = 140  # absolute total across all groups
 # Corporate suffixes that ``curator.io_utils.slugify`` strips from the
 # tail of the kebab-cased slug. The wire-side ``company_name`` field
 # (post-PR12) is free text "as it appears in the wild" (e.g.,
-# "DataDog", "Anthropic, PBC", "Archesys Inc"); the client adapter
+# "DataDog", "Anthropic, PBC", "Foobar Inc"); the client adapter
 # then slugifies via ``slugify(company_name)``. Without the strip,
-# "Archesys Inc" -> "archesys-inc" (vs the pre-PR12 prompt-stripped
-# "archesys"). This restores the old slug shape for the common
+# "Foobar Inc" -> "foobar-inc" (vs the pre-PR12 prompt-stripped
+# "foobar"). This restores the old slug shape for the common
 # legal-entity suffixes without affecting brand-name-with-suffix
 # inputs ("Hugging Face Inc" -> "hugging-face" is intentional;
 # "Acme Corp" -> "acme-corp" is preserved because Corp is too often
