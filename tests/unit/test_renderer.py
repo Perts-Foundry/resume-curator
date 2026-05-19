@@ -525,7 +525,7 @@ class TestWriteAuditArtifacts:
         # presence and shape only.
         from curator.prompt import PROMPT_HASH
 
-        assert log_data["format_version"] == "2.4"
+        assert log_data["format_version"] == "2.5"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
         assert log_data["prompt_version"] == "2026-05-21"
@@ -567,6 +567,7 @@ class TestWriteAuditArtifacts:
         tmp_path: Path,
         simple_curation_dict: dict[str, Any],
     ) -> None:
+        # In-range weight: clamped == raw == 1.5.
         simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 1.5}
         curation = ResumeCuration.model_validate(simple_curation_dict)
         result = CurationResult(
@@ -580,7 +581,8 @@ class TestWriteAuditArtifacts:
         _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
         log_data = json.loads(log_path.read_text())
         assert log_data["ai_hints"] == {
-            "work_highlight_weights": {"acme-senior-engineer": 1.5}
+            "work_highlight_weights": {"acme-senior-engineer": 1.5},
+            "work_highlight_weights_raw": {"acme-senior-engineer": 1.5},
         }
         # trim_priority is absent from the sub-object when empty.
         assert "trim_priority" not in log_data["ai_hints"]
@@ -610,6 +612,8 @@ class TestWriteAuditArtifacts:
         tmp_path: Path,
         simple_curation_dict: dict[str, Any],
     ) -> None:
+        # AI over-emission: weight 2.0 clamps to 1.5 in the primary
+        # field; the raw 2.0 is preserved in the audit-only mirror.
         simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 2.0}
         simple_curation_dict["trim_priority"] = ["skill_groups"]
         curation = ResumeCuration.model_validate(simple_curation_dict)
@@ -624,7 +628,8 @@ class TestWriteAuditArtifacts:
         _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
         log_data = json.loads(log_path.read_text())
         assert log_data["ai_hints"] == {
-            "work_highlight_weights": {"acme-senior-engineer": 2.0},
+            "work_highlight_weights": {"acme-senior-engineer": 1.5},
+            "work_highlight_weights_raw": {"acme-senior-engineer": 2.0},
             "trim_priority": ["skill_groups"],
         }
 

@@ -129,7 +129,7 @@ src/curator/
                       #   _render_cover_letter writes data/cover_letter.yaml and
                       #   compiles cover_letter.pdf (single pass, no trim cascade).
                       #   Writes prompt_version + source + max_pages into
-                      #   curation_log.json (format_version "2.3", nested
+                      #   curation_log.json (format_version "2.5", nested
                       #   cover_letter sub-object). Static runs write mode.txt
                       #   instead of job_description.txt.
   static_mode.py      # Zero-API curation synthesis: synthesize_curation,
@@ -523,7 +523,7 @@ profiles/
     mode.txt                  # source descriptor (static path only;
                               #   replaces job_description.txt)
     curated.yaml              # ResumeCuration (summary, label, slug, rankings)
-    curation_log.json         # Metadata: format_version (currently "2.3"),
+    curation_log.json         # Metadata: format_version (currently "2.5"),
                               #   prompt_version, source ("api" | "static"),
                               #   model, tokens (in/out + cache), max_pages,
                               #   timestamp, optional trim_log, cover_letter
@@ -573,9 +573,13 @@ class ResumeCuration(BaseModel):
                                                  # ordered group-ID list
     projects: list[str]                           # 3-5 project IDs ordered by (JD fit x weight)
     work_highlight_weights: dict[str, float]      # Optional AI hint: per-entry
-                                                  # weight in [0.5, 2.0] scales
+                                                  # weight in [0.5, 1.5] scales
                                                   # the renderer's per-position
-                                                  # highlight floor
+                                                  # highlight floor (out-of-range
+                                                  # values are clamped)
+    work_highlight_weights_raw: dict[str, float]  # Pre-clamp mirror of the AI's
+                                                  # raw emission; audit-only,
+                                                  # surfaced in curation_log.json
     trim_priority: list[str]                      # Optional AI hint: order of
                                                   # {project_highlights, projects,
                                                   # certificates, education,
@@ -623,12 +627,17 @@ with WARN; repeated groups are de-duped with INFO; unknown group IDs
 defense in depth.
 
 `work_highlight_weights` (optional) is an object keyed by portfolio
-work IDs with float values in [0.5, 2.0]. The renderer multiplies the
+work IDs with float values in [0.5, 1.5]. The renderer multiplies the
 per-position highlight floor by the weight in tier 6 (work-highlights-
 to-floor), letting the AI signal JD-driven preference for one role's
-content over another. Default 1.0 (no adjustment). Schema enforces the
-range at decode time; Pydantic validator double-checks and rejects
-keys that aren't portfolio work IDs.
+content over another. Default 1.0 (no adjustment). Out-of-range values
+are CLAMPED to the range by the Pydantic validator (the pre-clamp
+emission is preserved verbatim in `work_highlight_weights_raw` and
+surfaced in `curation_log.json` audit so an over-emitting AI is
+observable without invalidating the whole response). The Pydantic
+validator additionally rejects keys that aren't portfolio work IDs.
+The 1.5 ceiling matches `per_entry_emit_cap`'s 1.5x multiplier so
+weights at the boundary stay effective.
 
 `trim_priority` (optional) is an ordered array from the enum
 `{project_highlights, projects, certificates, education, skill_groups}`.
@@ -741,9 +750,11 @@ unreachable by construction because keywords are filled by code from
 portfolio data, not by the AI. Out-of-range `work_highlight_weights`
 values are NOT enforced at decode time (Anthropic strips
 `minimum`/`maximum`); the range survives only as description
-guidance and as a post-parse Pydantic-validator rejection
-(`ResumeCuration._validate_weights_range` — no clamp; out-of-range
-fails the entire response). All hard-fail rows remain reachable on
+guidance and as a post-parse Pydantic-validator clamp
+(`ResumeCuration._clamp_weights_range`). Pre-clamp values are
+mirrored to `work_highlight_weights_raw` by a model_validator
+(`_capture_raw_weights`) and surfaced in `curation_log.json` so an
+over-emitting AI is auditable. All hard-fail rows remain reachable on
 the **static** path (which builds `ResumeCuration` directly without
 going through the adapter), so the validator is also the primary
 defense there. The validator additionally rejects

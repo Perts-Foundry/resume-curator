@@ -163,16 +163,14 @@ def per_entry_emit_cap(work_position: int, max_pages: int) -> int:
     banker's rounding edge cases and to always give the model a hair
     more headroom than the strict 1.5x scale.
 
-    Design invariant on the 1.5x multiplier: it is tuned to give the
-    AI 50% headroom over the renderer floor while staying tight enough
-    that ``work_highlight_weights`` up to about 1.5 remain effective at
-    every position. Weights between 1.5 and 2.0 (the upper bound
-    enforced by Pydantic) progressively become inert at the most-recent
-    role because the per-entry cap clamps total retained highlights
-    below the weight-scaled effective floor. This is the deliberate
-    consequence of letting the AI's ranked subset be the deck; raising
-    the multiplier would re-introduce the portfolio-order silent
-    override that the safety-net cap was designed to remove.
+    Design invariant on the 1.5x multiplier: it matches
+    ``WORK_HIGHLIGHT_WEIGHT_MAX`` (1.5) so weights at the ceiling stay
+    effective at every position (effective floor never exceeds the
+    emit cap). Raising one without the other would either re-introduce
+    portfolio-order silent overrides (cap multiplier > 1.5) or push
+    effective floors past the emit cap, making weights inert (MAX > cap
+    multiplier). Change both in lockstep or document the asymmetry
+    explicitly in ``rules.py``.
     """
     caps = _caps_for_pages(max_pages)
     floor = caps.floor_for_position(work_position)

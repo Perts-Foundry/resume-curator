@@ -545,17 +545,30 @@ class ResumeCuration(BaseModel):
             f"[{WORK_HIGHLIGHT_WEIGHT_MIN}, {WORK_HIGHLIGHT_WEIGHT_MAX}]. "
             "Renderer scales the per-position highlight floor by the "
             "weight; absent entries default to 1.0 (no adjustment). "
-            "Range is enforced post-parse by the Pydantic validator "
-            "(out-of-range values fail the entire response - there is "
-            "no clamping); validate_curation_ids additionally rejects "
-            "unknown work_ids. Anthropic does not honor "
-            "minimum/maximum at decode time, so the range survives "
-            "only as description guidance and post-parse rejection. "
-            "Weights above 1.5 at the most-recent role are bounded by "
-            "the per-entry safety-net cap (ceil(floor * 1.5)) and will "
-            "not retain additional highlights beyond the cap - to keep "
-            "more highlights at the most-recent role, emit additional "
-            "highlight_id entries rather than a higher weight."
+            "Out-of-range values are CLAMPED to the range by the "
+            "Pydantic validator (the pre-clamp value is preserved in "
+            "work_highlight_weights_raw for audit); validate_curation_ids "
+            "additionally rejects unknown work_ids. Anthropic does not "
+            "honor minimum/maximum at decode time, so the range "
+            "survives only as description guidance and post-parse "
+            "clamping. The per-entry highlight emission cap "
+            "(ceil(floor * 1.5)) still applies; weights affect only "
+            "the renderer's per-position floor, not the model's "
+            "emission ceiling."
+        ),
+    )
+    work_highlight_weights_raw: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Pre-clamp ``work_highlight_weights`` as emitted by the AI. "
+            "Populated by ``_capture_raw_weights`` (a model_validator "
+            "running before field validators) by copying "
+            "``work_highlight_weights`` verbatim. Empty when the AI "
+            "emitted no weights or when reloading an older "
+            "``curation_log.json`` written before this field existed "
+            "(treat missing as ``raw == clamped`` on the reader path). "
+            "Audit-only; the renderer reads only ``work_highlight_weights`` "
+            "(post-clamp)."
         ),
     )
     trim_priority: list[str] = Field(
@@ -578,29 +591,52 @@ class ResumeCuration(BaseModel):
             raise ValueError(msg)
         return v
 
+    @model_validator(mode="before")
+    @classmethod
+    def _capture_raw_weights(cls, data: Any) -> Any:
+        """Mirror ``work_highlight_weights`` into ``..._raw`` pre-clamp.
+
+        Runs before field validators so the audit trail captures the
+        AI's raw emission even when the field validator clamps the
+        primary copy. Skipped when the caller already provided a
+        non-empty ``work_highlight_weights_raw`` (e.g., reloading a
+        curation_log.json that already carries it) so the round-trip
+        is idempotent.
+        """
+        if not isinstance(data, dict):
+            return data
+        raw_input = data.get("work_highlight_weights")
+        if not raw_input:
+            return data
+        existing_raw = data.get("work_highlight_weights_raw")
+        if existing_raw:
+            return data
+        # ``dict(raw_input)`` defends against the caller mutating the
+        # dict after model construction; floats are immutable.
+        data["work_highlight_weights_raw"] = dict(raw_input)
+        return data
+
     @field_validator("work_highlight_weights")
     @classmethod
-    def _validate_weights_range(cls, v: dict[str, float]) -> dict[str, float]:
-        """Reject out-of-range weights; preserve in-range values verbatim.
+    def _clamp_weights_range(cls, v: dict[str, float]) -> dict[str, float]:
+        """Clamp out-of-range weights to ``[MIN, MAX]``.
 
         Anthropic does not honor ``minimum``/``maximum`` at decode
-        time, so this is the only enforcement layer for the
-        ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]``
-        range. A single out-of-range emission fails the entire
-        response (no clamp fallback); this is the load-bearing trip
-        that surfaces an AI overshoot to the operator.
+        time, so this is the only enforcement layer. Clamping (rather
+        than rejecting) means an over-emitting AI does not invalidate
+        the whole response; the raw value is preserved in
+        ``work_highlight_weights_raw`` by ``_capture_raw_weights`` for
+        audit. Both ends are clamped: a 0.3 emission becomes ``MIN``,
+        a 1.8 emission becomes ``MAX``.
         """
-        validated: dict[str, float] = {}
+        clamped: dict[str, float] = {}
         for work_id, weight in v.items():
-            if not (WORK_HIGHLIGHT_WEIGHT_MIN <= weight <= WORK_HIGHLIGHT_WEIGHT_MAX):
-                msg = (
-                    f"work_highlight_weights['{work_id}'] = {weight} "
-                    f"out of range [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
-                    f"{WORK_HIGHLIGHT_WEIGHT_MAX}]"
-                )
-                raise ValueError(msg)
-            validated[work_id] = float(weight)
-        return validated
+            bounded = max(
+                WORK_HIGHLIGHT_WEIGHT_MIN,
+                min(WORK_HIGHLIGHT_WEIGHT_MAX, float(weight)),
+            )
+            clamped[work_id] = bounded
+        return clamped
 
     @field_validator("trim_priority")
     @classmethod

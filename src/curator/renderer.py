@@ -969,12 +969,15 @@ def _write_audit_artifacts(
 
     # Curation log — provenance, API metadata, and trim history.
     # ``format_version`` 2.3 adds ``max_pages`` for downstream eval band
-    # selection (``bands_for_pages``). Renderer caps are deterministic from
+    # selection (``bands_for_pages``). 2.5 adds the optional
+    # ``ai_hints.work_highlight_weights_raw`` mirror so an over-emitting
+    # AI is visible in the audit trail even when the validator clamped
+    # the primary field. Renderer caps are deterministic from
     # ``max_pages`` via ``_caps_for_pages`` and are intentionally not
     # persisted; storing both invites drift.
     log_path = output_dir / "curation_log.json"
     log_data: dict[str, Any] = {
-        "format_version": "2.4",
+        "format_version": "2.5",
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "source": curation.source,
@@ -992,10 +995,21 @@ def _write_audit_artifacts(
     # trim_priority list when the model emitted them, so post-hoc
     # debugging can correlate a profile's trim pattern with the AI's
     # JD-driven suggestions. Absent when neither field carries data.
+    #
+    # ``work_highlight_weights`` is the post-clamp value the renderer
+    # consumed; ``work_highlight_weights_raw`` mirrors the AI's
+    # pre-clamp emission so an over-emitting AI is visible even when
+    # the validator clamped silently. The fields are equal when the
+    # AI emitted in-range values; they diverge when any weight exceeded
+    # ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]``.
     ai_hints: dict[str, Any] = {}
     if curation.curation.work_highlight_weights:
         ai_hints["work_highlight_weights"] = dict(
             curation.curation.work_highlight_weights
+        )
+    if curation.curation.work_highlight_weights_raw:
+        ai_hints["work_highlight_weights_raw"] = dict(
+            curation.curation.work_highlight_weights_raw
         )
     if curation.curation.trim_priority:
         ai_hints["trim_priority"] = list(curation.curation.trim_priority)

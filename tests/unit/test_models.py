@@ -602,6 +602,7 @@ class TestResumeCuration:
             "skills",
             "projects",
             "work_highlight_weights",
+            "work_highlight_weights_raw",
             "trim_priority",
         )
 
@@ -621,7 +622,7 @@ class TestResumeCuration:
 
     def test_work_highlight_weights_accept_lower_boundary(self) -> None:
         # The 0.5 boundary is inclusive per the validator's
-        # ``0.5 <= weight <= 2.0`` check. Pinning it prevents an
+        # ``0.5 <= weight <= 1.5`` check. Pinning it prevents an
         # accidental strict-comparison regression.
         curation = ResumeCuration.model_validate(
             _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 0.5})
@@ -629,11 +630,12 @@ class TestResumeCuration:
         assert curation.work_highlight_weights == {"acme-senior-engineer": 0.5}
 
     def test_work_highlight_weights_accept_upper_boundary(self) -> None:
-        # The 2.0 boundary is inclusive.
+        # The 1.5 boundary is inclusive (matches per_entry_emit_cap
+        # multiplier so weights at the ceiling stay effective).
         curation = ResumeCuration.model_validate(
-            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 2.0})
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.5})
         )
-        assert curation.work_highlight_weights == {"acme-senior-engineer": 2.0}
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
 
     def test_work_highlight_weights_accept_unit_weight_no_op(self) -> None:
         # weight=1.0 is the no-op default — the most common production
@@ -644,19 +646,86 @@ class TestResumeCuration:
         )
         assert curation.work_highlight_weights == {"acme-senior-engineer": 1.0}
 
-    def test_work_highlight_weights_reject_above_max(self) -> None:
-        weights = {"acme-senior-engineer": 2.5}
-        with pytest.raises(ValidationError, match=r"out of range \[0\.5, 2\.0\]"):
-            ResumeCuration.model_validate(
-                _make_curation_dict(work_highlight_weights=weights)
-            )
+    def test_work_highlight_weights_clamp_above_max(self) -> None:
+        """Out-of-range above MAX clamps to MAX; raw value preserved."""
+        weights = {"acme-senior-engineer": 1.8}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 1.8}
 
-    def test_work_highlight_weights_reject_below_min(self) -> None:
+    def test_work_highlight_weights_clamp_below_min(self) -> None:
+        """Out-of-range below MIN clamps to MIN; raw value preserved."""
         weights = {"acme-senior-engineer": 0.3}
-        with pytest.raises(ValidationError, match=r"out of range \[0\.5, 2\.0\]"):
-            ResumeCuration.model_validate(
-                _make_curation_dict(work_highlight_weights=weights)
-            )
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 0.5}
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 0.3}
+
+    def test_work_highlight_weights_clamp_far_over_max(self) -> None:
+        """Far-over-range value still clamps to MAX, not partway."""
+        weights = {"acme-senior-engineer": 2.5, "other-id": 5.0}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {
+            "acme-senior-engineer": 1.5,
+            "other-id": 1.5,
+        }
+        assert curation.work_highlight_weights_raw == {
+            "acme-senior-engineer": 2.5,
+            "other-id": 5.0,
+        }
+
+    def test_work_highlight_weights_clamp_negative(self) -> None:
+        """Negative weight clamps to MIN (not zero, not absolute)."""
+        weights = {"acme-senior-engineer": -0.4}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 0.5}
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": -0.4}
+
+    def test_work_highlight_weights_just_above_max(self) -> None:
+        """Boundary: a hair above MAX clamps to MAX."""
+        weights = {"acme-senior-engineer": 1.500001}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+
+    def test_work_highlight_weights_just_below_max(self) -> None:
+        """Boundary: a hair below MAX passes through unchanged."""
+        weights = {"acme-senior-engineer": 1.499}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.499}
+        # In-range emissions still populate raw (validator runs
+        # uniformly; raw == clamped is the happy path).
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 1.499}
+
+    def test_work_highlight_weights_raw_empty_when_no_weights(self) -> None:
+        """No AI emission -> both fields empty."""
+        curation = ResumeCuration.model_validate(_make_curation_dict())
+        assert curation.work_highlight_weights == {}
+        assert curation.work_highlight_weights_raw == {}
+
+    def test_work_highlight_weights_raw_respects_existing_value(self) -> None:
+        """Reloading a curation_log.json that already carries _raw must
+        not overwrite it with the (already clamped) primary field. The
+        pre-validator skips capture when _raw is already populated."""
+        data = _make_curation_dict(
+            work_highlight_weights={"acme-senior-engineer": 1.5},
+        )
+        data["work_highlight_weights_raw"] = {"acme-senior-engineer": 1.8}
+        curation = ResumeCuration.model_validate(data)
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+        # _raw preserved verbatim from the persisted log, NOT mirrored
+        # from work_highlight_weights.
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 1.8}
 
     def test_trim_priority_accepts_valid_items(self) -> None:
         curation = ResumeCuration.model_validate(
