@@ -642,6 +642,86 @@ class TestWriteAuditArtifacts:
             "trim_priority": ["skill_groups"],
         }
 
+    def test_curation_log_warns_on_weight_clamp_drift(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        """When raw != clamped, _write_audit_artifacts emits a WARNING
+        with the drifted keys so operators see clamp drift without
+        log-spelunking through curation_log.json."""
+        from loguru import logger
+
+        simple_curation_dict["work_highlight_weights"] = {
+            "acme-senior-engineer": 1.8,
+            "acme-mid-engineer": 1.0,
+        }
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+
+        log_messages: list[str] = []
+        logger.remove()
+        sink_id = logger.add(
+            lambda msg: log_messages.append(str(msg)),
+            level="WARNING",
+        )
+        try:
+            _write_audit_artifacts(tmp_path, result, "JD text.")
+        finally:
+            logger.remove(sink_id)
+
+        clamp_warnings = [
+            m for m in log_messages if "work_highlight_weights clamped" in m
+        ]
+        assert len(clamp_warnings) == 1, (
+            f"expected 1 clamp warning, got: {log_messages}"
+        )
+        # Drifted key reported; non-drifted key not in the warning.
+        assert "acme-senior-engineer" in clamp_warnings[0]
+        assert "acme-mid-engineer" not in clamp_warnings[0]
+
+    def test_curation_log_no_warn_when_weights_in_range(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        """In-range weights produce no clamp warning."""
+        from loguru import logger
+
+        simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 1.3}
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+
+        log_messages: list[str] = []
+        logger.remove()
+        sink_id = logger.add(
+            lambda msg: log_messages.append(str(msg)),
+            level="WARNING",
+        )
+        try:
+            _write_audit_artifacts(tmp_path, result, "JD text.")
+        finally:
+            logger.remove(sink_id)
+
+        clamp_warnings = [
+            m for m in log_messages if "work_highlight_weights clamped" in m
+        ]
+        assert clamp_warnings == []
+
     def test_static_path_writes_mode_txt(
         self,
         tmp_path: Path,

@@ -1030,6 +1030,27 @@ def _write_audit_artifacts(
         ai_hints["work_highlight_weights_raw"] = dict(
             curation.curation.work_highlight_weights_raw
         )
+    # Surface clamp drift at curate time (in addition to the audit
+    # log) so an over-emitting AI is visible to the operator without
+    # log-spelunking. Persistent divergence across runs suggests the
+    # ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]`` band
+    # is too narrow for the AI's natural distribution and should be
+    # retuned. Fires only when at least one key was actually clamped.
+    if (
+        curation.curation.work_highlight_weights_raw
+        and curation.curation.work_highlight_weights
+        != curation.curation.work_highlight_weights_raw
+    ):
+        drifted = {
+            wid: (raw, curation.curation.work_highlight_weights.get(wid))
+            for wid, raw in curation.curation.work_highlight_weights_raw.items()
+            if curation.curation.work_highlight_weights.get(wid) != raw
+        }
+        logger.warning(
+            "work_highlight_weights clamped on {} key(s); raw->clamped: {}",
+            len(drifted),
+            drifted,
+        )
     if curation.curation.trim_priority:
         ai_hints["trim_priority"] = list(curation.curation.trim_priority)
     if ai_hints:
