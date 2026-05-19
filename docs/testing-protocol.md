@@ -232,8 +232,13 @@ evaluate both the structural contract and the human-judgment axes:
 `validate_cover_letter` in `src/curator/models.py` enforces all of these; a successful
 run implies PASS. Confirm by checking the artifacts exist and the log records the flag.
 
-- Word count 250-300 total, 40-130 per body paragraph
-- 2-3 body paragraphs
+- Word count 250-360 total (hard min, soft max — over-cap warns and ships;
+  see `COVER_LETTER_WORD_MIN` / `COVER_LETTER_WORD_MAX` in `rules.py`)
+- 40-90 per body paragraph (hard band, see `COVER_LETTER_PARAGRAPH_WORD_MIN` /
+  `COVER_LETTER_PARAGRAPH_WORD_MAX`; per-paragraph over-max is a soft warn
+  like the total-word cap)
+- Exactly 2 body paragraphs (`COVER_LETTER_BODY_MIN_COUNT == MAX_COUNT == 2`
+  since 2026-04-24)
 - Sign-off in `COVER_LETTER_VALID_SIGN_OFFS` enum
 - No em-dashes (`—`)
 - No words or phrases from `COVER_LETTER_FORBIDDEN_*` lists

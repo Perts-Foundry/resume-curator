@@ -299,12 +299,16 @@ def materialize_profile(golden: GoldenCase, target_dir: Path) -> Path:
     atomic_text_write(target_dir / "job_description.txt", golden.job_description)
 
     # Write curation_log.json (required by from_profile_dir for schema check).
-    # Format 2.3 carries max_pages so band-selection on materialized
-    # goldens picks the rubric the case was authored against.
+    # ``format_version`` matches what the live renderer writes so goldens
+    # and real curations are byte-shape-compatible. Additive fields
+    # (e.g., ai_hints.work_highlight_weights_raw, system_prompt_hash) are
+    # omitted: goldens carry no AI emission, so there's nothing to mirror,
+    # and the absence is the documented "treat missing as raw == clamped"
+    # default on the reader path.
     atomic_json_write(
         target_dir / "curation_log.json",
         {
-            "format_version": "2.3",
+            "format_version": "2.5",
             "max_pages": golden.meta.max_pages,
         },
     )

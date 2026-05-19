@@ -15,6 +15,13 @@ def valid_cover_letter_kwargs() -> dict[str, Any]:
     The letter passes both ``CoverLetterCuration`` structural validation
     and ``validate_cover_letter`` policy checks. Used by unit, integration,
     and e2e tests that need a valid cover letter without reinventing one.
+
+    Tuned to ~340 words total so the fixture lands close to the
+    ``COVER_LETTER_WORD_MAX = 360`` soft cap. The
+    ``HIGH_WATER_MARK_FLOOR`` assertion in
+    ``tests/integration/test_render_pipeline.py`` pins this band so a
+    future cap bump notices when the fixture drifts away from "near
+    the cap" and stops exercising the cover-letter cascade meaningfully.
     """
     opening = (
         "When I read the recent Beta Corp engineering blog post about their "
@@ -32,28 +39,32 @@ def valid_cover_letter_kwargs() -> dict[str, Any]:
         "platform that cut deployment latency from 45 minutes to 6 "
         "minutes across 120 services, with zero customer-visible outages "
         "across the nine-month rollout and consistent performance metrics "
-        "every week. I coordinated 18 service owners through weekly "
-        "standups and a live dashboard that tracked migration status per "
-        "region in real time, and the developer-hour savings landed at "
-        "roughly 300 hours per quarter organization-wide across the "
-        "engineering team and platform group."
+        "every week through release windows. I coordinated 18 service "
+        "owners through weekly standups and a live dashboard that tracked "
+        "migration status per region in real time, and the developer-hour "
+        "savings landed at roughly 300 hours per quarter "
+        "organization-wide across the engineering team and platform group."
     )
     body_two = (
         "Before Acme, at Contoso, I introduced an internal observability "
         "toolkit that was adopted by 12 engineering teams within a single "
-        "calendar year of the initial launch. The work required partner "
-        "interviews with every team lead, a prototype written in three "
-        "weeks, then iteration through two rewrites guided by usage "
-        "telemetry from production services and staging environments. "
-        "The project taught me how to pair operational rigor with "
-        "developer ergonomics, a balance I would bring to Beta Corp on "
-        "day one of the role."
+        "calendar year of the initial launch event in production. The "
+        "work required partner interviews with every team lead, a "
+        "prototype written in three weeks, then iteration through two "
+        "rewrites guided by usage telemetry from production services and "
+        "staging environments across regions. The project taught me how "
+        "to pair operational rigor with developer ergonomics, a balance "
+        "I would bring to Beta Corp on day one of the role."
     )
     closing = (
         "I would welcome a conversation about how my background in platform "
         "engineering and reliability aligns with the problems Beta Corp is "
         "solving this year across production traffic and deployment safety. "
-        "Thank you for your time and for your thoughtful consideration."
+        "I am especially interested in the team's recent work on regional "
+        "failover strategy and the deployment-safety initiatives outlined "
+        "in the recent engineering blog post. Thank you for your time, "
+        "for considering my background, and for your thoughtful "
+        "consideration of how my experience could contribute to the team."
     )
     return {
         "salutation": "Dear Hiring Manager,",

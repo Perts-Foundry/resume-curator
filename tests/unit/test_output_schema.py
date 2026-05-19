@@ -101,20 +101,25 @@ class TestTopLevelShape:
         assert list(schema["properties"].keys()) == [
             "summary",
             "suggested_label",
-            "company_slug",
+            "company_name",
             "work_highlights_by_id",
+            "work_highlight_weights",
             "skills",
             "projects",
+            "trim_priority",
         ]
 
-    def test_top_level_required_lists_all_fields(
+    def test_top_level_required_lists_all_content_fields(
         self, realistic_portfolio: PortfolioData
     ) -> None:
+        # ``work_highlight_weights`` and ``trim_priority`` are optional
+        # AI hints; they are present in ``properties`` but excluded
+        # from ``required`` so the model may omit them.
         schema = build_curation_schema(realistic_portfolio)
         assert set(schema["required"]) == {
             "summary",
             "suggested_label",
-            "company_slug",
+            "company_name",
             "work_highlights_by_id",
             "skills",
             "projects",
@@ -205,6 +210,78 @@ class TestWorkHighlightsByID:
         assert wh["required"] == ["with-highlights"]
 
 
+class TestPerEntryEmitCap:
+    """Per-entry highlight emission caps surfaced in description text.
+
+    Anthropic's structured-output API does not enforce ``maxItems`` at
+    decode time (verified by ``TestNoUnsupportedKeywords``). The cap
+    reaches the model as guidance via the property's ``description``
+    text and is enforced post-parse by the client adapter. These tests
+    pin the formula: ``max(2, round(floor[i] * 1.5))`` from
+    ``page_caps._caps_for_pages``.
+    """
+
+    def test_two_page_caps_match_formula(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # 2-page floors: (8, 6, 6, 2, 2) -> caps: (12, 9, 9, 3, 3).
+        # realistic_portfolio has two work entries (positions 0 and 1).
+        wh = build_curation_schema(realistic_portfolio, max_pages=2)["properties"][
+            "work_highlights_by_id"
+        ]
+        pos0 = wh["properties"]["pf-senior-engineer"]["description"]
+        pos1 = wh["properties"]["aws-support-engineer"]["description"]
+        assert "at most 12 IDs" in pos0
+        assert "at most 9 IDs" in pos1
+
+    def test_one_page_caps_match_formula(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # 1-page floors: (3, 3, 0, 0, 0) -> caps: (5, 5, 2, 2, 2).
+        wh = build_curation_schema(realistic_portfolio, max_pages=1)["properties"][
+            "work_highlights_by_id"
+        ]
+        for prop in wh["properties"].values():
+            assert "at most 5 IDs" in prop["description"]
+
+    def test_three_page_caps_match_formula(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # 3+-page floors: (10, 8, 8, 4, 4) -> caps: (15, 12, 12, 6, 6).
+        wh = build_curation_schema(realistic_portfolio, max_pages=3)["properties"][
+            "work_highlights_by_id"
+        ]
+        pos0 = wh["properties"]["pf-senior-engineer"]["description"]
+        pos1 = wh["properties"]["aws-support-engineer"]["description"]
+        assert "at most 15 IDs" in pos0
+        assert "at most 12 IDs" in pos1
+
+    def test_floor_of_two_for_zero_floor_positions(self) -> None:
+        # 1-page positions 2..4 have floor 0; the cap should still be
+        # at least 2 so the model isn't forbidden from emitting
+        # anything (the cap is a ceiling, not a target).
+        portfolio = _portfolio(
+            work=[_work(f"w{i}", [f"w{i}-h{j}" for j in range(5)]) for i in range(5)]
+        )
+        wh = build_curation_schema(portfolio, max_pages=1)["properties"][
+            "work_highlights_by_id"
+        ]
+        # Positions 2, 3, 4 inherit the floor=2 minimum.
+        for i in (2, 3, 4):
+            assert "at most 2 IDs" in wh["properties"][f"w{i}"]["description"]
+
+    def test_max_pages_in_description_text(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # The page budget is mentioned in the cap description so the
+        # operator reading the rendered schema knows which budget it
+        # was built for.
+        wh = build_curation_schema(realistic_portfolio, max_pages=2)["properties"][
+            "work_highlights_by_id"
+        ]
+        assert "2-page" in wh["properties"]["pf-senior-engineer"]["description"]
+
+
 # ---------------------------------------------------------------------------
 # skills (flat top-level array, no items.enum)
 # ---------------------------------------------------------------------------
@@ -228,36 +305,43 @@ class TestSkills:
         assert sk["type"] == "array"
         assert sk["items"]["type"] == "string"
 
-    def test_skills_items_have_no_enum(
+    def test_skills_items_enum_is_portfolio_group_ids(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        # Lock-in: the 354-keyword production enum surface 400'd in
-        # production on 2026-05-13. Any future enum here is a regression.
+        # 2026-05-18 hybrid: items.enum constrains skill emissions to
+        # portfolio skill group IDs. Surface is small (typically <30
+        # groups), well under the 354-keyword surface that 400'd on
+        # 2026-05-13 with the prior flat-keyword design.
         sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
-        assert "enum" not in sk["items"]
+        portfolio_group_ids = [g.id for g in realistic_portfolio.skills]
+        assert sk["items"]["enum"] == portfolio_group_ids
 
-    def test_skills_items_dict_is_structural_only(
+    def test_skills_items_dict_has_only_type_and_enum(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        # Beyond no-enum: items must be exactly {"type": "string"} so a
-        # future drive-by adding pattern/minLength/etc. also trips this
-        # test rather than silently shrinking the grammar budget.
+        # Beyond items.enum: no drive-by additions of pattern, minLength,
+        # etc., that would shrink the grammar budget unnecessarily.
         sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
-        assert sk["items"] == {"type": "string"}
+        assert set(sk["items"].keys()) == {"type", "enum"}
+        assert sk["items"]["type"] == "string"
 
     def test_skills_in_required_list(self, realistic_portfolio: PortfolioData) -> None:
         schema = build_curation_schema(realistic_portfolio)
         assert "skills" in schema["required"]
 
-    def test_skills_field_order_between_work_highlights_and_projects(
+    def test_skills_field_order_after_work_highlights_before_projects(
         self, realistic_portfolio: PortfolioData
     ) -> None:
         # Under constrained decoding, field order matters: skills
         # must come after work_highlights_by_id (so the model commits
-        # to highlight ranking first) and before projects.
+        # to highlight ranking first) and before projects. As of
+        # 2026-05-20 ``work_highlight_weights`` sits between
+        # work_highlights_by_id and skills (weights ride on top of
+        # the ranking decision); skills immediately precedes projects.
         keys = list(build_curation_schema(realistic_portfolio)["properties"].keys())
-        assert keys.index("skills") == keys.index("work_highlights_by_id") + 1
-        assert keys.index("projects") == keys.index("skills") + 1
+        assert keys.index("work_highlights_by_id") < keys.index("skills")
+        assert keys.index("skills") < keys.index("projects")
+        assert keys.index("skills") == keys.index("projects") - 1
 
     def test_schema_has_no_skills_by_id_anywhere(
         self, realistic_portfolio: PortfolioData
@@ -268,11 +352,13 @@ class TestSkills:
         assert "skills_by_id" not in schema["properties"]
         assert "skills_by_id" not in schema.get("required", [])
 
-    def test_zero_keyword_portfolio_still_emits_flat_skills(self) -> None:
-        # Under Option A's by-id shape, zero-keyword groups had to be
-        # omitted (Anthropic rejected empty enums). Option E has no
-        # nested structure, so even a portfolio with every group at
-        # zero keywords still emits a flat ``skills`` field.
+    def test_zero_keyword_portfolio_still_emits_group_id_enum(self) -> None:
+        # 2026-05-18 hybrid: groups are emitted by ID regardless of
+        # their keyword count. A portfolio whose every group has zero
+        # keywords still produces a valid enum (the adapter would
+        # later skip such groups because SkillRanking requires
+        # min_length=1 keywords, but the schema itself remains well-
+        # formed).
         portfolio = _portfolio(
             skills=[
                 _skill("group-no-kw-a", []),
@@ -282,8 +368,103 @@ class TestSkills:
         schema = build_curation_schema(portfolio)
         sk = schema["properties"]["skills"]
         assert sk["type"] == "array"
-        assert sk["items"] == {"type": "string"}
+        assert sk["items"]["enum"] == ["group-no-kw-a", "group-no-kw-b"]
         assert "skills" in schema["required"]
+
+
+# ---------------------------------------------------------------------------
+# work_highlight_weights (optional AI hint, per-portfolio-work-id properties)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkHighlightWeightsSchema:
+    """The optional ``work_highlight_weights`` field is keyed by
+    portfolio work IDs only (additionalProperties:false). Pinning the
+    property set guards against a refactor adding the wrong keys or
+    leaking renderer-internal section names."""
+
+    def test_property_keys_are_portfolio_work_ids(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        weights = build_curation_schema(realistic_portfolio)["properties"][
+            "work_highlight_weights"
+        ]
+        # Only work entries with non-empty highlights are exposed
+        # (mirrors work_highlights_by_id, which omits empty entries).
+        expected_ids = {w.id for w in realistic_portfolio.work if w.highlights}
+        assert set(weights["properties"].keys()) == expected_ids
+
+    def test_additional_properties_false(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        weights = build_curation_schema(realistic_portfolio)["properties"][
+            "work_highlight_weights"
+        ]
+        assert weights["additionalProperties"] is False
+
+    def test_each_property_value_is_number_no_min_max(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # Anthropic strips ``minimum``/``maximum``; the schema must
+        # not emit them (catches a regression that adds them under the
+        # false belief they're enforced).
+        weights = build_curation_schema(realistic_portfolio)["properties"][
+            "work_highlight_weights"
+        ]
+        for prop in weights["properties"].values():
+            assert prop["type"] == "number"
+            assert "minimum" not in prop
+            assert "maximum" not in prop
+
+    def test_not_in_required_list(self, realistic_portfolio: PortfolioData) -> None:
+        # Field is optional; AI may omit entirely.
+        schema = build_curation_schema(realistic_portfolio)
+        assert "work_highlight_weights" not in schema["required"]
+
+
+# ---------------------------------------------------------------------------
+# trim_priority (optional AI hint, ordered enum array, middle-band only)
+# ---------------------------------------------------------------------------
+
+
+class TestTrimPrioritySchema:
+    """The optional ``trim_priority`` field is a top-level array
+    enum-constrained to the AI-controllable middle band of the trim
+    cascade. Pinning the exact enum content prevents an accidental
+    inclusion of ``interests`` or work-highlight tier names, which
+    would silently bypass the renderer's pinned guardrails (interests
+    always first to drop, work highlights always last)."""
+
+    def test_items_enum_exactly_matches_middle_band(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        tp = build_curation_schema(realistic_portfolio)["properties"]["trim_priority"]
+        assert tp["type"] == "array"
+        assert tp["items"]["type"] == "string"
+        # Exact set match — order in the schema doesn't affect
+        # enum-membership semantics but pinning the precise membership
+        # is the load-bearing assertion.
+        assert set(tp["items"]["enum"]) == {
+            "project_highlights",
+            "projects",
+            "certificates",
+            "education",
+            "skill_groups",
+        }
+
+    def test_items_enum_excludes_pinned_tiers(
+        self, realistic_portfolio: PortfolioData
+    ) -> None:
+        # ``interests`` and the work-highlight tiers are renderer-
+        # pinned and must never appear in the AI-controllable enum.
+        tp = build_curation_schema(realistic_portfolio)["properties"]["trim_priority"]
+        for forbidden in ("interests", "highlight", "highlight_below_floor"):
+            assert forbidden not in tp["items"]["enum"]
+
+    def test_not_in_required_list(self, realistic_portfolio: PortfolioData) -> None:
+        # Field is optional; AI may omit entirely.
+        schema = build_curation_schema(realistic_portfolio)
+        assert "trim_priority" not in schema["required"]
 
 
 # ---------------------------------------------------------------------------
@@ -514,16 +695,15 @@ class TestDescriptions:
         desc = wh["properties"]["pf-senior-engineer"]["description"]
         assert "pf-senior-engineer" in desc
 
-    def test_skills_description_mentions_verbatim_and_omission(
+    def test_skills_description_mentions_group_ids_and_omission(
         self, realistic_portfolio: PortfolioData
     ) -> None:
-        # The flat `skills` field has no per-group descriptions under
-        # Option E. The top-level description carries two load-bearing
-        # signals to the model: (1) verbatim-match against portfolio
-        # keywords, (2) omit keywords from JD-irrelevant groups rather
-        # than padding. Both reinforce prompt content; pin them here
-        # so a future doc-tweak doesn't quietly drop either.
+        # 2026-05-18 hybrid: the `skills` field carries group IDs
+        # only (the adapter fills keywords via JD scoring). The
+        # top-level description must signal (1) the model emits
+        # group IDs not keywords and (2) omit JD-irrelevant groups
+        # rather than padding. Both reinforce prompt content.
         sk = build_curation_schema(realistic_portfolio)["properties"]["skills"]
         desc = sk["description"].lower()
-        assert "verbatim" in desc
+        assert "group" in desc
         assert "omit" in desc or "irrelevant" in desc

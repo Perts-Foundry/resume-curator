@@ -34,6 +34,8 @@ from curator.rules import (
     SUMMARY_WORD_HARD_MAX,
     SUMMARY_WORD_TARGET_MAX,
     SUMMARY_WORD_TARGET_MIN,
+    WORK_HIGHLIGHT_WEIGHT_MAX,
+    WORK_HIGHLIGHT_WEIGHT_MIN,
 )
 
 # ---------------------------------------------------------------------------
@@ -503,11 +505,11 @@ class ResumeCuration(BaseModel):
         pattern=ID_PATTERN,
         max_length=64,
         description=(
-            "Kebab-case company name extracted from the job description. "
-            "Use only [a-z0-9-], start with [a-z0-9]. For 'Acme Corp.' "
-            "return 'acme-corp'. For subsidiaries like 'DataLabs (a Google "
-            "company)' return the primary subsidiary name ('datalabs'). "
-            "Strip corporate suffixes (Inc, Ltd, LLC, GmbH)."
+            "Kebab-case slug of the company name. Populated by the "
+            "client adapter via ``slugify(company_name)`` on the API "
+            "path, or by ``slugify(--name)`` on the static path. The "
+            "wire schema sent to the AI carries a free-text "
+            "``company_name``, not this slug."
         ),
     )
     work_highlights: list[WorkHighlightRanking] = Field(
@@ -535,6 +537,57 @@ class ResumeCuration(BaseModel):
             "connection to the JD."
         ),
     )
+    work_highlight_weights: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-work-entry priority weights. Keys are "
+            "portfolio work IDs; values are floats in "
+            f"[{WORK_HIGHLIGHT_WEIGHT_MIN}, {WORK_HIGHLIGHT_WEIGHT_MAX}]. "
+            "Renderer scales the per-position highlight floor by the "
+            "weight; absent entries default to 1.0 (no adjustment). "
+            "Out-of-range values are CLAMPED to the range by the "
+            "Pydantic validator (the pre-clamp value is preserved in "
+            "work_highlight_weights_raw for audit); validate_curation_ids "
+            "additionally rejects unknown work_ids. Anthropic does not "
+            "honor minimum/maximum at decode time, so the range "
+            "survives only as description guidance and post-parse "
+            "clamping. The per-entry highlight emission cap "
+            "(ceil(floor * 1.5)) still applies; weights affect only "
+            "the renderer's per-position floor, not the model's "
+            "emission ceiling."
+        ),
+    )
+    work_highlight_weights_raw: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Pre-clamp ``work_highlight_weights`` as emitted by the AI. "
+            "Populated by ``_capture_raw_weights`` (a model_validator "
+            "running before field validators) by copying "
+            "``work_highlight_weights`` verbatim. Empty when the AI "
+            "emitted no weights or when reloading an older "
+            "``curation_log.json`` written before this field existed "
+            "(treat missing as ``raw == clamped`` on the reader path). "
+            "Audit-only; the renderer reads only ``work_highlight_weights`` "
+            "(post-clamp). "
+            "Operationally, divergence between this field and "
+            "``work_highlight_weights`` indicates the AI emitted values "
+            "outside ``[WORK_HIGHLIGHT_WEIGHT_MIN, "
+            "WORK_HIGHLIGHT_WEIGHT_MAX]``; persistent divergence across "
+            "runs suggests the band is too narrow for the AI's natural "
+            "emission distribution and should be retuned."
+        ),
+    )
+    trim_priority: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional ordered drop priority for middle-tier sections "
+            "in the page-fit cascade. Items are section names from "
+            "{project_highlights, projects, certificates, education, "
+            "skill_groups}; first listed is dropped first. Interests "
+            "is always first to drop; work highlights always last. "
+            "Missing items inherit the default cascade order."
+        ),
+    )
 
     @field_validator("summary", "suggested_label")
     @classmethod
@@ -542,6 +595,83 @@ class ResumeCuration(BaseModel):
         if _CONTROL_CHAR_RE.search(v):
             msg = "contains control characters"
             raise ValueError(msg)
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _capture_raw_weights(cls, data: Any) -> Any:
+        """Mirror ``work_highlight_weights`` into ``..._raw`` pre-clamp.
+
+        Runs before field validators so the audit trail captures the
+        AI's raw emission even when the field validator clamps the
+        primary copy. Round-trip-safe for any curation_log.json the
+        renderer wrote: a non-empty ``..._raw`` is preserved verbatim
+        on reload, and missing or empty ``..._raw`` is filled from
+        the current (post-clamp on reload) ``work_highlight_weights``.
+
+        Returns a shallow copy of ``data`` rather than mutating in
+        place so callers that pass a reused dict don't observe the
+        mirror key appearing on their reference.
+
+        Defers type validation of ``work_highlight_weights`` to the
+        field validator: a non-dict value here returns ``data``
+        unchanged so Pydantic's type-check produces its usual
+        "Input should be a valid dictionary" error rather than an
+        opaque ``TypeError`` from ``dict(...)``.
+        """
+        if not isinstance(data, dict):
+            return data
+        raw_input = data.get("work_highlight_weights")
+        if not isinstance(raw_input, dict) or not raw_input:
+            return data
+        existing_raw = data.get("work_highlight_weights_raw")
+        if existing_raw:
+            return data
+        return {**data, "work_highlight_weights_raw": dict(raw_input)}
+
+    @field_validator("work_highlight_weights")
+    @classmethod
+    def _clamp_weights_range(cls, v: dict[str, float]) -> dict[str, float]:
+        """Clamp out-of-range weights to ``[MIN, MAX]``.
+
+        Anthropic does not honor ``minimum``/``maximum`` at decode
+        time, so this is the only enforcement layer. Clamping (rather
+        than rejecting) means an over-emitting AI does not invalidate
+        the whole response; the raw value is preserved in
+        ``work_highlight_weights_raw`` by ``_capture_raw_weights`` for
+        audit. Both ends are clamped: a 0.3 emission becomes ``MIN``,
+        a 1.8 emission becomes ``MAX``.
+        """
+        clamped: dict[str, float] = {}
+        for work_id, weight in v.items():
+            bounded = max(
+                WORK_HIGHLIGHT_WEIGHT_MIN,
+                min(WORK_HIGHLIGHT_WEIGHT_MAX, float(weight)),
+            )
+            clamped[work_id] = bounded
+        return clamped
+
+    @field_validator("trim_priority")
+    @classmethod
+    def _validate_trim_priority_items(cls, v: list[str]) -> list[str]:
+        allowed = {
+            "project_highlights",
+            "projects",
+            "certificates",
+            "education",
+            "skill_groups",
+        }
+        seen: set[str] = set()
+        for item in v:
+            if item not in allowed:
+                msg = (
+                    f"trim_priority item '{item}' not in allowed set {sorted(allowed)}"
+                )
+                raise ValueError(msg)
+            if item in seen:
+                msg = f"trim_priority contains duplicate '{item}'"
+                raise ValueError(msg)
+            seen.add(item)
         return v
 
 
@@ -613,6 +743,10 @@ def validate_curation_ids(
       portfolio has at least one project. Edge: an empty portfolio
       projects list disables the enum constraint, so this row remains
       reachable on the API path in that one degenerate case.)
+    - Unknown ``work_id`` key in ``work_highlight_weights``. (Schema's
+      ``additionalProperties: false`` makes this grammar-unreachable on
+      the API path; reachable on the static path and on round-trips via
+      ``scripts/rerender.py`` that load an externally edited curation.)
 
     Projects: unknown IDs are hard failures; empty list is valid.
 
@@ -691,6 +825,14 @@ def validate_curation_ids(
     missing_work_ids = valid_work_ids - seen_work_ids
     if missing_work_ids:
         errors.append(f"missing ranking for work entries: {sorted(missing_work_ids)}")
+
+    # --- work_highlight_weights: keys must be valid portfolio work IDs ---
+    unknown_weight_keys = set(curation.work_highlight_weights) - valid_work_ids
+    if unknown_weight_keys:
+        errors.append(
+            f"work_highlight_weights references unknown work_ids: "
+            f"{sorted(unknown_weight_keys)}"
+        )
 
     # --- skills: unknown group IDs are hard; hallucinated keywords are soft ---
     # Under Option E (2026-05-15) the API-path adapter only emits

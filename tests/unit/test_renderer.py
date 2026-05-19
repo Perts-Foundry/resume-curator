@@ -17,6 +17,7 @@ from curator.io_utils import (
     atomic_text_write,
     atomic_yaml_write,
     get_page_count,
+    sort_work_chronologically,
 )
 from curator.models import (
     PortfolioData,
@@ -28,7 +29,6 @@ from curator.renderer import (
     _invoke_typst,
     _make_output_dir,
     _reorder_with_safety_net,
-    _sort_work_chronologically,
     _write_data_files,
     _write_layout,
     render,
@@ -143,6 +143,75 @@ class TestReorderWithSafetyNet:
         assert ordered == []
         assert missing == []
 
+    def test_cap_none_is_pre_cap_behavior(self) -> None:
+        # Regression pin: callers that do not pass a cap must see the
+        # pre-cap behavior verbatim (every AI-omitted portfolio
+        # highlight appended in portfolio order).
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["b"], cap=None)
+        assert [h["id"] for h in ordered] == ["b", "a", "c"]
+        assert missing == ["a", "c"]
+
+    def test_cap_equal_to_ai_emission_no_safety_net_adds(self) -> None:
+        # AI fills the cap exactly; safety net contributes 0; missing
+        # tracks only actually-appended IDs (empty here).
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["c", "a"], cap=2)
+        assert [h["id"] for h in ordered] == ["c", "a"]
+        assert missing == []
+
+    def test_cap_loose_above_total_behaves_like_no_cap(self) -> None:
+        # cap > total portfolio items must not change behavior vs no cap.
+        highlights = [_FakeHighlight("a"), _FakeHighlight("b")]
+        ordered, missing = _reorder_with_safety_net(highlights, ["b"], cap=99)
+        assert [h["id"] for h in ordered] == ["b", "a"]
+        assert missing == ["a"]
+
+    def test_cap_truncates_ai_overshoot(self) -> None:
+        # If AI emits more than cap (shouldn't happen on the API path
+        # because the client adapter trims first, but a defense-in-depth
+        # test pins the rejection semantic so a regression elsewhere
+        # cannot smuggle extra items past the renderer-side ceiling).
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["a", "b", "c"], cap=2)
+        assert [h["id"] for h in ordered] == ["a", "b"]
+        assert missing == []
+
+    def test_cap_zero_returns_empty(self) -> None:
+        # Documented behavior for degenerate cap=0: nothing is appended.
+        highlights = [_FakeHighlight("a"), _FakeHighlight("b")]
+        ordered, missing = _reorder_with_safety_net(highlights, ["a"], cap=0)
+        assert ordered == []
+        assert missing == []
+
+    def test_cap_bounds_safety_net_padding(self) -> None:
+        # Cap > AI emission but < total portfolio: safety net pads up to
+        # the cap and then stops. missing tracks the items actually
+        # appended, not the items dropped by the cap.
+        highlights = [
+            _FakeHighlight("a"),
+            _FakeHighlight("b"),
+            _FakeHighlight("c"),
+            _FakeHighlight("d"),
+        ]
+        ordered, missing = _reorder_with_safety_net(highlights, ["c"], cap=3)
+        # AI emits c first; safety-net loops portfolio order and adds
+        # a, then b (cap of 3 hit), and stops before d.
+        assert [h["id"] for h in ordered] == ["c", "a", "b"]
+        assert missing == ["a", "b"]
+
 
 # ---------------------------------------------------------------------------
 # _apply_selections
@@ -235,7 +304,7 @@ class TestSortWorkChronologically:
             {"id": "current", "start_date": "2023-01", "end_date": None},
             {"id": "middle", "start_date": "2022-07", "end_date": "2022-12"},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["current", "middle", "old"]
 
     def test_multiple_past_roles_by_end_date_descending(self) -> None:
@@ -244,7 +313,7 @@ class TestSortWorkChronologically:
             {"id": "newest", "start_date": "2020-01", "end_date": "2023-06"},
             {"id": "middle", "start_date": "2018-07", "end_date": "2020-01"},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["newest", "middle", "oldest"]
 
     def test_end_date_empty_string_treated_as_current(self) -> None:
@@ -252,7 +321,7 @@ class TestSortWorkChronologically:
             {"id": "past", "start_date": "2020-01", "end_date": "2023-06"},
             {"id": "current", "start_date": "2023-07", "end_date": ""},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["current", "past"]
 
     def test_multiple_current_roles_by_start_date_descending(self) -> None:
@@ -260,7 +329,7 @@ class TestSortWorkChronologically:
             {"id": "older-current", "start_date": "2022-01", "end_date": None},
             {"id": "newer-current", "start_date": "2024-06", "end_date": None},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["newer-current", "older-current"]
 
     def test_non_zero_padded_months_sort_numerically(self) -> None:
@@ -273,7 +342,7 @@ class TestSortWorkChronologically:
             {"id": "jun22", "start_date": "2022-6", "end_date": None},
             {"id": "dec22", "start_date": "2022-12", "end_date": None},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         # Dec 2022 must come before Jun 2022 despite "2022-12" < "2022-6"
         # lexicographically.
         assert [e["id"] for e in result] == ["dec22", "jun22"]
@@ -285,7 +354,7 @@ class TestSortWorkChronologically:
             {"id": "year-only", "start_date": "2020", "end_date": "2023"},
             {"id": "with-month", "start_date": "2021-06", "end_date": "2024-01"},
         ]
-        result = _sort_work_chronologically(entries)
+        result = sort_work_chronologically(entries)
         assert [e["id"] for e in result] == ["with-month", "year-only"]
 
 
@@ -454,15 +523,24 @@ class TestWriteAuditArtifacts:
         # digest (which would force an update on every prompt text edit
         # and is already covered by the byte-identity test), assert
         # presence and shape only.
-        from curator.prompt import PROMPT_HASH
+        from curator.prompt import (
+            COVER_LETTER_PROMPT_HASH,
+            PROMPT_HASH,
+            SYSTEM_PROMPT_HASH,
+        )
 
-        assert log_data["format_version"] == "2.3"
+        assert log_data["format_version"] == "2.5"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
-        assert log_data["prompt_version"] == "2026-05-13"
+        assert log_data["prompt_version"] == "2026-05-22"
+        # Combined hash retained for back-compat readers; split hashes
+        # added in 2026-05-18 so the CI gate can target system-prompt
+        # drift without firing on cover-letter-only edits.
         assert log_data["prompt_hash"] == PROMPT_HASH
         assert isinstance(log_data["prompt_hash"], str)
         assert len(log_data["prompt_hash"]) == 12
+        assert log_data["system_prompt_hash"] == SYSTEM_PROMPT_HASH
+        assert log_data["cover_letter_prompt_hash"] == COVER_LETTER_PROMPT_HASH
         assert log_data["model"] == "claude-sonnet-4-6-20260217"
         assert log_data["input_tokens"] == 1000
         assert "timestamp" in log_data
@@ -478,6 +556,171 @@ class TestWriteAuditArtifacts:
         )
         assert jd_path is not None
         assert jd_path.read_text() == "Original JD content."
+
+    def test_curation_log_omits_ai_hints_when_both_empty(
+        self,
+        tmp_path: Path,
+        curation_result: CurationResult,
+    ) -> None:
+        # Default fixture has empty weights/trim_priority; the
+        # ``ai_hints`` key must be absent (avoids audit-log noise on
+        # off-path runs).
+        _, log_path, _, _ = _write_audit_artifacts(
+            tmp_path, curation_result, "JD text."
+        )
+        log_data = json.loads(log_path.read_text())
+        assert "ai_hints" not in log_data
+
+    def test_curation_log_records_ai_hints_weights_only(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        # In-range weight: clamped == raw == 1.5.
+        simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 1.5}
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["ai_hints"] == {
+            "work_highlight_weights": {"acme-senior-engineer": 1.5},
+            "work_highlight_weights_raw": {"acme-senior-engineer": 1.5},
+        }
+        # trim_priority is absent from the sub-object when empty.
+        assert "trim_priority" not in log_data["ai_hints"]
+
+    def test_curation_log_records_ai_hints_trim_priority_only(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        simple_curation_dict["trim_priority"] = ["projects", "certificates"]
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["ai_hints"] == {"trim_priority": ["projects", "certificates"]}
+        assert "work_highlight_weights" not in log_data["ai_hints"]
+
+    def test_curation_log_records_ai_hints_both(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        # AI over-emission: weight 2.0 clamps to 1.5 in the primary
+        # field; the raw 2.0 is preserved in the audit-only mirror.
+        simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 2.0}
+        simple_curation_dict["trim_priority"] = ["skill_groups"]
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["ai_hints"] == {
+            "work_highlight_weights": {"acme-senior-engineer": 1.5},
+            "work_highlight_weights_raw": {"acme-senior-engineer": 2.0},
+            "trim_priority": ["skill_groups"],
+        }
+
+    def test_curation_log_warns_on_weight_clamp_drift(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        """When raw != clamped, _write_audit_artifacts emits a WARNING
+        with the drifted keys so operators see clamp drift without
+        log-spelunking through curation_log.json."""
+        from loguru import logger
+
+        simple_curation_dict["work_highlight_weights"] = {
+            "acme-senior-engineer": 1.8,
+            "acme-mid-engineer": 1.0,
+        }
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+
+        log_messages: list[str] = []
+        logger.remove()
+        sink_id = logger.add(
+            lambda msg: log_messages.append(str(msg)),
+            level="WARNING",
+        )
+        try:
+            _write_audit_artifacts(tmp_path, result, "JD text.")
+        finally:
+            logger.remove(sink_id)
+
+        clamp_warnings = [
+            m for m in log_messages if "work_highlight_weights clamped" in m
+        ]
+        assert len(clamp_warnings) == 1, (
+            f"expected 1 clamp warning, got: {log_messages}"
+        )
+        # Drifted key reported; non-drifted key not in the warning.
+        assert "acme-senior-engineer" in clamp_warnings[0]
+        assert "acme-mid-engineer" not in clamp_warnings[0]
+
+    def test_curation_log_no_warn_when_weights_in_range(
+        self,
+        tmp_path: Path,
+        simple_curation_dict: dict[str, Any],
+    ) -> None:
+        """In-range weights produce no clamp warning."""
+        from loguru import logger
+
+        simple_curation_dict["work_highlight_weights"] = {"acme-senior-engineer": 1.3}
+        curation = ResumeCuration.model_validate(simple_curation_dict)
+        result = CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6-20260217",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=500,
+            cache_read_input_tokens=0,
+        )
+
+        log_messages: list[str] = []
+        logger.remove()
+        sink_id = logger.add(
+            lambda msg: log_messages.append(str(msg)),
+            level="WARNING",
+        )
+        try:
+            _write_audit_artifacts(tmp_path, result, "JD text.")
+        finally:
+            logger.remove(sink_id)
+
+        clamp_warnings = [
+            m for m in log_messages if "work_highlight_weights clamped" in m
+        ]
+        assert clamp_warnings == []
 
     def test_static_path_writes_mode_txt(
         self,
@@ -597,6 +840,194 @@ class TestApplySelectionsSafetyNet:
         sections, _, _ = _apply_selections(curation, portfolio, safety_net=False)
         ids = [h["id"] for h in sections["work"][0]["highlights"]]
         assert ids == ["h1"]
+
+
+class TestApplySelectionsMaxPagesCap:
+    """``max_pages`` caps safety-net padding via ``per_entry_emit_cap``."""
+
+    @staticmethod
+    def _portfolio_with_many_highlights() -> Any:
+        from curator.models import Basics, InterestData, PortfolioData, WorkEntry
+
+        # Single recent work entry (chrono position 0) with 20 highlights.
+        # In 2-page mode the per_entry_emit_cap at pos 0 is
+        # ceil(8 * 1.5) = 12.
+        highlights = [{"id": f"h{i}", "text": f"text {i}"} for i in range(20)]
+        return PortfolioData(
+            basics=Basics(name="X"),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "w1",
+                        "name": "Co",
+                        "position": "Eng",
+                        "startDate": "2024-01",
+                        "highlights": highlights,
+                    }
+                )
+            ],
+            education=[],
+            skills=[],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=InterestData.model_validate({"hobbies": [], "fun_facts": []}),
+            services=[],
+        )
+
+    @staticmethod
+    def _curation_with_ai_subset(ai_ids: list[str], *, weight: float = 1.0) -> Any:
+        from curator.models import ResumeCuration
+
+        payload: dict[str, Any] = {
+            "summary": "s " * 10 + "founder",
+            "suggested_label": "Eng",
+            "company_slug": "x",
+            "work_highlights": [{"work_id": "w1", "highlight_ids": ai_ids}],
+            "skills": [],
+            "projects": [],
+        }
+        if weight != 1.0:
+            payload["work_highlight_weights"] = {"w1": weight}
+        return ResumeCuration.model_validate(payload)
+
+    def test_max_pages_caps_safety_net_padding(self) -> None:
+        # AI ranks 4 highlights; portfolio has 20. Under max_pages=2 at
+        # chrono pos 0, the cap is ceil(8 * 1.5) = 12, so safety net
+        # pads to 12 total, not all 20.
+        from curator.renderer import _apply_selections
+
+        portfolio = self._portfolio_with_many_highlights()
+        curation = self._curation_with_ai_subset(["h3", "h7", "h1", "h12"])
+        sections, _, safety_net_count = _apply_selections(
+            curation, portfolio, safety_net=True, max_pages=2
+        )
+        ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        assert len(ids) == 12  # the per_entry_emit_cap at chrono pos 0
+        # AI-ranked items come first in AI order; safety-net items come
+        # in portfolio order. Verify the AI's selection survives at the
+        # head of the list (the bug 1A closes was AI rank being silently
+        # replaced by portfolio-order tail items).
+        assert ids[:4] == ["h3", "h7", "h1", "h12"]
+        # safety_net_count counts only items the safety net appended,
+        # which is 8 (cap 12 minus 4 AI-ranked emissions).
+        assert safety_net_count == 8
+
+    def test_weight_18_at_pos_zero_pinned_to_cap_with_ai_rank(self) -> None:
+        # Headline integration: weight 1.8 at pos 0 makes the cascade's
+        # effective floor round(8 * 1.8) = 14, but the safety-net cap
+        # bounds total retained highlights to per_entry_emit_cap(0, 2)
+        # = 12. The 12 retained highlights must be the AI's top 12 in
+        # AI order, not the portfolio-order tail; without this assertion
+        # the bug being fixed could silently return.
+        from curator.renderer import _apply_selections
+
+        portfolio = self._portfolio_with_many_highlights()
+        # AI emits 12 explicit highlights at the cap — reversed from
+        # portfolio order so the assertion is meaningful.
+        ai_ids = [f"h{i}" for i in (19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8)]
+        curation = self._curation_with_ai_subset(ai_ids, weight=1.8)
+        sections, _, _ = _apply_selections(
+            curation, portfolio, safety_net=True, max_pages=2
+        )
+        ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        assert len(ids) == 12
+        assert ids == ai_ids  # AI rank survives verbatim, not portfolio order
+
+    def test_max_pages_with_safety_net_false_is_noop(self) -> None:
+        # Static-path regression guard: max_pages is silently ignored
+        # when safety_net=False so static --max-highlights behavior is
+        # preserved exactly.
+        from curator.renderer import _apply_selections
+
+        portfolio = self._portfolio_with_many_highlights()
+        curation = self._curation_with_ai_subset(["h5", "h1"])
+        sections, _, safety_net_count = _apply_selections(
+            curation, portfolio, safety_net=False, max_pages=2
+        )
+        ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        # AI subset is honored verbatim; no safety net even though
+        # max_pages was passed.
+        assert ids == ["h5", "h1"]
+        assert safety_net_count == 0
+
+    def test_missing_work_ranking_falls_through_with_max_pages_set(self) -> None:
+        # Defense against a regression in the wh-is-None branch
+        # (renderer.py error path when a portfolio work entry is absent
+        # from AI ranking). Must not crash on the new max_pages code
+        # path: chrono_position is computed but the safety-net branch
+        # is skipped for the missing entry, so it uses portfolio order
+        # without consulting the cap.
+        from curator.models import (
+            Basics,
+            InterestData,
+            PortfolioData,
+            ResumeCuration,
+            WorkEntry,
+        )
+        from curator.renderer import _apply_selections
+
+        portfolio = PortfolioData(
+            basics=Basics(name="X"),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "w1",
+                        "name": "Co",
+                        "position": "Eng",
+                        "startDate": "2024-01",
+                        "highlights": [
+                            {"id": f"h{i}", "text": f"t{i}"} for i in range(5)
+                        ],
+                    }
+                ),
+                WorkEntry.model_validate(
+                    {
+                        "id": "w2",
+                        "name": "Older",
+                        "position": "Eng",
+                        "startDate": "2018-01",
+                        "endDate": "2020-12",
+                        "highlights": [
+                            {"id": f"o{i}", "text": f"t{i}"} for i in range(20)
+                        ],
+                    }
+                ),
+            ],
+            education=[],
+            skills=[],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=InterestData.model_validate({"hobbies": [], "fun_facts": []}),
+            services=[],
+        )
+        # AI ranks only the most recent entry; the older one falls
+        # through to the wh-is-None branch in _apply_selections.
+        curation = ResumeCuration.model_validate(
+            {
+                "summary": "s " * 10 + "founder",
+                "suggested_label": "Eng",
+                "company_slug": "x",
+                "work_highlights": [{"work_id": "w1", "highlight_ids": ["h0"]}],
+                "skills": [],
+                "projects": [],
+            }
+        )
+        sections, _, _ = _apply_selections(
+            curation, portfolio, safety_net=True, max_pages=2
+        )
+        # The ranked entry (w1, chrono pos 0) gets the cap-12 safety net.
+        w1_ids = [h["id"] for h in sections["work"][0]["highlights"]]
+        assert len(w1_ids) == 5  # portfolio had 5; cap of 12 is loose here
+        # The un-ranked entry (w2, chrono pos 1) falls through to
+        # portfolio order without crashing on the new max_pages path.
+        w2_ids = [h["id"] for h in sections["work"][1]["highlights"]]
+        assert len(w2_ids) == 20
 
 
 class TestAtomicYamlWrite:
@@ -1276,7 +1707,12 @@ class TestGenerateNextTrim:
         floor cert list: project-highlight tier 2 skips (no highlights),
         tier 3 skips (single project cannot be removed wholesale),
         tier 4 skips (cert count == floor), cascade falls through to
-        skill-group removal at tier 10. Certificate stays put."""
+        skill-group removal at tier 10. Certificate stays put.
+
+        Pass ``skill_group_floor=0`` to disable the new skill-group
+        floor and isolate the legacy drain-to-empty behavior; the
+        floor itself is exercised by ``TestSkillGroupFloor`` below.
+        """
         from curator.renderer import TrimKind, _apply_trim, _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -1287,14 +1723,14 @@ class TestGenerateNextTrim:
             "education": [],
         }
         # First trim: whole skill group removed (tier 10). Cert protected.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         assert step.description == "Removed skill group: s1"
 
         sections, _ = _apply_trim(sections, None, step)
         # No more skills, cert floor still protecting: returns None.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is None
         # Cert survived.
         assert sections["certificates"] == [{"id": "c1"}]
@@ -1505,7 +1941,12 @@ class TestGenerateNextTrim:
     def test_skill_group_removal_targets_lowest_priority_group_first(self) -> None:
         """Tier 10 removes whole skill groups, lowest-priority (``skills[-1]``)
         first. Atomic removal converges the page-fit loop faster than the
-        old keyword-at-a-time drain."""
+        old keyword-at-a-time drain.
+
+        Pass ``skill_group_floor=1`` so the floor permits trimming one
+        of the two groups; the floor itself is exercised by
+        ``TestSkillGroupFloor`` below.
+        """
         from curator.renderer import TrimKind, _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -1518,7 +1959,7 @@ class TestGenerateNextTrim:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=1)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         assert step.description == "Removed skill group: s2"
@@ -1550,7 +1991,12 @@ class TestGenerateNextTrim:
 
     def test_tier8_remove_skill_group(self) -> None:
         """With no other trimmable content, tier 10 removes the sole
-        skill group wholesale. (Legacy ``tier8`` name retained.)"""
+        skill group wholesale. (Legacy ``tier8`` name retained.)
+
+        Pass ``skill_group_floor=0`` so the legacy drain-to-empty
+        behavior is observable; the floor itself is exercised by
+        ``TestSkillGroupFloor`` below.
+        """
         from curator.renderer import _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -1560,9 +2006,118 @@ class TestGenerateNextTrim:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.description == "Removed skill group: s1"
+
+    def test_skill_group_floor_blocks_trim_at_or_below(self) -> None:
+        """Floor invariant: cascade returns ``None`` from tier 7 when
+        ``len(skills) <= skill_group_floor``. The floor is exact, not
+        approximate: at the floor the cascade falls through to tier 8
+        (below-floor) rather than emptying the skills section."""
+        from curator.renderer import _generate_next_trim
+
+        # Skills count exactly at the floor -> no trim.
+        sections: dict[str, Any] = {
+            "work": [{"id": "w1", "highlights": []}],
+            "skills": [{"id": f"s{i}", "keywords": [f"k{i}"]} for i in range(4)],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is None
+
+        # Below the floor -> still no trim.
+        sections["skills"] = [{"id": "s1", "keywords": ["k1"]}]
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is None
+
+    def test_skill_group_floor_allows_trim_above(self) -> None:
+        """Above the floor the cascade trims one group per iteration,
+        stopping when the surviving count equals the floor."""
+        from curator.renderer import TrimKind, _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [{"id": "w1", "highlights": []}],
+            "skills": [{"id": f"s{i}", "keywords": [f"k{i}"]} for i in range(5)],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # 5 > 4 -> one trim allowed.
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is not None
+        assert step.kind is TrimKind.SKILL_GROUP
+        assert step.target_id == "s4"
+
+        sections, _ = _apply_trim(sections, None, step)
+        # Now at floor exactly -> no further skill trim.
+        step = _generate_next_trim(sections, None, skill_group_floor=4)
+        assert step is None
+        assert len(sections["skills"]) == 4
+
+    def test_skill_group_floor_zero_preserves_drain_behavior(self) -> None:
+        """A floor of 0 is the legacy drain-to-empty behavior."""
+        from curator.renderer import TrimKind, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [{"id": "w1", "highlights": []}],
+            "skills": [{"id": "s1", "keywords": ["k1"]}],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
+        assert step is not None
+        assert step.kind is TrimKind.SKILL_GROUP
+        assert step.target_id == "s1"
+
+    def test_skill_group_floor_default_matches_short_form(self) -> None:
+        """Default ``skill_group_floor`` matches the 1-page profile value
+        so test scaffolding without an explicit floor sees the most
+        conservative protection."""
+        from curator.page_caps import SKILL_GROUP_FLOOR, _caps_for_pages
+
+        assert _caps_for_pages(1).skill_group_floor == SKILL_GROUP_FLOOR
+
+    def test_skill_group_floor_under_floor_portfolio(self) -> None:
+        """Portfolio with fewer non-empty groups than the floor: cascade
+        never trims skills, falls through to whatever else is available."""
+        from curator.renderer import TrimKind, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {
+                    "id": "w1",
+                    "highlights": [
+                        {"id": "h1"},
+                        {"id": "h2"},
+                        {"id": "h3"},
+                        {"id": "h4"},
+                    ],
+                },
+            ],
+            # Only 2 groups, floor=6 -> skills never get touched.
+            "skills": [
+                {"id": "s1", "keywords": ["k1"]},
+                {"id": "s2", "keywords": ["k2"]},
+            ],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(
+            sections,
+            None,
+            skill_group_floor=6,
+            education_floor=1,
+            work_position_floors=(2,),
+        )
+        # Work highlights still trimmable above their position-0 floor of 2.
+        assert step is not None
+        assert step.kind is TrimKind.HIGHLIGHT
+        assert step.target_id == "w1"
 
     def test_work_entries_are_never_removed(self) -> None:
         """Work entries are preserved even with zero highlights so the
@@ -2246,6 +2801,11 @@ class TestTrimToFit:
                     max_pages=1,
                     max_trim_iterations=15,
                     work_position_floors=(3, 3, 0, 0, 0),
+                    # Exercise the legacy drain-to-empty cascade so the
+                    # below-floor branch is reachable; the floor itself
+                    # is verified by ``TestSkillGroupFloor`` below.
+                    skill_group_floor=0,
+                    education_floor=1,
                 )
         finally:
             logger.remove(sink_id)
@@ -2269,6 +2829,88 @@ class TestTrimToFit:
         assert len(below_floor_warnings) >= 1, (
             f"expected below_floor WARNING, got: {log_messages}"
         )
+
+    def test_skill_group_floor_default_protects_section_under_pressure(
+        self, tmp_path: Path
+    ) -> None:
+        """End-to-end regression: ``_trim_to_fit`` running with the
+        default ``_caps_for_pages(max_pages).skill_group_floor`` must
+        never drain the skills section below the floor, even when the
+        renderer iterates through the full cascade trying to fit the
+        page. Pins the fp-markets regression fix at the integration
+        layer (the unit-level ``TestSkillGroupFloor`` covers the helper
+        closure; this test covers the multi-iteration cascade loop).
+        """
+        from curator.page_caps import _caps_for_pages
+        from curator.renderer import _trim_to_fit
+
+        output_dir = tmp_path / "profile"
+        output_dir.mkdir()
+        (output_dir / "data").mkdir()
+        tpl = tmp_path / "tpl" / "curated.typ"
+        tpl.parent.mkdir()
+        tpl.write_text("// dummy")
+
+        def fake_run(cmd: list[str], **kw: Any) -> Any:
+            Path(cmd[-1]).write_bytes(b"%PDF-1.4 fake")
+            return type("R", (), {"returncode": 0, "stderr": ""})()
+
+        # Heavily over-budget skills section (12 groups, well above the
+        # 2-page floor of 6). Reports overflow for several iterations
+        # before fitting, forcing the cascade to chew through the
+        # middle band; without the floor it would zero out skills.
+        sections: dict[str, Any] = {
+            "work": [
+                {
+                    "id": "w1",
+                    "highlights": [{"id": f"a{i}"} for i in range(8)],
+                },
+                {
+                    "id": "w2",
+                    "highlights": [{"id": f"b{i}"} for i in range(6)],
+                },
+            ],
+            "skills": [
+                {"id": f"s{i}", "keywords": [f"k{i}-1", f"k{i}-2"]} for i in range(12)
+            ],
+            "projects": [],
+            "certificates": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}],
+            "education": [{"id": "e1"}],
+        }
+        basics = {"name": "Test"}
+
+        # Report 3 pages for several iterations to force the cascade
+        # to keep trimming, then return 2 so it converges.
+        page_counts = iter([3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            caps = _caps_for_pages(2)
+            final_sections, _, trim_log, pages, _safety = _trim_to_fit(
+                sections,
+                basics,
+                None,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=20,
+                work_position_floors=caps.work_position_floors,
+                certificate_floor=caps.certificate_floor,
+                skill_group_floor=caps.skill_group_floor,
+                education_floor=caps.education_floor,
+            )
+
+        # Floor invariant: at least 6 skill groups survive on 2-page.
+        assert len(final_sections["skills"]) >= caps.skill_group_floor, (
+            f"expected at least {caps.skill_group_floor} groups, "
+            f"got {len(final_sections['skills'])}"
+        )
+        # Sanity: the cascade did run.
+        assert len(trim_log) > 0
+        assert pages == 2
 
     def test_input_immutability(self, tmp_path: Path) -> None:
         """Original sections dict is not mutated by _trim_to_fit."""
@@ -2319,6 +2961,191 @@ class TestTrimToFit:
 
 
 # ---------------------------------------------------------------------------
+# AI hint integration: trim_priority + work_highlight_weights
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTierOrder:
+    """The renderer's _resolve_tier_order helper composes the cascade
+    evaluation order with two guardrails: interests is always first to
+    drop, work highlights (to-floor + below-floor) always last. The
+    AI's trim_priority controls the order of the middle band."""
+
+    def test_default_order_when_ai_omits_hint(self) -> None:
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(None)
+        assert order == [
+            "interests",
+            "project_highlights",
+            "projects",
+            "certificates",
+            "education",
+            "skill_groups",
+            "highlight",
+            "highlight_below_floor",
+        ]
+
+    def test_default_order_when_ai_emits_empty_list(self) -> None:
+        from curator.renderer import _resolve_tier_order
+
+        assert _resolve_tier_order([]) == _resolve_tier_order(None)
+
+    def test_full_ai_list_honored_with_pinned_guardrails(self) -> None:
+        # Reverse the default middle band; interests stays first,
+        # work-highlight tiers stay last.
+        from curator.renderer import _resolve_tier_order
+
+        ai_order = [
+            "skill_groups",
+            "education",
+            "certificates",
+            "projects",
+            "project_highlights",
+        ]
+        order = _resolve_tier_order(ai_order)
+        assert order[0] == "interests"
+        assert order[-2:] == ["highlight", "highlight_below_floor"]
+        assert order[1:-2] == ai_order
+
+    def test_partial_ai_list_appends_missing_middle_tiers_in_default_order(
+        self,
+    ) -> None:
+        # AI only specifies certificates and projects; the other
+        # middle tiers fill the tail of the middle band in default
+        # order.
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(["certificates", "projects"])
+        assert order == [
+            "interests",
+            "certificates",
+            "projects",
+            # Default-order fill for omitted middle tiers:
+            "project_highlights",
+            "education",
+            "skill_groups",
+            "highlight",
+            "highlight_below_floor",
+        ]
+
+    def test_ai_list_duplicates_deduped_first_seen_wins(self) -> None:
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(["projects", "certificates", "projects"])
+        # Second "projects" is dropped.
+        assert order.count("projects") == 1
+        assert order.index("certificates") > order.index("projects")
+
+    def test_unknown_ai_entries_ignored(self) -> None:
+        # Schema enum prevents this, but the resolver tolerates it
+        # for defense in depth.
+        from curator.renderer import _resolve_tier_order
+
+        order = _resolve_tier_order(["projects", "not-a-real-tier", "interests"])
+        # interests cannot be AI-controlled even if emitted; the
+        # resolver only inserts items from _DEFAULT_MIDDLE_BAND.
+        assert "not-a-real-tier" not in order
+        assert order.count("interests") == 1  # pinned, not duplicated
+
+
+class TestWorkHighlightWeights:
+    """Weight scaling applies to the per-position floor in tier 6
+    (work highlights to floor). Default weight 1.0 leaves the floor
+    unchanged; >1 keeps more highlights from that role, <1 keeps
+    fewer. Out-of-range values are caught at the Pydantic boundary
+    so the renderer can assume valid input."""
+
+    def _sections(self) -> dict[str, Any]:
+        return {
+            "work": [
+                {
+                    "id": "w-recent",
+                    "highlights": [{"id": f"h{i}"} for i in range(10)],
+                },
+                {
+                    "id": "w-older",
+                    "highlights": [{"id": f"h{i}"} for i in range(10)],
+                },
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [{"id": "e1"}],
+        }
+
+    def test_weight_above_one_raises_effective_floor(self) -> None:
+        from curator.renderer import _generate_next_trim
+
+        sections = self._sections()
+        # Default floors (8, 6, 6, 2, 2) for 2-page mode. w-older at
+        # position 1 has floor 6; weight 1.5 raises effective floor to
+        # 9. With 10 highlights, only 1 should be trimmable before
+        # hitting the floor.
+        step = _generate_next_trim(
+            sections,
+            None,
+            work_position_floors=(8, 6, 6, 2, 2),
+            work_highlight_weight_hints={"w-older": 1.5},
+        )
+        # First trim still goes to the older role (default cascade
+        # is bottom-up by position), but the trim becomes available
+        # only because 10 > 9. Validate by exhausting the trim:
+        # after one trim, w-older has 9 highlights (== effective
+        # floor), so the next step should move to w-recent.
+        from curator.renderer import _apply_trim
+
+        assert step is not None
+        assert step.target_id == "w-older"
+        sections, _ = _apply_trim(sections, None, step)
+        step2 = _generate_next_trim(
+            sections,
+            None,
+            work_position_floors=(8, 6, 6, 2, 2),
+            work_highlight_weight_hints={"w-older": 1.5},
+        )
+        assert step2 is not None
+        assert step2.target_id == "w-recent"
+
+    def _count_tier6_trims(
+        self,
+        sections: dict[str, Any],
+        weights: dict[str, float] | None,
+    ) -> dict[str, int]:
+        """Drain via tier 6 only (stop at the first below-floor trim)."""
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        trimmed: dict[str, int] = {}
+        while True:
+            step = _generate_next_trim(
+                sections,
+                None,
+                work_position_floors=(8, 6, 6, 2, 2),
+                work_highlight_weight_hints=weights,
+            )
+            if step is None or step.below_floor:
+                break
+            trimmed[step.target_id or ""] = trimmed.get(step.target_id or "", 0) + 1
+            sections, _ = _apply_trim(sections, None, step)
+        return trimmed
+
+    def test_weight_below_one_lowers_effective_floor(self) -> None:
+        # Position 0 floor=8; weight 0.5 lowers effective floor to 4.
+        # That means w-recent loses 10-4=6 highlights via tier 6.
+        # w-older keeps default floor 6 -> 10-6=4 trims.
+        trimmed = self._count_tier6_trims(self._sections(), {"w-recent": 0.5})
+        assert trimmed["w-recent"] == 6
+        assert trimmed["w-older"] == 4
+
+    def test_no_weight_hint_uses_unscaled_floor(self) -> None:
+        # No weights -> default floors: w-recent loses 10-8=2,
+        # w-older loses 10-6=4.
+        trimmed = self._count_tier6_trims(self._sections(), None)
+        assert trimmed["w-recent"] == 2
+        assert trimmed["w-older"] == 4
+
+
+# ---------------------------------------------------------------------------
 # Additional trim edge cases
 # ---------------------------------------------------------------------------
 
@@ -2362,7 +3189,12 @@ class TestGenerateNextTrimEdgeCases:
         """The cascade never removes a certificate that would leave the
         count below ``CERTIFICATE_FLOOR``. With a single cert present,
         the cert is treated as load-bearing: the cascade falls through
-        to skill-group removal instead."""
+        to skill-group removal instead.
+
+        Pass ``skill_group_floor=0`` so the cascade can still drain
+        the skill group; the floor itself is exercised by
+        ``TestSkillGroupFloor`` elsewhere in this module.
+        """
         from curator.renderer import TrimKind, _apply_trim, _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -2373,18 +3205,21 @@ class TestGenerateNextTrimEdgeCases:
             "education": [],
         }
         # Tier 4 skips (1 <= floor). Skill group removal fires instead.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         sections, _ = _apply_trim(sections, None, step)
 
         # Nothing else trimmable; cert remains.
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is None
         assert sections["certificates"] == [{"id": "sole-cert"}]
 
     def test_tier8_removes_sole_skill_group(self) -> None:
-        """Tier 10 removes the sole remaining skill group wholesale."""
+        """Tier 10 removes the sole remaining skill group wholesale.
+
+        Pass ``skill_group_floor=0`` for the legacy drain behavior.
+        """
         from curator.renderer import _generate_next_trim
 
         sections: dict[str, Any] = {
@@ -2394,7 +3229,7 @@ class TestGenerateNextTrimEdgeCases:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.description == "Removed skill group: s1"
         assert step.target_id == "s1"
@@ -2421,7 +3256,10 @@ class TestGenerateNextTrimEdgeCases:
             "certificates": [],
             "education": [],
         }
-        step = _generate_next_trim(sections, None)
+        # Pass ``skill_group_floor=0`` to isolate the empty-skip
+        # behavior from the floor protection (the floor is tested by
+        # ``TestSkillGroupFloor`` elsewhere).
+        step = _generate_next_trim(sections, None, skill_group_floor=0)
         assert step is not None
         assert step.kind is TrimKind.SKILL_GROUP
         # Must target s2 (lowest non-empty), NOT empty-bottom.
@@ -2429,14 +3267,19 @@ class TestGenerateNextTrimEdgeCases:
         assert step.description == "Removed skill group: s2"
 
     def test_full_trim_sequence(self) -> None:
-        """Walk through a full trim sequence verifying the new 8-tier ordering.
+        """Walk through a full trim sequence verifying the cascade order.
 
-        With default floors ``(3, 3, 0, 0, 0)`` (1-page profile), tier 6
-        scans positions N-1..0 and drains each position to its floor
-        before advancing. Older positions (floor 0) drain fully before
-        positions 0/1 (floor 3) are touched. Once tier 6 is exhausted,
-        skill groups go (tier 7), then below-floor last resort drains
-        positions 1 and 0 from the bottom up (tier 8).
+        2026-05-20 hybrid: ``interests`` is always dropped first; work
+        highlights are always dropped last (per-position floor first,
+        then below-floor as final escape hatch). The middle band
+        (project highlights, projects, certificates, education,
+        skill groups) is AI-reorderable; with no AI hint, it runs in
+        the default order encoded in ``_DEFAULT_MIDDLE_BAND``.
+
+        With default floors ``(3, 3, 0, 0, 0)`` (1-page profile),
+        older positions (floor 0) drain fully before positions 0/1
+        (floor 3) are touched, and skill groups are removed wholesale
+        BEFORE work highlights start trimming.
         """
         from curator.renderer import _apply_trim, _generate_next_trim
 
@@ -2481,42 +3324,47 @@ class TestGenerateNextTrimEdgeCases:
 
         descriptions: list[str] = []
         while True:
-            step = _generate_next_trim(sections, interests)
+            # ``skill_group_floor=0`` for the legacy drain-to-empty
+            # cascade walk; the floor itself is exercised by
+            # ``TestSkillGroupFloor`` elsewhere.
+            step = _generate_next_trim(sections, interests, skill_group_floor=0)
             if step is None:
                 break
             descriptions.append(step.description)
             sections, interests = _apply_trim(sections, interests, step)
 
-        # Expected 8-tier progression (work entries and projects of
-        # count <= 2 are never removed wholesale; top CERTIFICATE_FLOOR
-        # certs are preserved; skill groups removed atomically at
-        # tier 7 lowest-priority first):
-        #  1: interests
-        #  2: project highlights, lowest project first: p2 -> ph2, ph1
-        #  3: projects wholesale -- only 2 remain -> skip
-        #  4: certs bottom-up down to floor: c5, c4 (c1-c3 survive)
-        #  5: education keeps >=1 -> skip
-        #  6: work to per-position floor, bottom-up:
-        #     - w4 (pos 3, floor 0): len 1>0 -> h9
-        #     - w3 (pos 2, floor 0): len 2>0 -> h8, then h7
-        #     - w2 (pos 1, floor 3): len 3>3 false -> skip
-        #     - w1 (pos 0, floor 3): len 3>3 false -> skip
-        #  7: skill groups bottom-up: s2, then s1
-        #  8: below-floor last resort, scan N-1..0 for first non-empty:
-        #     - w4 empty, w3 empty
-        #     - w2 -> h6, h5, h4 (3 below-floor steps)
-        #     - w1 -> h3, h2, h1 (3 below-floor steps)
+        # Expected cascade progression with default (no AI) ordering.
+        # Work entries and projects of count <= 2 are never removed
+        # wholesale; top CERTIFICATE_FLOOR certs are preserved; the
+        # default middle band runs in order project_highlights,
+        # projects, certificates, education, skill_groups; then work
+        # highlights to floor; then below-floor as last resort:
+        #  - interests
+        #  - project highlights, lowest project first: p2 -> ph2, ph1
+        #  - projects wholesale -- only 2 remain -> skip
+        #  - certs bottom-up down to floor: c5, c4 (c1-c3 survive)
+        #  - education keeps >=1 -> skip
+        #  - skill groups bottom-up: s2, then s1
+        #  - work to per-position floor, bottom-up:
+        #    - w4 (pos 3, floor 0): len 1>0 -> h9
+        #    - w3 (pos 2, floor 0): len 2>0 -> h8, then h7
+        #    - w2 (pos 1, floor 3): len 3>3 false -> skip
+        #    - w1 (pos 0, floor 3): len 3>3 false -> skip
+        #  - below-floor last resort, scan N-1..0 for first non-empty:
+        #    - w4 empty, w3 empty
+        #    - w2 -> h6, h5, h4 (3 below-floor steps)
+        #    - w1 -> h3, h2, h1 (3 below-floor steps)
         expected = [
             "Removed interests section",
             "Removed highlight: ph2 from project: p2",
             "Removed highlight: ph1 from project: p2",
             "Removed certificate: c5",
             "Removed certificate: c4",
+            "Removed skill group: s2",
+            "Removed skill group: s1",
             "Removed highlight: h9 from work entry: w4",
             "Removed highlight: h8 from work entry: w3",
             "Removed highlight: h7 from work entry: w3",
-            "Removed skill group: s2",
-            "Removed skill group: s1",
             "Removed highlight: h6 from work entry: w2",
             "Removed highlight: h5 from work entry: w2",
             "Removed highlight: h4 from work entry: w2",
@@ -2724,7 +3572,9 @@ class TestGenerateNextTrimEdgeCases:
 
         kinds: list[TrimKind] = []
         while True:
-            step = _generate_next_trim(sections, None)
+            # ``skill_group_floor=0`` for the legacy drain-to-empty
+            # behavior under test here.
+            step = _generate_next_trim(sections, None, skill_group_floor=0)
             if step is None:
                 break
             kinds.append(step.kind)
@@ -2952,6 +3802,8 @@ class TestCapsForPages:
         caps = _caps_for_pages(1)
         assert caps.work_position_floors == (3, 3, 0, 0, 0)
         assert caps.certificate_floor == 3
+        assert caps.skill_group_floor == 4
+        assert caps.education_floor == 1
 
     def test_two_page_caps(self) -> None:
         from curator.renderer import _caps_for_pages
@@ -2959,6 +3811,8 @@ class TestCapsForPages:
         caps = _caps_for_pages(2)
         assert caps.work_position_floors == (8, 6, 6, 2, 2)
         assert caps.certificate_floor == 3
+        assert caps.skill_group_floor == 6
+        assert caps.education_floor == 1
 
     def test_plateau_at_three_or_more_pages(self) -> None:
         from curator.renderer import _caps_for_pages
@@ -2967,6 +3821,8 @@ class TestCapsForPages:
         caps_5 = _caps_for_pages(5)
         assert caps_3.work_position_floors == (10, 8, 8, 4, 4)
         assert caps_3.certificate_floor == 5
+        assert caps_3.skill_group_floor == 8
+        assert caps_3.education_floor == 1
         # Plateau: 4-5 page configs use the same profile as 3-page.
         assert caps_5 == caps_3
 
@@ -2993,6 +3849,8 @@ class TestCapsForPages:
                 f"position {i}: pages {n} floor {cur_val} < pages {n - 1} {prev_val}"
             )
         assert cur.certificate_floor >= prev.certificate_floor
+        assert cur.skill_group_floor >= prev.skill_group_floor
+        assert cur.education_floor >= prev.education_floor
 
     def test_zero_pages_treated_as_short_form(self) -> None:
         """Defensive: pages <= 1 returns the short-form profile."""
@@ -3013,25 +3871,92 @@ class TestPageCapsValidation:
         from curator.page_caps import _PageCaps
 
         with pytest.raises(ValueError, match="work_position_floors must be non-empty"):
-            _PageCaps(work_position_floors=(), certificate_floor=3)
+            _PageCaps(
+                work_position_floors=(),
+                certificate_floor=3,
+                skill_group_floor=4,
+                education_floor=1,
+            )
 
     def test_rejects_negative_floor_values(self) -> None:
         from curator.page_caps import _PageCaps
 
-        with pytest.raises(ValueError, match=">= 0"):
-            _PageCaps(work_position_floors=(3, -1, 0), certificate_floor=3)
+        match_msg = "work_position_floors values must be >= 0"
+        with pytest.raises(ValueError, match=match_msg):
+            _PageCaps(
+                work_position_floors=(3, -1, 0),
+                certificate_floor=3,
+                skill_group_floor=4,
+                education_floor=1,
+            )
 
     def test_rejects_negative_certificate_floor(self) -> None:
         from curator.page_caps import _PageCaps
 
         with pytest.raises(ValueError, match="certificate_floor must be >= 0"):
-            _PageCaps(work_position_floors=(3, 3), certificate_floor=-1)
+            _PageCaps(
+                work_position_floors=(3, 3),
+                certificate_floor=-1,
+                skill_group_floor=4,
+                education_floor=1,
+            )
+
+    def test_rejects_negative_skill_group_floor(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        with pytest.raises(ValueError, match="skill_group_floor must be >= 0"):
+            _PageCaps(
+                work_position_floors=(3, 3),
+                certificate_floor=3,
+                skill_group_floor=-1,
+                education_floor=1,
+            )
+
+    def test_accepts_zero_skill_group_floor(self) -> None:
+        """Floor of 0 is a legal degenerate (cascade may drain skills fully)."""
+        from curator.page_caps import _PageCaps
+
+        caps = _PageCaps(
+            work_position_floors=(3, 3),
+            certificate_floor=3,
+            skill_group_floor=0,
+            education_floor=1,
+        )
+        assert caps.skill_group_floor == 0
+
+    def test_rejects_negative_education_floor(self) -> None:
+        from curator.page_caps import _PageCaps
+
+        with pytest.raises(ValueError, match="education_floor must be >= 0"):
+            _PageCaps(
+                work_position_floors=(3, 3),
+                certificate_floor=3,
+                skill_group_floor=4,
+                education_floor=-1,
+            )
+
+    def test_accepts_zero_education_floor(self) -> None:
+        """Floor of 0 is a legal degenerate (cascade may drain education)."""
+        from curator.page_caps import _PageCaps
+
+        caps = _PageCaps(
+            work_position_floors=(3, 3),
+            certificate_floor=3,
+            skill_group_floor=4,
+            education_floor=0,
+        )
+        assert caps.education_floor == 0
 
     def test_floor_for_position_falls_through_to_last_value(self) -> None:
         """Positions beyond the tuple length receive the last value."""
         from curator.page_caps import _PageCaps
 
-        caps = _PageCaps(work_position_floors=(8, 6, 6, 2, 2), certificate_floor=4)
+        caps = _PageCaps(
+            work_position_floors=(8, 6, 6, 2, 2),
+            certificate_floor=4,
+            skill_group_floor=6,
+            education_floor=1,
+        )
         assert caps.floor_for_position(0) == 8
         assert caps.floor_for_position(4) == 2
         assert caps.floor_for_position(7) == 2  # falls through to last
@@ -3039,7 +3964,12 @@ class TestPageCapsValidation:
     def test_floor_for_position_rejects_negative(self) -> None:
         from curator.page_caps import _PageCaps
 
-        caps = _PageCaps(work_position_floors=(3,), certificate_floor=3)
+        caps = _PageCaps(
+            work_position_floors=(3,),
+            certificate_floor=3,
+            skill_group_floor=4,
+            education_floor=1,
+        )
         with pytest.raises(ValueError, match="position must be non-negative"):
             caps.floor_for_position(-1)
 

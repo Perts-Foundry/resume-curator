@@ -21,6 +21,7 @@ from pypdf import PdfReader
 
 from curator.exceptions import CuratorError, RenderError
 from curator.models import ID_PATTERN
+from curator.rules import CORPORATE_SLUG_SUFFIXES
 
 # ---------------------------------------------------------------------------
 # Size guards
@@ -205,6 +206,80 @@ _SLUG_PATTERN_RE = re.compile(ID_PATTERN)
 _NON_SLUG_CHARS_RE = re.compile(r"[^a-z0-9]+")
 
 
+def parse_partial_date(raw: Any) -> tuple[int, int]:
+    """Parse a portfolio date string into a ``(year, month)`` tuple for sorting.
+
+    Accepts ``YYYY``, ``YYYY-M``, ``YYYY-MM``, ``YYYY-MM-DD``, as well as
+    integer years and empty/``None`` values. Returns ``(0, 0)`` for
+    anything unparseable so that empty/malformed dates sort as
+    oldest-first (they still end up after real dates under ``reverse=True``
+    because the rest of the values are larger).
+
+    Using a numeric tuple instead of a lexicographic string compare
+    avoids bugs on non-zero-padded months (``2022-6`` would otherwise
+    sort after ``2022-12``).
+    """
+    if raw is None or raw == "":
+        return (0, 0)
+    s = str(raw).strip()
+    if not s:
+        return (0, 0)
+    parts = s.split("-", 2)
+    try:
+        year = int(parts[0])
+    except ValueError:
+        return (0, 0)
+    month = 0
+    if len(parts) > 1 and parts[1]:
+        try:
+            month = int(parts[1])
+        except ValueError:
+            month = 0
+    return (year, month)
+
+
+def sort_work_chronologically(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return work entries in reverse chronological order.
+
+    Current roles (no ``end_date``) come first, ordered by ``start_date``
+    descending. Past roles follow, ordered by ``end_date`` descending
+    (then ``start_date`` descending as a tiebreaker).
+
+    Sort keys are numeric ``(year, month)`` tuples parsed via
+    :func:`parse_partial_date` to handle non-zero-padded month inputs
+    correctly.
+
+    Lives in :mod:`curator.io_utils` (not the renderer) because both
+    :mod:`curator.renderer` (for the trim cascade's per-position
+    floors) and :mod:`curator.client._adapt_curation_dict` (for the
+    per-entry highlight emit cap) need the same chronological-position
+    convention. Keeping the helper here ensures the cap and the
+    cascade speak the same coordinates.
+    """
+    current: list[dict[str, Any]] = []
+    past: list[dict[str, Any]] = []
+    for entry in entries:
+        end_date = entry.get("end_date") or ""
+        if end_date:
+            past.append(entry)
+        else:
+            current.append(entry)
+    current.sort(
+        key=lambda e: parse_partial_date(e.get("start_date")),
+        reverse=True,
+    )
+    past.sort(
+        key=lambda e: (
+            parse_partial_date(e.get("end_date")),
+            parse_partial_date(e.get("start_date")),
+        ),
+        reverse=True,
+    )
+    return current + past
+
+
 def priority_sort_key(entry: Any, field_name: str = "priority") -> tuple[int, int]:
     """Sort key: entries with *field_name* set first (ascending), then unset.
 
@@ -239,10 +314,18 @@ def slugify(
     """Convert free text to kebab-case matching ``models.ID_PATTERN``.
 
     Lowercases, replaces non-alphanumerics with ``-``, collapses runs,
-    strips leading/trailing ``-``, and truncates to *max_length*. Raw input
-    is capped at 256 chars before regex work to avoid pathological inputs.
+    strips leading/trailing ``-``, removes trailing legal-entity
+    suffixes (``CORPORATE_SLUG_SUFFIXES``: inc, llc, ltd, gmbh, pbc)
+    iteratively, then truncates to *max_length*. Raw input is capped
+    at 256 chars before regex work to avoid pathological inputs.
     Returns *fallback* when the result is empty or does not match
     ``ID_PATTERN``.
+
+    Suffix stripping is trailing-only: ``Acme Inc`` -> ``acme`` but
+    ``Inc Magazine`` -> ``inc-magazine`` (the leading ``inc`` is not
+    a legal-entity marker here). Multi-suffix tails strip iteratively:
+    ``Acme LLC Inc`` -> ``acme``. Pure-suffix input
+    (``slugify("LLC")``) drops to empty and returns *fallback*.
 
     Args:
         name: Free-text input.
@@ -255,6 +338,20 @@ def slugify(
     """
     capped = name[:_SLUGIFY_INPUT_CAP]
     slug = _NON_SLUG_CHARS_RE.sub("-", capped.lower()).strip("-")
+
+    # Strip trailing legal-entity suffixes iteratively so multi-suffix
+    # tails ("Acme LLC Inc") collapse to the brand. Done after the
+    # kebab cast so the token boundary is unambiguous, and before the
+    # length cap so a short brand under a long stripped tail still
+    # uses the full budget for the brand itself.
+    if "-" in slug:
+        parts = slug.split("-")
+        while parts and parts[-1] in CORPORATE_SLUG_SUFFIXES:
+            parts.pop()
+        slug = "-".join(parts)
+    elif slug in CORPORATE_SLUG_SUFFIXES:
+        slug = ""
+
     if len(slug) > max_length:
         slug = slug[:max_length].rstrip("-")
     if not slug or not _SLUG_PATTERN_RE.match(slug):

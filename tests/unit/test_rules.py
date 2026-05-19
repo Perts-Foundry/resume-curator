@@ -23,14 +23,23 @@ class TestCoverLetterWordConstants:
     """Cover-letter word-count constants form a coherent target band."""
 
     def test_word_target_pinned_value(self) -> None:
-        """Lowered from 275 to 265 (2026-05-10) per per-paragraph
-        body band tightening to 80-87 in the prompt prose."""
-        assert COVER_LETTER_WORD_TARGET == 265
+        """Raised from 265 to 305 (2026-05-17) when COVER_LETTER_WORD_MAX
+        moved from 300 to 360; the target re-centers inside the new band
+        so the prompt-side target prose stays a sensible aim point.
+
+        Earlier values: 275 (initial), 265 (lowered 2026-05-10 to track a
+        prompt-prose tightening to 80-87 per body paragraph)."""
+        assert COVER_LETTER_WORD_TARGET == 305
 
     def test_word_min_max_unchanged(self) -> None:
-        """Validator hard min/soft cap unchanged by the target tightening."""
+        """Validator hard min unchanged; soft cap moved from 300 to 360
+        on 2026-05-17. Real-world validation (10 JDs) showed the model's
+        natural total-word band is ~290-360; the prior 300 cap fired
+        ``over_cap=true`` on 7/9 cover letters that nonetheless passed
+        every other validator. The bump removes the chronic false alarm
+        without changing rejection semantics."""
         assert COVER_LETTER_WORD_MIN == 250
-        assert COVER_LETTER_WORD_MAX == 300
+        assert COVER_LETTER_WORD_MAX == 360
 
     def test_word_target_in_band(self) -> None:
         """Target lives strictly inside the validator band."""

@@ -5,6 +5,168 @@ files point here; `docs/architecture.md` describes current state only.
 
 ---
 
+## Recently landed (2026-05-16/17, AI/code reallocation series)
+
+Fourteen commits on branch `ai-code-reallocation` (the original
+five source commits, one docs-sync, one consolidated
+pre-PR-review-feedback commit, plus seven post-validation follow-ups
+addressing items surfaced by the 10-profile real-world re-run)
+redistributed work between the AI and the code-side bookkeeping:
+
+- **company_slug → code.** AI emits free-text `company_name`; client
+  adapter slugifies into the existing `company_slug` Pydantic field.
+- **Prompt cleanup.** Removed schema-enforced rules (structural
+  invariants the JSON schema already guarantees); kept behavioral
+  guidance and the load-bearing skill-keyword warning at the time.
+- **Per-entry highlight emission caps.** `output_schema.build_curation_schema`
+  threads `max_pages` and surfaces `max(2, ceil(floor[i] * 1.5))` per
+  work entry as a soft cap (description text + adapter post-trim,
+  via `page_caps.per_entry_emit_cap`).
+- **Hybrid skill selection.** Wire `skills` becomes an ordered array
+  of portfolio skill group IDs (enum-constrained); new
+  `curator.jd_scorer` fills each group's keywords from portfolio data
+  using JD-relevance scoring. Three caps in `rules.py` bound density.
+- **AI cascade hints.** Two new optional `ResumeCuration` fields:
+  `work_highlight_weights` (per-entry float [0.5, 2.0] scales tier 6
+  floor) and `trim_priority` (ordered middle-band drop priority with
+  pinned guardrails — interests first, work last).
+- **Pre-PR review feedback.** Consolidated fix commit addressing
+  reviewer findings: corrected misleading "decode-time range
+  enforced" claims on `work_highlight_weights` (Anthropic strips
+  `minimum`/`maximum`), renamed `_clamp_weights_and_validate_range`
+  to `_validate_weights_range` to match behavior, fixed
+  `_CURATION_INSTRUCTION` user-message contradiction with the new
+  hybrid skill semantics, moved `_per_entry_emit_cap` to
+  `page_caps.py` and promoted it to public, added test coverage for
+  validator weight-key rejection / `ai_hints` audit log / skill-cap
+  paths, bumped `format_version` to 2.4, plus the doc-sync items
+  the original 5aea4be docs commit missed.
+- **Post-validation follow-ups (2026-05-17).** Seven commits closing
+  items surfaced by the 10-profile real-world re-run:
+  - Cap `_reorder_with_safety_net` additions at
+    `per_entry_emit_cap`. The AI's ranked subset becomes the
+    authoritative ceiling; ~70 of ~88 trim iterations per run
+    eliminated; weights >1.5 at pos 0 are now-deliberately inert
+    rather than silently overridden by portfolio-order padding.
+  - Refresh the wire-side `work_highlight_weights` description
+    (output_schema.py and models.py Field) to tell the model the
+    practical consequence and how to recover the intent (emit more
+    highlight IDs, not a higher weight).
+  - Promote the `[0.5, 2.0]` weight range to
+    `WORK_HIGHLIGHT_WEIGHT_MIN/MAX` constants in `rules.py`;
+    centralizes the validator + schema description references.
+  - Bump `COVER_LETTER_WORD_MAX` 300 -> 360 and re-center
+    `COVER_LETTER_WORD_TARGET` at 305 to track the model's natural
+    band; 7/9 false-alarm `over_cap=true` flags on the validation
+    run eliminated. Retuned `valid_cover_letter()` fixture to ~340
+    words and bumped `HIGH_WATER_MARK_FLOOR` to 340 to preserve the
+    near-the-cap geometry check.
+  - Strip trailing legal-entity suffixes (`inc`, `llc`, `ltd`,
+    `gmbh`, `pbc`) in `slugify`; restores `archesys-inc -> archesys`
+    that drifted in PR12 when `company_slug` became free-text
+    `company_name`. `corp` and `co` intentionally excluded
+    (too-often-brand).
+  - Doc sync: CLAUDE.md and docs/testing-protocol.md cover-letter
+    range updated to 250-360; docs/architecture.md prompt-caching
+    section gains an on-path/off-path partitioning note.
+  - Per-paragraph doc drift fix: testing-protocol.md per-paragraph
+    range corrected to 40-90 (was incorrectly "40-130") and body
+    paragraph count corrected to "exactly 2" (was "2-3", stale since
+    2026-04-24's bound-the-total tightening).
+  - Client-side per-entry cap alignment: moved
+    ``sort_work_chronologically`` and ``parse_partial_date`` from
+    ``renderer.py`` to ``io_utils.py`` (cross-module utility);
+    ``client._adapt_curation_dict`` now uses the same chronological-
+    position lookup as the renderer's safety-net cap. Closes the
+    latent client/renderer disagreement on non-chronologically-
+    ordered portfolios.
+  - TODO follow-ups filed (see below).
+
+## Follow-ups from the AI/code reallocation series
+
+### Cover-letter word-count strategy (was Task 5 in the plan)
+
+The current word-count target band (now 250-360 total since
+2026-05-17, 40-90 per body paragraph) is enforced post-hoc by the
+validator but **the model does not respect numeric targets reliably**
+(62.5% over-the-old-300-cap rate observed across the 10-profile review
+on 2026-05-16; the cap bump to 360 absorbs that band, but the deeper
+question — whether word-count enforcement is the right tool at all —
+remains open). Options to evaluate:
+
+- [ ] Lean on single-page render constraint (Typst will not overflow
+  one page) + per-paragraph hard band (structural quality signal) only;
+  drop the total-target enforcement and accept whatever length the
+  model produces inside those constraints.
+- [ ] Replace numeric targets with structural guidance ("3-4 sentences
+  per body paragraph, opening hook + 2-3 closing sentences").
+- [ ] Keep the cap but stop publishing internal numeric targets to the
+  model (calibrate via the validator only, not the prompt).
+
+This needs its own design conversation; do not change calibration
+constants in isolation.
+
+### Tighten the skill-group emission cap to actually be a cap
+
+Observation from the 10-profile validation re-run: the AI fills the
+`SKILL_GROUPS_MAX = 12` cap exactly in 10 of 10 runs, regardless of
+JD breadth. The cap is being treated as a target rather than a
+maximum. 3-4 of 10 profiles had a clearly weak bottom group (agile,
+scripting, ai-tooling without JD support). Defer-by-default because
+the worst case is one weak group and tightening risks under-filling
+on broad JDs.
+
+- [ ] Add language to `prompt.py:_SYSTEM_PROMPT_TEXT`'s skill-groups
+  section: "Select **only as many groups as the JD justifies** (up
+  to 12). Most roles need 8-10; omit groups that are not directly
+  relevant to the JD." Re-run a sample of validation JDs to verify
+  the tighter framing does not under-fill on broad-scope roles
+  (DevSecOps Engineer, Cloud Solutions Architect, etc.).
+
+### Split prompt cache breakpoints for on/off-path sharing
+
+Validation surfaced that toggling `with_cover_letter` between
+requests drops the prompt cache: run 3 (the only
+`--no-cover-letter` run in the 10-profile batch) paid full
+`cache_creation_input_tokens`. Documented at
+`prompt.py:build_system_prompt:642-645` and the new
+`docs/architecture.md` on-path/off-path note. Anthropic supports up
+to 4 `cache_control` markers; moving one to the end of
+`_SYSTEM_PROMPT_TEXT` (shared by both paths) and keeping the existing
+one at the portfolio block (path-specific) would let the system-prompt
+prefix cache-hit across path-flips. Saves ~$0.10 per cold path-flip
+at current Sonnet 4.6 rates.
+
+- [ ] Implement multi-breakpoint cache in `prompt.build_system_prompt`.
+  Add a unit test that asserts both blocks carry `cache_control`
+  markers; pin the placement so future prompt edits don't accidentally
+  drop one.
+
+
+### Mechanical-tailored mode (was Task 9 in the plan, deferred)
+
+A third tier between `curator static` (zero AI, zero JD-awareness) and
+`curator curate` (full AI). Would reuse the `jd_scorer` module to
+score highlights, projects, and skill keywords against the JD, then
+render deterministically without an API call. Estimated quality
+~70-80% of full AI on selection; missing summary and cover letter.
+Pays off only if bulk-application throughput becomes a binding
+constraint. Skipped in the 2026-05-20 series; revisit when a real
+workflow demands it.
+
+### PROMPT_VERSION drift detection in CI
+
+Each commit in this series bumped `PROMPT_VERSION` manually. A CI test
+that asserts `PROMPT_HASH` matches a pinned value for each
+`PROMPT_VERSION` would force the bump whenever the system prompt text
+changes. The hash mismatch already surfaces in `curation_log.json` for
+manual operators; CI enforcement would catch it before merge.
+
+- [ ] Add `tests/unit/test_prompt_version_hash_map.py` with a frozen
+  `{PROMPT_VERSION: PROMPT_HASH}` mapping; fail-fast on mismatch.
+
+---
+
 ## Curation Reliability
 
 Cross-parent highlight attribution and unknown work/project IDs are
@@ -16,27 +178,33 @@ on every nested object. Unknown `work_id`, unknown `highlight_id`
 inside a known `work_id`, unknown `project_id`, duplicate `work_id`,
 and missing work rankings all became decode-time-unreachable.
 
-Skill keywords and skill-group identity are NOT decode-time-enforced.
-The original design's `skills_by_id: object{group_id → array[items.enum]}`
-exceeded Anthropic's compiled-grammar budget (HTTP 400 "compiled
-grammar is too large" on 2026-05-13). Dropping the keyword enum
-(Option A) was insufficient: the 22-property required-strict object
-hit the same 400 on 2026-05-14, and a 6-probe Haiku bisect localized
+Skill keywords are no longer on the wire. Earlier wire iterations
+went through `skills_by_id: object{group_id → array[items.enum]}`
+(2026-05-13, hit the compiled-grammar budget), then a 22-property
+required-strict object (Option A, same 400 on 2026-05-14), then a
+flat top-level `skills: array[string]` of free-text keywords
+(Option E, shipped 2026-05-15). A 6-probe Haiku bisect localized
 the binding axis to *inner-property count under `required` +
 `additionalProperties: false`* (not enum count, not description
-bytes). The wire shape collapsed to a flat top-level
-`skills: array[string]` (Option E, shipped 2026-05-15); the adapter
-at `client._adapt_curation_dict` walks each emitted keyword back to
-its parent portfolio group (first-match by portfolio order) and
-drops unknown keywords with a WARN log line.
+bytes).
+
+The 2026-05-18 hybrid commit (cbac1d1) collapsed all of that into a
+top-level `skills: array[string]` enum-constrained to portfolio
+**group IDs** (typically <30, well under the grammar budget). The
+adapter at `client._adapt_curation_dict` fills each group's keywords
+from portfolio data via `jd_scorer.score_keywords_for_jd` against the
+JD text — the AI does not pick keywords at all, so non-verbatim
+keyword fabrication is unreachable by construction. Unknown group
+IDs are decode-time-impossible (enum-constrained); the adapter still
+drops them with WARN as defense in depth against an enum regression.
 
 `validate_curation_ids` stays as defense-in-depth on the API path
-(the adapter catches non-verbatim keywords first) and as primary
-defense on the static path (which constructs `ResumeCuration`
-directly without going through the adapter). The soft-drop behavior
-for hallucinated keywords/highlights (since 2026-04-11 / 2026-05-12)
-remains load-bearing on the static path and as adapter-regression
-safety net on the API path.
+and as primary defense on the static path (which constructs
+`ResumeCuration` directly without going through the adapter). The
+soft-drop branches for hallucinated highlights and keywords (since
+2026-04-11 / 2026-05-12) remain load-bearing on the static path; on
+the API path they are tripwires for adapter or grammar regressions
+that bypass the construction-time guarantee.
 
 Cover-letter word-count overshoots ship via the existing soft-warn
 on the API path. Items below address validation cases that grammar

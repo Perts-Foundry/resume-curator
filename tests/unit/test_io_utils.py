@@ -15,7 +15,6 @@ class TestSlugify:
         [
             ("Acme Corp", "acme-corp"),
             ("ACME", "acme"),
-            ("Acme Inc.", "acme-inc"),
             ("Café Résumé", "caf-r-sum"),
             ("A  B", "a-b"),
             ("-acme", "acme"),
@@ -23,10 +22,34 @@ class TestSlugify:
             ("--acme---corp--", "acme-corp"),
             ("1-company", "1-company"),
             ("Company#42", "company-42"),
+            # Legal-entity suffix stripping (added 2026-05-17):
+            ("Acme Inc.", "acme"),
+            ("Acme LLC", "acme"),
+            ("Anthropic, PBC", "anthropic"),
+            ("Hugging Face Inc", "hugging-face"),
+            ("Foobar Inc", "foobar"),
+            ("Acme GmbH", "acme"),
+            ("Acme Ltd", "acme"),
+            ("Acme LLC Inc", "acme"),  # iterative strip
+            ("Acme, Inc.", "acme"),  # trailing-punctuation variant
+            # Negative cases: only TRAILING tokens are stripped.
+            ("Inc Magazine", "inc-magazine"),
+            ("Incentive", "incentive"),  # mid-word "inc" preserved
+            ("Acme Co", "acme-co"),  # "co" NOT in suffix set
+            # "corp" intentionally NOT in suffix set (too often the
+            # public-facing brand name).
+            ("Acme Corp Inc", "acme-corp"),
         ],
     )
     def test_basic_slugs(self, raw: str, expected: str) -> None:
         assert slugify(raw) == expected
+
+    def test_pure_suffix_falls_back(self) -> None:
+        # "LLC" alone becomes empty after suffix strip; fallback applies.
+        assert slugify("LLC") == "general"
+
+    def test_pure_suffix_honors_custom_fallback(self) -> None:
+        assert slugify("Inc", fallback="anon") == "anon"
 
     @pytest.mark.parametrize("raw", ["", "!!!", "---", "   "])
     def test_fallback_applies(self, raw: str) -> None:
@@ -51,7 +74,19 @@ class TestSlugify:
         assert len(slug) == 64
 
     def test_idempotent(self) -> None:
-        for raw in ["Acme Corp", "A  B", "!!!", "-acme-", "long " * 50]:
+        for raw in [
+            "Acme Corp",
+            "A  B",
+            "!!!",
+            "-acme-",
+            "long " * 50,
+            # Suffix-bearing inputs: slugify(slugify(x)) must equal
+            # slugify(x) — the stripped slug has no trailing suffix
+            # token so the second pass is a no-op.
+            "Acme Inc",
+            "Hugging Face LLC",
+            "Acme LLC Inc",
+        ]:
             once = slugify(raw)
             twice = slugify(once)
             assert once == twice

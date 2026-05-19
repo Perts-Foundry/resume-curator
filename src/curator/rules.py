@@ -466,6 +466,57 @@ SUMMARY_MANDATORY_MENTION: str = os.environ.get(
     "founder of Perts Foundry LLC",
 )
 
+# Skill section caps.
+#
+# The AI emits an ordered list of skill group IDs (judgment: which
+# groups belong on this resume for this JD). The client adapter fills
+# each group's keywords from portfolio data using JD-relevance scoring
+# (bookkeeping: which keywords in the group are most relevant). These
+# caps bound the model's group emission and the adapter's keyword fill
+# so the rendered skill section has predictable density.
+SKILL_GROUPS_MAX: int = 12  # max skill groups in one curated resume
+SKILL_KEYWORDS_PER_GROUP_MAX: int = 10  # max keywords filled per group
+SKILL_KEYWORDS_TOTAL_MAX: int = 140  # absolute total across all groups
+
+# Corporate suffixes that ``curator.io_utils.slugify`` strips from the
+# tail of the kebab-cased slug. The wire-side ``company_name`` field
+# (post-PR12) is free text "as it appears in the wild" (e.g.,
+# "DataDog", "Anthropic, PBC", "Foobar Inc"); the client adapter
+# then slugifies via ``slugify(company_name)``. Without the strip,
+# "Foobar Inc" -> "foobar-inc" (vs the pre-PR12 prompt-stripped
+# "foobar"). This restores the old slug shape for the common
+# legal-entity suffixes without affecting brand-name-with-suffix
+# inputs ("Hugging Face Inc" -> "hugging-face" is intentional;
+# "Acme Corp" -> "acme-corp" is preserved because Corp is too often
+# part of the public-facing brand to strip safely). Strip is
+# iterative so "Acme LLC Inc" -> "acme".
+CORPORATE_SLUG_SUFFIXES: frozenset[str] = frozenset(
+    {"inc", "llc", "ltd", "gmbh", "pbc"},
+)
+
+# Work highlight weight range (optional AI hint, see
+# ResumeCuration.work_highlight_weights). Anthropic's structured-output
+# does not honor minimum/maximum at decode time; the range is enforced
+# post-parse by ResumeCuration._clamp_weights_range and surfaced to
+# the model via property + aggregate description text in
+# output_schema._build_work_highlight_weights_schema. Out-of-range
+# emissions are clamped to the range; the pre-clamp value is preserved
+# in ResumeCuration.work_highlight_weights_raw and persisted to
+# curation_log.json for audit so an over-emitting AI is visible to the
+# operator without invalidating the whole response.
+#
+# Design invariant: MAX == 1.5 matches the per_entry_emit_cap multiplier
+# (ceil(floor * 1.5)). Together they give the AI 50% headroom over the
+# renderer floor while keeping weights bounded so they always have an
+# observable effect on the cascade. Raising MAX without also raising
+# the cap multiplier would push effective floors past the emit cap
+# (inert weights); raising the cap multiplier above 1.5 would
+# re-introduce the portfolio-order silent-override bug that the safety
+# net cap was designed to close. Change both in lockstep or document
+# the asymmetry explicitly.
+WORK_HIGHLIGHT_WEIGHT_MIN: float = 0.5
+WORK_HIGHLIGHT_WEIGHT_MAX: float = 1.5
+
 CATEGORY_WEIGHTS: dict[str, float] = {
     "jd_alignment": 0.25,
     "writing_quality": 0.25,
@@ -499,9 +550,9 @@ if abs(sum(CATEGORY_WEIGHTS.values()) - 1.0) > 1e-9:
 #   Both the static path (portfolio-authored) and the API path (generated)
 #   must ship letters with no unfilled [UPPERCASE] tokens.
 
-COVER_LETTER_WORD_TARGET: int = 265
+COVER_LETTER_WORD_TARGET: int = 305
 COVER_LETTER_WORD_MIN: int = 250
-COVER_LETTER_WORD_MAX: int = 300
+COVER_LETTER_WORD_MAX: int = 360
 COVER_LETTER_PARAGRAPH_WORD_MIN: int = 40
 COVER_LETTER_PARAGRAPH_WORD_MAX: int = 90
 # Prompt-side body upper bound, surfaced to the model in both the prompt

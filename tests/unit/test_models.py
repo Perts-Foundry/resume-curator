@@ -601,7 +601,178 @@ class TestResumeCuration:
             "work_highlights",
             "skills",
             "projects",
+            "work_highlight_weights",
+            "work_highlight_weights_raw",
+            "trim_priority",
         )
+
+    def test_work_highlight_weights_default_to_empty(self) -> None:
+        curation = ResumeCuration.model_validate(_make_curation_dict())
+        assert curation.work_highlight_weights == {}
+
+    def test_trim_priority_default_to_empty(self) -> None:
+        curation = ResumeCuration.model_validate(_make_curation_dict())
+        assert curation.trim_priority == []
+
+    def test_work_highlight_weights_accept_valid_range(self) -> None:
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.5})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+
+    def test_work_highlight_weights_accept_lower_boundary(self) -> None:
+        # The 0.5 boundary is inclusive per the validator's
+        # ``0.5 <= weight <= 1.5`` check. Pinning it prevents an
+        # accidental strict-comparison regression.
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 0.5})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 0.5}
+
+    def test_work_highlight_weights_accept_upper_boundary(self) -> None:
+        # The 1.5 boundary is inclusive (matches per_entry_emit_cap
+        # multiplier so weights at the ceiling stay effective).
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.5})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+
+    def test_work_highlight_weights_accept_unit_weight_no_op(self) -> None:
+        # weight=1.0 is the no-op default — the most common production
+        # value. Pinning ensures the validator never accidentally
+        # treats 1.0 as a sentinel that should be stripped.
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.0})
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.0}
+
+    def test_work_highlight_weights_clamp_above_max(self) -> None:
+        """Out-of-range above MAX clamps to MAX; raw value preserved."""
+        weights = {"acme-senior-engineer": 1.8}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 1.8}
+
+    def test_work_highlight_weights_clamp_below_min(self) -> None:
+        """Out-of-range below MIN clamps to MIN; raw value preserved."""
+        weights = {"acme-senior-engineer": 0.3}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 0.5}
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 0.3}
+
+    def test_work_highlight_weights_clamp_far_over_max(self) -> None:
+        """Far-over-range value still clamps to MAX, not partway."""
+        weights = {"acme-senior-engineer": 2.5, "other-id": 5.0}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {
+            "acme-senior-engineer": 1.5,
+            "other-id": 1.5,
+        }
+        assert curation.work_highlight_weights_raw == {
+            "acme-senior-engineer": 2.5,
+            "other-id": 5.0,
+        }
+
+    def test_work_highlight_weights_clamp_negative(self) -> None:
+        """Negative weight clamps to MIN (not zero, not absolute)."""
+        weights = {"acme-senior-engineer": -0.4}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 0.5}
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": -0.4}
+
+    def test_work_highlight_weights_just_above_max(self) -> None:
+        """Boundary: a hair above MAX clamps to MAX."""
+        weights = {"acme-senior-engineer": 1.500001}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+
+    def test_work_highlight_weights_just_below_max(self) -> None:
+        """Boundary: a hair below MAX passes through unchanged."""
+        weights = {"acme-senior-engineer": 1.499}
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(work_highlight_weights=weights)
+        )
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.499}
+        # In-range emissions still populate raw (validator runs
+        # uniformly; raw == clamped is the happy path).
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 1.499}
+
+    def test_work_highlight_weights_raw_empty_when_no_weights(self) -> None:
+        """No AI emission -> both fields empty."""
+        curation = ResumeCuration.model_validate(_make_curation_dict())
+        assert curation.work_highlight_weights == {}
+        assert curation.work_highlight_weights_raw == {}
+
+    def test_work_highlight_weights_raw_respects_existing_value(self) -> None:
+        """Reloading a curation_log.json that already carries _raw must
+        not overwrite it with the (already clamped) primary field. The
+        pre-validator skips capture when _raw is already populated."""
+        data = _make_curation_dict(
+            work_highlight_weights={"acme-senior-engineer": 1.5},
+        )
+        data["work_highlight_weights_raw"] = {"acme-senior-engineer": 1.8}
+        curation = ResumeCuration.model_validate(data)
+        assert curation.work_highlight_weights == {"acme-senior-engineer": 1.5}
+        # _raw preserved verbatim from the persisted log, NOT mirrored
+        # from work_highlight_weights.
+        assert curation.work_highlight_weights_raw == {"acme-senior-engineer": 1.8}
+
+    def test_work_highlight_weights_validate_does_not_mutate_input(self) -> None:
+        """The pre-validator must not leak the ``_raw`` mirror back
+        onto the caller's dict reference."""
+        data = _make_curation_dict(work_highlight_weights={"acme-senior-engineer": 1.8})
+        before_keys = set(data.keys())
+        ResumeCuration.model_validate(data)
+        assert set(data.keys()) == before_keys
+        assert "work_highlight_weights_raw" not in data
+
+    def test_work_highlight_weights_non_dict_yields_typed_error(self) -> None:
+        """Non-dict input must surface Pydantic's type error, not the
+        opaque ``TypeError`` from ``dict(...)`` inside the pre-validator."""
+        data = _make_curation_dict()
+        data["work_highlight_weights"] = "not-a-dict"
+        with pytest.raises(ValidationError, match=r"dictionary|valid dict"):
+            ResumeCuration.model_validate(data)
+
+    def test_trim_priority_accepts_valid_items(self) -> None:
+        curation = ResumeCuration.model_validate(
+            _make_curation_dict(trim_priority=["certificates", "projects"])
+        )
+        assert curation.trim_priority == ["certificates", "projects"]
+
+    def test_trim_priority_rejects_unknown_item(self) -> None:
+        with pytest.raises(ValidationError, match="not in allowed set"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["not-a-section"])
+            )
+
+    def test_trim_priority_rejects_pinned_items(self) -> None:
+        # ``interests`` and ``highlight`` are pinned by the renderer
+        # and not exposed to the AI; validator rejects them.
+        with pytest.raises(ValidationError, match="not in allowed set"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["interests"])
+            )
+        with pytest.raises(ValidationError, match="not in allowed set"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["highlight"])
+            )
+
+    def test_trim_priority_rejects_duplicates(self) -> None:
+        with pytest.raises(ValidationError, match="duplicate"):
+            ResumeCuration.model_validate(
+                _make_curation_dict(trim_priority=["projects", "projects"])
+            )
 
     def test_control_chars_in_summary_rejected(self) -> None:
         with pytest.raises(ValidationError, match="control characters"):
@@ -1048,14 +1219,16 @@ class TestValidateCoverLetter:
         # (default strict=False); it ships with a logger.warning. This
         # test pins the contract that paid API calls aren't reject-and-
         # discarded for a 5-10% overshoot.
+        #
+        # 2026-05-17: cap moved from 300 to 360; body paragraphs are
+        # bounded at 90 hard, so the overshoot has to come from
+        # opening/closing where per-section bands are not enforced.
+        # Total here: 105 + 90 + 90 + 90 = 375 (15 over the new 360 cap).
         kwargs = _valid_letter_kwargs()
-        # Each body 90 (in-band), opening 65 (in-band), closing 60 -> total
-        # 305 (>= 301, over the 300 cap). 60 is over the closing 35-45
-        # band but per-section bands are not enforced today (PR-7 deferred).
-        kwargs["opening"] = "word " * 65
+        kwargs["opening"] = "word " * 105
         kwargs["body_paragraphs"][0] = "word " * 90
         kwargs["body_paragraphs"][1] = "word " * 90
-        kwargs["closing"] = "word " * 60
+        kwargs["closing"] = "word " * 90
         letter = CoverLetterCuration(**kwargs)
         # Does NOT raise (soft warn on API path).
         validate_cover_letter(letter, _minimal_portfolio())
@@ -1065,10 +1238,10 @@ class TestValidateCoverLetter:
         # over-max becomes a hard reject so hand-authored YAMLs fail
         # loudly instead of silently shipping.
         kwargs = _valid_letter_kwargs()
-        kwargs["opening"] = "word " * 65
+        kwargs["opening"] = "word " * 105
         kwargs["body_paragraphs"][0] = "word " * 90
         kwargs["body_paragraphs"][1] = "word " * 90
-        kwargs["closing"] = "word " * 60
+        kwargs["closing"] = "word " * 90
         letter = CoverLetterCuration(**kwargs)
         with pytest.raises(CurationValidationError, match="exceeds maximum"):
             validate_cover_letter(letter, _minimal_portfolio(), strict=True)

@@ -266,7 +266,7 @@ class TestRenderPipeline:
         )
 
         log = json.loads(result.curation_log_path.read_text())
-        assert log["format_version"] == "2.3"
+        assert log["format_version"] == "2.5"
         assert log["source"] == "api"
         assert log["model"] == "claude-sonnet-4-6-20260217"
         assert log["input_tokens"] == 5000
@@ -298,6 +298,141 @@ class TestRenderPipeline:
         )
 
         assert "gamma-inc" in result.profile_dir.name
+
+
+class TestSafetyNetCapEndToEnd:
+    """``render()`` applies the per-entry safety-net cap end-to-end.
+
+    Pins the cap-bounds-safety-net invariant at the function boundary
+    we care about (``render`` consumed by pipeline), without a live
+    API call. The unit tests cover ``_apply_selections`` directly; this
+    one proves the cap survives the ``render(... , settings)``
+    plumbing and the final ``data/work.yaml`` written to disk.
+    """
+
+    @staticmethod
+    def _portfolio_with_overstocked_pos0() -> PortfolioData:
+        # Single recent role with 20 portfolio highlights. Under
+        # 2-page mode (work_position_floors[0] = 8), the per-entry cap
+        # at chrono position 0 is ceil(8 * 1.5) = 12.
+        return PortfolioData(
+            basics=Basics(
+                name="Jane Doe",
+                label="DevOps Engineer",
+                email="jane@example.com",
+                summary="Original.",
+            ),
+            work=[
+                WorkEntry.model_validate(
+                    {
+                        "id": "acme-devops",
+                        "name": "Acme Corp",
+                        "position": "DevOps Engineer",
+                        "startDate": "2024-01",
+                        "highlights": [
+                            {"id": f"h{i}", "text": f"Highlight {i}."}
+                            for i in range(20)
+                        ],
+                    }
+                ),
+            ],
+            education=[],
+            skills=[
+                SkillEntry.model_validate(
+                    {"id": "kubernetes", "name": "K8s", "keywords": ["EKS"]}
+                ),
+            ],
+            certificates=[],
+            projects=[],
+            volunteer=[],
+            publications=[],
+            languages=[],
+            interests=None,
+            services=[],
+        )
+
+    @staticmethod
+    def _curation_top_12_with_weight(weight: float) -> CurationResult:
+        from tests.helpers import make_curation_dict
+
+        # AI emits 12 highlight IDs (the cap) in a deliberately
+        # different order from portfolio order so the assertion that
+        # AI rank survives is meaningful.
+        ai_ids = [f"h{i}" for i in (19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8)]
+        curation = ResumeCuration.model_validate(
+            make_curation_dict(
+                suggested_label="Senior SRE",
+                company_slug="gamma",
+                work_highlights=[
+                    {"work_id": "acme-devops", "highlight_ids": ai_ids},
+                ],
+                skills=[{"skill_id": "kubernetes", "keywords": ["EKS"]}],
+                projects=[],
+                work_highlight_weights={"acme-devops": weight},
+            )
+        )
+        return CurationResult(
+            curation=curation,
+            model="claude-sonnet-4-6",
+            input_tokens=1000,
+            output_tokens=500,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+
+    def _render_with_max_pages_2(
+        self,
+        curation: CurationResult,
+        portfolio: PortfolioData,
+        tmp_path: Path,
+    ) -> Any:
+        # Re-uses ``_render_with_mock``'s pattern but with max_pages=2
+        # so the per-entry cap at pos 0 is 12, not 1-page mode's 5.
+        tpl = tmp_path / "tpl" / "curated.typ"
+        tpl.parent.mkdir(exist_ok=True)
+        tpl.write_text("// dummy template")
+        settings = type(
+            "S",
+            (),
+            {
+                "output_dir": tmp_path / "output",
+                "template_path": tpl,
+                "section_order": (
+                    "work",
+                    "skills",
+                    "projects",
+                    "certificates",
+                    "education",
+                ),
+                "max_pages": 2,
+                "max_trim_iterations": 15,
+            },
+        )()
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=_fake_typst_run),
+            patch("curator.renderer.get_page_count", return_value=2),
+        ):
+            return render(curation, portfolio, "Test JD.", settings)
+
+    def test_weight_18_at_pos_zero_pinned_to_cap_with_ai_rank(
+        self, tmp_path: Path
+    ) -> None:
+        portfolio = self._portfolio_with_overstocked_pos0()
+        curation = self._curation_top_12_with_weight(weight=1.8)
+        result = self._render_with_max_pages_2(curation, portfolio, tmp_path)
+
+        # Inspect the on-disk work.yaml the renderer wrote; this is
+        # what the Typst template consumes.
+        work = yaml.safe_load(result.data_files["work"].read_text())
+        kept_ids = [h["id"] for h in work[0]["highlights"]]
+        # Cap binds at 12 even though weight 1.8 would otherwise lift
+        # the effective floor to round(8 * 1.8) = 14.
+        assert len(kept_ids) == 12
+        # The 12 retained highlights are the AI's top 12 in AI order,
+        # NOT the portfolio-order tail. Without this assertion the
+        # safety-net silent override could return.
+        expected = [f"h{i}" for i in (19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8)]
+        assert kept_ids == expected
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +503,7 @@ class TestCoverLetterSoftHyphenRegression:
 
     The negative test compiles with the packaged template (hyphenate: false)
     and asserts no soft-hyphen ActualText markers and a single page on the
-    high-water-mark fixture (close to the 300-word total cap; verified
+    high-water-mark fixture (close to the 360-word total cap; verified
     in-test). The positive test patches the template back to
     hyphenate: true and asserts the marker IS present, proving the
     assertion mechanism actually fires on the bad input.
@@ -378,8 +513,11 @@ class TestCoverLetterSoftHyphenRegression:
     # exercises a meaningful page-fit assertion. If the shared helper
     # is shrunk for an unrelated test, this floor fires before the
     # geometry assertion does, pointing the failure at the fixture
-    # edit rather than the template.
-    HIGH_WATER_MARK_FLOOR = 280
+    # edit rather than the template. Raised from 280 to 340 on
+    # 2026-05-17 in lockstep with COVER_LETTER_WORD_MAX 300 -> 360 so
+    # the fixture continues to sit "near the cap" and stress-test
+    # cover-letter page geometry rather than coasting well below it.
+    HIGH_WATER_MARK_FLOOR = 340
 
     def test_default_template_emits_no_soft_hyphen_markers(
         self, typst_safe_dir: Path
@@ -394,7 +532,7 @@ class TestCoverLetterSoftHyphenRegression:
 
         # Guard against shared-fixture drift: the page-fit assertion
         # below is meaningful only when the fixture is near the
-        # 300-word cap. If a future contributor shrinks
+        # 360-word cap. If a future contributor shrinks
         # valid_cover_letter() for an unrelated test, surface the
         # decoupling here instead of having the geometry assertion
         # mislead the reader.
@@ -410,7 +548,7 @@ class TestCoverLetterSoftHyphenRegression:
             f"valid_cover_letter() word count is {word_count}, below the "
             f"high-water-mark floor of {self.HIGH_WATER_MARK_FLOOR}. "
             "The page-fit assertion below relies on the fixture being "
-            "near the 300-word cap. Either restore the helper's length, "
+            "near the 360-word cap. Either restore the helper's length, "
             "or move this test to a local high-water-mark fixture."
         )
 

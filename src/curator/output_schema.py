@@ -4,30 +4,24 @@ The schema is constructed from the loaded ``PortfolioData`` at curate
 time and injected via ``output_config.format`` on ``messages.stream``.
 The grammar makes cross-parent ``highlight_id`` emission
 decode-time-impossible (via per-property ``items.enum`` on
-``work_highlights_by_id``). Skill keyword verbatim-match is enforced
-only post-hoc by ``client._adapt_curation_dict`` and
-``validate_curation_ids``, NOT at decode time: the 2026-05-13
-production schema (object-keyed-by-skill-group, 27 inner properties)
-exceeded Anthropic's compiled-grammar budget; the 2026-05-14 Haiku
-probe sequence localized the binding axis to inner-property count
-under ``required`` + ``additionalProperties: false``, forcing the
-collapse to a flat top-level array that shipped 2026-05-15.
+``work_highlights_by_id``).
 
 Shape (top-level):
 
     summary                 string
     suggested_label         string
-    company_slug            string
+    company_name            string  (free-text; client slugifies)
     work_highlights_by_id   object[work_id -> array[items.enum]]
-    skills                  array[string]  (flat keyword list)
+    skills                  array[items.enum]  (skill group IDs)
     projects                array[items.enum]
 
-Only ``work_highlights_by_id`` carries nested per-property
-``items.enum``; the adapter walks each emitted ``skills`` keyword back
-to its parent portfolio group (first-match by portfolio order) to
-reconstruct ``list[SkillRanking]`` for the domain model. Anthropic's
-grammar compiles per-property constraints independently (verified
-empirically 2026-05-13).
+The 2026-05-18 hybrid skill design moves keyword selection out of
+the AI: ``skills`` is an ordered list of portfolio skill group IDs
+(judgment), and the client adapter fills each group's keywords from
+portfolio data using JD-relevance scoring (see ``curator.jd_scorer``).
+The group-ID enum surface is small (typically <30 IDs), well under
+Anthropic's compiled-grammar budget; the 354-keyword surface that
+forced the 2026-05-14 flat-array workaround is no longer on the wire.
 
 The Pydantic models in ``models.py`` remain the single source of truth
 for application-level shape and validation. This module produces only
@@ -42,12 +36,12 @@ subset:
   ``work_highlights_by_id``; the adapter synthesizes empty
   ``WorkHighlightRanking`` instances for omitted entries to keep the
   Pydantic "every portfolio work entry has a ranking" invariant.
-  ``skills`` is a flat unconstrained string array (no nested
-  per-group structure on the wire), so the empty-enum rule has no
-  surface here.
+  ``skills.items.enum`` falls back to an unconstrained string when
+  the portfolio has zero skill groups.
 - ``minLength`` / ``maxLength`` / ``pattern`` / ``minimum`` /
-  ``maximum`` are not enforced at decode time. Constraints survive
-  only as post-hoc Pydantic re-validation on the parsed dict.
+  ``maximum`` / ``maxItems`` are not enforced at decode time.
+  Constraints survive only as post-hoc Pydantic re-validation and
+  adapter-side trimming on the parsed dict.
 - ``oneOf`` / ``dependentSchemas`` / ``if-then-else`` are
   unsupported; the design uses ``properties`` directly rather than
   any union construct.
@@ -58,15 +52,20 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from curator.page_caps import per_entry_emit_cap
 from curator.rules import (
     COVER_LETTER_VALID_SIGN_OFFS,
+    SKILL_GROUPS_MAX,
     SUMMARY_MANDATORY_MENTION,
     SUMMARY_WORD_TARGET_MAX,
     SUMMARY_WORD_TARGET_MIN,
+    WORK_HIGHLIGHT_WEIGHT_MAX,
+    WORK_HIGHLIGHT_WEIGHT_MIN,
 )
 
 if TYPE_CHECKING:
     from curator.models import PortfolioData
+
 
 _ID_PATTERN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -118,20 +117,27 @@ def _build_suggested_label_schema() -> dict[str, Any]:
     }
 
 
-def _build_company_slug_schema() -> dict[str, Any]:
+def _build_company_name_schema() -> dict[str, Any]:
     return {
         "type": "string",
         "description": (
-            "Kebab-case company name extracted from the JD. Use only "
-            "[a-z0-9-], starting with [a-z0-9]. For 'Acme Corp.' return "
-            "'acme-corp'. For subsidiaries like 'DataLabs (a Google "
-            "company)' return the primary subsidiary name ('datalabs'). "
-            "Strip corporate suffixes (Inc, Ltd, LLC, GmbH)."
+            "Company display name extracted from the JD, written as it "
+            "appears in the wild (e.g., 'DataDog', 'Anthropic, PBC', "
+            "'Hugging Face'). Preserve the canonical capitalization and "
+            "spacing the company uses for itself. Strip surrounding "
+            "boilerplate ('Job at ...', 'Careers - ...') but not "
+            "corporate suffixes. For subsidiaries like 'DataLabs (a "
+            "Google company)' return the primary subsidiary name "
+            "('DataLabs'). 200 characters max (soft cap; client slugifies "
+            "and truncates downstream). The client converts this to a "
+            "URL-safe slug; do not pre-slugify."
         ),
     }
 
 
-def _build_work_highlights_by_id_schema(portfolio: PortfolioData) -> dict[str, Any]:
+def _build_work_highlights_by_id_schema(
+    portfolio: PortfolioData, max_pages: int
+) -> dict[str, Any]:
     """Object keyed by work entry ID; each value is enum-constrained items.
 
     Work entries with zero highlights are omitted (Anthropic rejects
@@ -139,23 +145,30 @@ def _build_work_highlights_by_id_schema(portfolio: PortfolioData) -> dict[str, A
     ``WorkHighlightRanking`` instances for omitted entries to satisfy
     the validator's "every portfolio work entry has a ranking"
     invariant.
+
+    The per-entry description carries a soft cap on emitted IDs derived
+    from the renderer's per-position floor and the current
+    ``max_pages``. The cap is enforced post-parse by the client adapter
+    (Anthropic's structured-output API does not honor ``maxItems``).
     """
     properties: dict[str, Any] = {}
     required: list[str] = []
-    for w in portfolio.work:
+    for position, w in enumerate(portfolio.work):
         wid = _check_id(w.id, "work entry")
         if not w.highlights:
             continue
         highlight_ids = [_check_id(h.id, f"highlight in {wid}") for h in w.highlights]
+        emit_cap = per_entry_emit_cap(position, max_pages)
         properties[wid] = {
             "type": "array",
             "description": (
                 f"Highlights belonging to work entry '{wid}', ordered "
                 f"strongest-first for the JD. Every emitted string "
-                f"must be one of this entry's highlight IDs. Return ALL "
-                f"of this entry's highlight IDs in ranked order; do not "
-                f"omit highlights. The renderer trims from the bottom "
-                f"based on page fit."
+                f"must be one of this entry's highlight IDs. Emit at "
+                f"most {emit_cap} IDs (your top picks). The renderer "
+                f"keeps the top entries that fit the {max_pages}-page "
+                f"budget; emitting more than {emit_cap} wastes tokens "
+                f"on IDs the renderer will discard."
             ),
             "items": {"type": "string", "enum": highlight_ids},
         }
@@ -176,45 +189,158 @@ def _build_work_highlights_by_id_schema(portfolio: PortfolioData) -> dict[str, A
 
 
 def _build_skills_schema(portfolio: PortfolioData) -> dict[str, Any]:
-    """Flat top-level array of skill keyword strings.
+    """Top-level array of skill group IDs (hybrid AI/code skill selection).
 
-    Wire shape: ``{"skills": ["EC2", "S3", "Kubernetes", ...]}``. The
-    model emits keywords ordered by JD fit across all relevant
-    portfolio skill groups. The client adapter walks each emitted
-    keyword back to its parent portfolio group (first-match by
-    portfolio iteration order) to reconstruct ``list[SkillRanking]``.
+    Wire shape: ``{"skills": ["skill-aws", "skill-devops", ...]}``. The
+    model emits an *ordered* list of portfolio skill group IDs ranked
+    by JD relevance (judgment). The client adapter then fills each
+    group's keywords from portfolio data using a JD-relevance scorer
+    (bookkeeping; see ``curator.jd_scorer``). The reconstructed
+    ``list[SkillRanking]`` is what reaches the renderer.
 
-    There is NO ``items.enum``: the 354-string production surface
-    across 22 skill groups exceeded Anthropic's compiled-grammar
-    budget (HTTP 400 "compiled grammar is too large" on 2026-05-13).
-    Verbatim-match enforcement lives in
-    ``client._adapt_curation_dict`` (drops + WARN logs unknown
-    keywords) and ``validate_curation_ids`` (defense in depth).
-
-    The argument is unused at present (the flat shape carries no
-    portfolio-derived enum), but the signature mirrors the other
-    ``_build_*_schema`` builders so future tightening can hook in
-    without a call-site change.
+    The group ID space is small enough (typically <30 groups) to
+    encode as an ``items.enum`` without hitting Anthropic's
+    compiled-grammar budget; the per-keyword 354-string surface that
+    forced the earlier flat-array design (2026-05-13) is no longer on
+    the wire. ``maxItems`` is not supported in structured output, so
+    the cap on group count surfaces in the description text and is
+    enforced post-parse by the adapter.
     """
-    del portfolio  # see docstring
+    group_ids = [_check_id(g.id, "skill group") for g in portfolio.skills]
+    items: dict[str, Any] = {"type": "string"}
+    if group_ids:
+        items["enum"] = group_ids
     return {
         "type": "array",
         "description": (
-            "Flat list of skill keywords ordered by JD fit, strongest "
-            "first across all relevant portfolio skill groups. Every "
-            "emitted string MUST be a verbatim (case-sensitive) match "
-            "of a keyword already present in some portfolio skill "
-            "group's ``keywords`` list. The schema does not enforce "
-            "this at decode time (compile-budget constraint, see "
-            "module docstring); non-verbatim keywords are dropped "
-            "post-hoc by the client adapter and surface as WARN log "
-            "lines. If a keyword appears in multiple portfolio groups, "
-            "include it only once. If a portfolio group is irrelevant "
-            "to the JD, omit all of its keywords; do NOT pad with "
-            "weak keywords to keep a group represented. May be empty "
-            "when no portfolio group is sufficiently JD-relevant."
+            f"Ordered list of portfolio skill group IDs, strongest "
+            f"JD-fit first. Each ID must be the ID of a portfolio "
+            f"skill group; the client fills in the keywords for each "
+            f"group from portfolio data using JD-relevance scoring. "
+            f"Emit at most {SKILL_GROUPS_MAX} groups. Omit any group "
+            f"that is irrelevant to the JD; fewer well-targeted "
+            f"groups beat broad coverage. May be empty when no group "
+            f"is sufficiently JD-relevant. Order matters: the first "
+            f"emitted group renders first in the skill section."
         ),
-        "items": {"type": "string"},
+        "items": items,
+    }
+
+
+#: Section names the AI may reorder in the trim cascade middle band.
+#: ``interests`` (first) and the work-highlight tiers (last + below-floor)
+#: are pinned by the renderer and not exposed to the AI.
+_TRIM_PRIORITY_MIDDLE_SECTIONS: tuple[str, ...] = (
+    "project_highlights",
+    "projects",
+    "certificates",
+    "education",
+    "skill_groups",
+)
+
+
+def _build_work_highlight_weights_schema(portfolio: PortfolioData) -> dict[str, Any]:
+    """Per-work-entry priority weights (optional AI hint).
+
+    Each property is a portfolio work entry ID; values are floats with
+    a soft target range of
+    ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]`` (see
+    ``curator.rules``). The renderer multiplies the per-position floor
+    by the weight when deciding how aggressively to trim each entry,
+    allowing the AI to surface JD signals like "this role is much more
+    relevant than that one." Defaults to 1.0 (no adjustment) for
+    entries the AI omits.
+
+    Mirrors ``work_highlights_by_id`` in omitting work entries with
+    zero highlights: a weight on a zero-highlight entry has no
+    behavioral effect (renderer floor stays 0), so the wire surface
+    skips it.
+
+    Range enforcement: Anthropic's structured-output keyword subset
+    does NOT honor ``minimum``/``maximum`` (see module docstring); the
+    range is communicated to the model via property and aggregate
+    description text and CLAMPED post-parse by
+    ``ResumeCuration._clamp_weights_range``. Out-of-range values are
+    bounded to ``[WORK_HIGHLIGHT_WEIGHT_MIN, WORK_HIGHLIGHT_WEIGHT_MAX]``
+    and the pre-clamp emission is preserved on the model in
+    ``work_highlight_weights_raw`` (and persisted to
+    ``curation_log.json.ai_hints.work_highlight_weights_raw``) for
+    audit.
+
+    Cap multiplier lockstep: the per-entry safety-net cap is
+    ``ceil(floor * WORK_HIGHLIGHT_WEIGHT_MAX)`` in
+    :func:`curator.page_caps.per_entry_emit_cap`. Matching the
+    multiplier to ``WORK_HIGHLIGHT_WEIGHT_MAX`` keeps weights at the
+    boundary effective at every position. The aggregate description
+    below tells the model how to recover headroom (emit more
+    highlight IDs) rather than over-spending tokens on out-of-range
+    weight signals the validator will clamp.
+    """
+    properties: dict[str, Any] = {}
+    for w in portfolio.work:
+        if not w.highlights:
+            continue
+        wid = _check_id(w.id, "work entry")
+        properties[wid] = {
+            "type": "number",
+            "description": (
+                f"Relative priority weight for work entry '{wid}'. "
+                f"MUST stay within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
+                f"{WORK_HIGHLIGHT_WEIGHT_MAX}]. 1.0 = no adjustment; "
+                f">1 keeps more highlights from this role; <1 keeps "
+                f"fewer. {WORK_HIGHLIGHT_WEIGHT_MAX} is the strongest "
+                "signal the cascade acts on; values above carry no "
+                "additional weight (the renderer cap is "
+                f"ceil(floor * {WORK_HIGHLIGHT_WEIGHT_MAX}))."
+            ),
+        }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "description": (
+            "Optional per-work-entry priority weights. Emit only when "
+            "the JD signals a strong preference for one role's content "
+            "over another. Keys are portfolio work entry IDs; values "
+            f"MUST stay within [{WORK_HIGHLIGHT_WEIGHT_MIN}, "
+            f"{WORK_HIGHLIGHT_WEIGHT_MAX}]. Omitted entries default to "
+            "1.0. The per-entry highlight emission cap "
+            f"(ceil(floor * {WORK_HIGHLIGHT_WEIGHT_MAX})) still applies; "
+            "weights affect only the renderer's per-position floor, "
+            "not the model's emission ceiling. To keep more highlights "
+            "at the most-recent role, emit additional highlight_id "
+            "entries in work_highlights_by_id rather than a higher "
+            "weight."
+        ),
+        "properties": properties,
+    }
+
+
+def _build_trim_priority_schema() -> dict[str, Any]:
+    """Optional AI-controlled cascade order for middle-tier sections.
+
+    Interests is always dropped first; work highlights are always
+    dropped last (per-position floor first, below-floor as last
+    resort). The AI controls the order of everything in between.
+    """
+    return {
+        "type": "array",
+        "description": (
+            "Optional ordering of middle-tier sections by drop "
+            "priority when the page overflows. First listed is "
+            "dropped first. Sections omitted from the list inherit "
+            "the default cascade order: project_highlights -> "
+            "projects -> certificates -> education -> skill_groups. "
+            "Interests is always first to drop; work-highlights are "
+            "always last. Use this when the JD signals a strong "
+            "preference: emphasize certifications by putting "
+            "'certificates' last; deprioritize them by putting "
+            "'certificates' first; emphasize OSS work by putting "
+            "'projects' last."
+        ),
+        "items": {
+            "type": "string",
+            "enum": list(_TRIM_PRIORITY_MIDDLE_SECTIONS),
+        },
     }
 
 
@@ -240,13 +366,21 @@ def _build_projects_schema(portfolio: PortfolioData) -> dict[str, Any]:
     }
 
 
-def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
+def _build_resume_schema(portfolio: PortfolioData, max_pages: int) -> dict[str, Any]:
     """The resume-only schema body.
 
     Top-level field declaration order is load-bearing under constrained
     decoding (CLAUDE.md "Claude API & AI Best Practices"): the model
     emits fields in declared order, so ``summary`` first commits tone
     and framing before ``work_highlights_by_id`` ranking decisions.
+    ``work_highlight_weights`` (per-entry budget hints) follows the
+    ranking so the model assigns weights after committing to its
+    ranking choices. ``trim_priority`` is emitted last so it reads
+    every content section first.
+
+    Both ``work_highlight_weights`` and ``trim_priority`` are optional
+    in ``required``: the model may omit either or both, in which case
+    the renderer falls back to default behavior.
     """
     return {
         "type": "object",
@@ -254,7 +388,7 @@ def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
         "required": [
             "summary",
             "suggested_label",
-            "company_slug",
+            "company_name",
             "work_highlights_by_id",
             "skills",
             "projects",
@@ -262,10 +396,14 @@ def _build_resume_schema(portfolio: PortfolioData) -> dict[str, Any]:
         "properties": {
             "summary": _build_summary_schema(),
             "suggested_label": _build_suggested_label_schema(),
-            "company_slug": _build_company_slug_schema(),
-            "work_highlights_by_id": _build_work_highlights_by_id_schema(portfolio),
+            "company_name": _build_company_name_schema(),
+            "work_highlights_by_id": _build_work_highlights_by_id_schema(
+                portfolio, max_pages
+            ),
+            "work_highlight_weights": _build_work_highlight_weights_schema(portfolio),
             "skills": _build_skills_schema(portfolio),
             "projects": _build_projects_schema(portfolio),
+            "trim_priority": _build_trim_priority_schema(),
         },
     }
 
@@ -349,7 +487,10 @@ def _build_cover_letter_schema() -> dict[str, Any]:
 
 
 def build_curation_schema(
-    portfolio: PortfolioData, *, with_cover_letter: bool = False
+    portfolio: PortfolioData,
+    *,
+    with_cover_letter: bool = False,
+    max_pages: int = 2,
 ) -> dict[str, Any]:
     """Build the JSON schema sent to Anthropic for a single ``curate()`` call.
 
@@ -361,15 +502,23 @@ def build_curation_schema(
         with_cover_letter: When True, wrap the resume schema with a
             sibling ``cover_letter`` property mirroring
             ``CoverLetterCuration``.
+        max_pages: Page budget for the current call. Drives the
+            per-work-entry highlight-emission cap surfaced in each
+            property's ``description`` text (Anthropic does not enforce
+            ``maxItems``; the cap is a soft hint to the model and a
+            hard limit applied post-parse by the client adapter).
+            Defaults to 2 to match the project-wide default page
+            budget.
 
     Returns:
         A dict ready to pass as the ``schema`` field of
         ``output_config.format`` on ``messages.stream``. Construction
-        is deterministic: ``build_curation_schema(p) ==
-        build_curation_schema(p)`` byte-for-byte across fresh process
-        invocations as long as the input portfolio is byte-stable.
+        is deterministic: ``build_curation_schema(p, max_pages=N) ==
+        build_curation_schema(p, max_pages=N)`` byte-for-byte across
+        fresh process invocations as long as the input portfolio is
+        byte-stable.
     """
-    resume = _build_resume_schema(portfolio)
+    resume = _build_resume_schema(portfolio, max_pages)
     if not with_cover_letter:
         return resume
     return {
