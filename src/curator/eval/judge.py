@@ -58,7 +58,7 @@ JUDGE_SCORE_MAX: int = 5
 # curator system prompt changes; dates may collide on sessions that edit both).
 # Hand-bumped semantic version; paired with JUDGE_PROMPT_HASH below as a
 # content-hash tripwire for accidental drift.
-JUDGE_VERSION: str = "2026-05-09"
+JUDGE_VERSION: str = "2026-05-20"
 
 #: Dimension → group mapping for Tier2DimensionResult.
 _DIMENSION_GROUPS: dict[str, str] = {

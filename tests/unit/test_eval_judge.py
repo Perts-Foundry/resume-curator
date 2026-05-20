@@ -346,7 +346,7 @@ class TestTier2Report:
         # signal that the rubric text changed. Update here in lockstep.
         from curator.eval.judge import JUDGE_VERSION
 
-        assert JUDGE_VERSION == "2026-05-09"
+        assert JUDGE_VERSION == "2026-05-20"
 
     def test_judge_prompt_hash_auto_derived(self) -> None:
         # JUDGE_PROMPT_HASH is the sha256 (first 12 chars) of the rubric
