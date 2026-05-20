@@ -384,11 +384,13 @@ These rules apply to all code interacting with the Claude API. Consult
 - **Schema-based reasoning** (field ordering) over extended thinking blocks
   for audit visibility. Use the `effort` parameter for quality tuning.
 - **Prompt caching** on stable data (portfolio) only. Never cache variable
-  data (job descriptions). The Anthropic ephemeral cache has a 5-minute
-  TTL; successive `curator curate` runs spaced more than 5 minutes apart
-  pay full input-token cost on each run (cache miss surfaces as
-  `cache_read_input_tokens: 0` in `curation_log.json`). See
-  `docs/architecture.md` "Prompt Caching" for the full cost model.
+  data (job descriptions). Cache TTL is operator-configurable via
+  `CURATOR_CACHE_TTL` (default `1h`) or `--cache-ttl {5m,1h}`; the 1h
+  tier writes at 2x input, the 5m tier at 1.25x, both read at 0.1x. The
+  audit log carries `cache_ttl` (configured) and a derived `cache_outcome`
+  (`hit` / `create` / `miss`) in `curation_log.json` so a cache miss is
+  observable per-run. See `docs/architecture.md` "Prompt Caching" for the
+  break-even math and the single-shot-waste WARN-log behavior.
 - **Never log API keys, full request/response bodies, or PII.** Use
   `SecretStr` for secrets.
 - **Never re-run a paid API call just to change output format.** A single
