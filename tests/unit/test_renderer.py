@@ -529,7 +529,7 @@ class TestWriteAuditArtifacts:
             SYSTEM_PROMPT_HASH,
         )
 
-        assert log_data["format_version"] == "2.6"
+        assert log_data["format_version"] == "2.7"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
         assert log_data["prompt_version"] == "2026-05-23"
@@ -550,6 +550,10 @@ class TestWriteAuditArtifacts:
         # The fixture's cache_ttl defaults to None (rerender-shape result).
         assert log_data["cache_ttl"] is None
         assert log_data["cache_outcome"] == "create"
+        # add_back_count + over_budget (2.7): defaults when the renderer
+        # call site omits them (no add-back occurred, on-budget render).
+        assert log_data["add_back_count"] == 0
+        assert log_data["over_budget"] is False
 
     def test_jd_text_preserved(
         self,
@@ -2605,6 +2609,8 @@ class TestTrimToFit:
                 trim_log,
                 pages,
                 safety_valve_fired,
+                add_back_count,
+                over_budget,
             ) = _trim_to_fit(
                 sections,
                 basics,
@@ -2621,6 +2627,9 @@ class TestTrimToFit:
         assert pages == 1
         # Convergent immediate fit → safety valve did NOT fire.
         assert safety_valve_fired is False
+        # No cascade trims happened, so add-back has nothing to restore.
+        assert add_back_count == 0
+        assert over_budget is False
 
     def test_trims_until_fits(self, tmp_path: Path) -> None:
         """Trims content iteratively until page count is within budget."""
@@ -2660,7 +2669,15 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", side_effect=page_counts),
         ):
-            final_sections, final_interests, trim_log, pages, _safety = _trim_to_fit(
+            (
+                final_sections,
+                final_interests,
+                trim_log,
+                pages,
+                _safety,
+                _add_back,
+                _over,
+            ) = _trim_to_fit(
                 sections,
                 basics,
                 interests,
@@ -2716,7 +2733,15 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages, safety_valve_fired = _trim_to_fit(
+            (
+                _,
+                _,
+                trim_log,
+                _pages,
+                safety_valve_fired,
+                _add_back,
+                _over,
+            ) = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -2759,7 +2784,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages, _safety = _trim_to_fit(
+            _, _, trim_log, _pages, _safety, _add_back, _over = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -2801,7 +2826,7 @@ class TestTrimToFit:
             patch("curator.renderer.subprocess.run", side_effect=fake_run),
             patch("curator.renderer.get_page_count", return_value=2),
         ):
-            _, _, trim_log, _pages, _safety = _trim_to_fit(
+            _, _, trim_log, _pages, _safety, _add_back, _over = _trim_to_fit(
                 sections,
                 basics,
                 interests,
@@ -2873,7 +2898,15 @@ class TestTrimToFit:
                 patch("curator.renderer.subprocess.run", side_effect=fake_run),
                 patch("curator.renderer.get_page_count", side_effect=page_counts),
             ):
-                final_sections, _, trim_log, pages, _safety = _trim_to_fit(
+                (
+                    final_sections,
+                    _,
+                    trim_log,
+                    pages,
+                    _safety,
+                    _add_back,
+                    _over,
+                ) = _trim_to_fit(
                     sections,
                     basics,
                     None,
@@ -2970,7 +3003,15 @@ class TestTrimToFit:
             patch("curator.renderer.get_page_count", side_effect=page_counts),
         ):
             caps = _caps_for_pages(2)
-            final_sections, _, trim_log, pages, _safety = _trim_to_fit(
+            (
+                final_sections,
+                _,
+                trim_log,
+                pages,
+                _safety,
+                _add_back,
+                _over,
+            ) = _trim_to_fit(
                 sections,
                 basics,
                 None,
@@ -3040,6 +3081,522 @@ class TestTrimToFit:
 
         assert sections == original
         assert interests == original_interests
+
+
+class TestTrimToFitAddBack:
+    """Tests for the post-fit add-back pass inside ``_trim_to_fit``.
+
+    The pass walks the trim history in strict LIFO order, restoring
+    each pre-trim snapshot and recompiling; restores that still fit the
+    page budget are accepted, the first overflow reverts to last-good
+    and exits. ``pages == max_pages`` triggers an early exit.
+    """
+
+    @staticmethod
+    def _make_dirs(tmp_path: Path) -> tuple[Path, Path]:
+        output_dir = tmp_path / "profile"
+        output_dir.mkdir()
+        (output_dir / "data").mkdir()
+        tpl = tmp_path / "tpl" / "curated.typ"
+        tpl.parent.mkdir()
+        tpl.write_text("// dummy")
+        return output_dir, tpl
+
+    @staticmethod
+    def _fake_run(cmd: list[str], **_kw: Any) -> Any:
+        Path(cmd[-1]).write_bytes(b"%PDF-1.4 fake")
+        return type("R", (), {"returncode": 0, "stderr": ""})()
+
+    def test_addback_restores_when_whitespace_allows(self, tmp_path: Path) -> None:
+        """Two trims fire, then the page fits; both restores succeed
+        within budget and ``trim_log`` shrinks back to empty.
+        """
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [],
+            "projects": [],
+            # 5 certs so two cert trims can fire (cert floor is 3).
+            "certificates": [{"id": f"c{i}"} for i in range(1, 6)],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        interests = {"hobbies": [{"name": "Reading"}], "fun_facts": []}
+        # iter1: 3 (over) -> trim interests; iter2: 3 (over) -> trim c5;
+        # iter3: 1 (fits) -> addback1 (restore c5) -> 1 (accept);
+        # addback2 (restore interests) -> 2 (accept, == max_pages so
+        # early-exit fires after this acceptance).
+        page_counts = iter([3, 3, 1, 1, 2])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            (
+                final_sections,
+                final_interests,
+                trim_log,
+                pages,
+                safety_valve_fired,
+                add_back_count,
+                over_budget,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                interests,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+            )
+
+        assert add_back_count == 2
+        assert trim_log == []
+        assert safety_valve_fired is False
+        assert over_budget is False
+        assert pages == 2
+        # Interests fully restored to the original dict, not EMPTY_INTERESTS.
+        assert final_interests == interests
+        assert len(final_sections["certificates"]) == 5
+
+    def test_addback_stops_at_overflow(self, tmp_path: Path) -> None:
+        """First restore fits, second overflows; only the first is kept
+        and the on-disk state matches the last-good restore.
+        """
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [],
+            "projects": [],
+            "certificates": [{"id": f"c{i}"} for i in range(1, 6)],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        interests = {"hobbies": [{"name": "Reading"}], "fun_facts": []}
+        # iter1: 3 (over) -> trim interests; iter2: 3 (over) -> trim c5;
+        # iter3: 1 (fits) -> addback1 (restore c5) -> 1 (accept);
+        # addback2 (restore interests) -> 3 (overflow, revert);
+        # final compile of last_good state -> 1 (sentinel; not checked).
+        page_counts = iter([3, 3, 1, 1, 3, 1])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            (
+                _final_sections,
+                final_interests,
+                trim_log,
+                pages,
+                _safety,
+                add_back_count,
+                over_budget,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                interests,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+            )
+
+        assert add_back_count == 1
+        # Only the trimmed interests entry remains in the log;
+        # the cert trim was successfully reverted.
+        assert trim_log == ["Removed interests section"]
+        assert final_interests == {"hobbies": [], "fun_facts": []}
+        assert pages == 1
+        assert over_budget is False
+
+    def test_no_addback_when_no_trims(self, tmp_path: Path) -> None:
+        """If the cascade never fires, the add-back loop is a no-op."""
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", return_value=1),
+        ):
+            (
+                _final_sections,
+                _final_interests,
+                trim_log,
+                pages,
+                _safety,
+                add_back_count,
+                over_budget,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                None,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+            )
+
+        assert trim_log == []
+        assert add_back_count == 0
+        assert pages == 1
+        assert over_budget is False
+
+    def test_addback_early_exit_at_max_pages(self, tmp_path: Path) -> None:
+        """When the post-cascade page count equals ``max_pages``, the
+        add-back loop exits before attempting any restore (any restore
+        would overflow the exact budget).
+        """
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [],
+            "projects": [],
+            "certificates": [{"id": f"c{i}"} for i in range(1, 6)],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        interests = {"hobbies": [{"name": "Reading"}], "fun_facts": []}
+        # iter1: 3 (over) -> trim interests; iter2: 2 (fits exactly at
+        # max_pages=2) -> early-exit fires; no add-back attempt.
+        page_counts = iter([3, 2])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            (
+                _final_sections,
+                final_interests,
+                trim_log,
+                pages,
+                _safety,
+                add_back_count,
+                over_budget,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                interests,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+            )
+
+        assert pages == 2
+        assert add_back_count == 0
+        # The cascade trim stuck (early exit prevented add-back).
+        assert trim_log == ["Removed interests section"]
+        assert final_interests == {"hobbies": [], "fun_facts": []}
+        assert over_budget is False
+
+    def test_addback_interests_round_trip(self, tmp_path: Path) -> None:
+        """Tier 1 overwrites ``interests`` with ``EMPTY_INTERESTS``;
+        snapshot-based add-back restores the *original* interests dict
+        (pinning that snapshots are deep copies of pre-trim state, not
+        references to mutated objects).
+        """
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        original_interests = {
+            "hobbies": [{"name": "Birdwatching"}, {"name": "Cycling"}],
+            "fun_facts": [{"text": "Speak three languages."}],
+        }
+        # Tier 1 fires (interests trim) bringing pages from 3 -> 1.
+        # Add-back restores interests -> still 1 page, accept.
+        page_counts = iter([3, 1, 1])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            (
+                _final_sections,
+                final_interests,
+                trim_log,
+                _pages,
+                _safety,
+                add_back_count,
+                _over,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                original_interests,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+            )
+
+        assert add_back_count == 1
+        assert trim_log == []
+        # Critical: restored to the ORIGINAL dict, not EMPTY_INTERESTS.
+        assert final_interests == original_interests
+        assert final_interests is not original_interests  # deep-copy
+
+    def test_addback_skill_group_position_preserved(self, tmp_path: Path) -> None:
+        """Skill groups are removed atomically by id in tier 7. The
+        snapshot-based add-back restores the full ``sections['skills']``
+        list, including the removed group in its original position.
+        """
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        # 5 skill groups so tier 7 can remove one without breaching the
+        # default skill_group_floor of 4.
+        original_skills = [
+            {"id": "iac", "keywords": ["Terraform"]},
+            {"id": "containers", "keywords": ["Docker"]},
+            {"id": "cloud-aws", "keywords": ["AWS"]},
+            {"id": "monitoring", "keywords": ["Grafana"]},
+            {"id": "scripting", "keywords": ["Python"]},
+        ]
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [s.copy() for s in original_skills],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        # iter1: 3 (over) -> tier 7 removes scripting; iter2: 1 (fits);
+        # addback -> 1 (accept).
+        page_counts = iter([3, 1, 1])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            (
+                final_sections,
+                _final_interests,
+                trim_log,
+                _pages,
+                _safety,
+                add_back_count,
+                _over,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                None,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+                # Force tier 7 to be a candidate by lowering the floor.
+                skill_group_floor=4,
+            )
+
+        assert add_back_count == 1
+        assert trim_log == []
+        # The restored group is at its original index, not appended.
+        assert [s["id"] for s in final_sections["skills"]] == [
+            "iac",
+            "containers",
+            "cloud-aws",
+            "monitoring",
+            "scripting",
+        ]
+
+    def test_addback_lifo_with_ai_trim_priority(self, tmp_path: Path) -> None:
+        """AI emits a custom ``trim_priority``; the LIFO add-back order
+        follows the *physical drop order*, not the AI preference order.
+
+        Pins the documented asymmetry: an AI that says "drop X before Y"
+        gets X dropped first and Y dropped second; LIFO restore brings
+        back Y first (matching the inverse physical order), even though
+        the AI's preference would have asked X to be restored first.
+        """
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [
+                {"id": "iac", "keywords": ["Terraform"]},
+                {"id": "containers", "keywords": ["Docker"]},
+                {"id": "cloud-aws", "keywords": ["AWS"]},
+                {"id": "monitoring", "keywords": ["Grafana"]},
+                {"id": "scripting", "keywords": ["Python"]},
+            ],
+            "projects": [],
+            # 4 certs: with cert floor 3, exactly one cert trim is allowed.
+            "certificates": [{"id": f"c{i}"} for i in range(1, 5)],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        # iter1 (over): AI ordered skill_groups first -> trim scripting.
+        # iter2 (over): next in AI order is certificates -> trim c4.
+        # iter3 (fits): addback restores c4 first (physical LIFO),
+        # then scripting (physical LIFO order = preference inverse).
+        page_counts = iter([3, 3, 1, 1, 1])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            (
+                _final_sections,
+                _final_interests,
+                trim_log,
+                _pages,
+                _safety,
+                add_back_count,
+                _over,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                None,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+                trim_priority=("skill_groups", "certificates"),
+                skill_group_floor=4,
+            )
+
+        # Both add-backs succeed (pages stay <= max_pages).
+        assert add_back_count == 2
+        # trim_log emptied (both trims reverted in physical LIFO order).
+        assert trim_log == []
+
+    def test_addback_typst_failure_atomicity(self, tmp_path: Path) -> None:
+        """If ``_invoke_typst`` raises during an add-back attempt, the
+        exception propagates and prior accepted restores survive. Pins
+        that the add-back loop does not swallow errors from the
+        underlying compile.
+        """
+        from curator.renderer import RenderError, _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        sections: dict[str, Any] = {
+            "work": [],
+            "skills": [],
+            "projects": [],
+            "certificates": [{"id": f"c{i}"} for i in range(1, 6)],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        interests = {"hobbies": [{"name": "Reading"}], "fun_facts": []}
+
+        # Track how many invoke_typst calls have happened so we can
+        # explode on the add-back compile (call 4).
+        call_count = {"n": 0}
+
+        def maybe_fail_run(cmd: list[str], **_kw: Any) -> Any:
+            call_count["n"] += 1
+            if call_count["n"] >= 4:
+                msg = "synthetic Typst crash during add-back"
+                raise RenderError(msg)
+            Path(cmd[-1]).write_bytes(b"%PDF-1.4 fake")
+            return type("R", (), {"returncode": 0, "stderr": ""})()
+
+        # iter1: 3 (over) -> trim interests; iter2: 3 (over) -> trim c5;
+        # iter3: 1 (fits) -> add-back attempt (call 4) raises.
+        page_counts = iter([3, 3, 1])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=maybe_fail_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+            pytest.raises(RenderError, match="synthetic Typst crash"),
+        ):
+            _trim_to_fit(
+                sections,
+                basics,
+                interests,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+            )
+
+    def test_addback_not_attempted_on_safety_valve_path(self, tmp_path: Path) -> None:
+        """When the cascade returns ``None`` while still over budget,
+        ``safety_valve_fired=True`` short-circuits the success path and
+        the add-back loop never runs. ``over_budget`` is True and
+        ``add_back_count`` is 0.
+        """
+        from curator.renderer import _trim_to_fit
+
+        output_dir, tpl = self._make_dirs(tmp_path)
+        # Nothing trimmable: empty interests, no projects, no certs above
+        # floor, no skill groups above floor, work entries at floor.
+        sections: dict[str, Any] = {
+            "work": [{"id": "w1", "highlights": [{"id": "h1"}]}],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        basics = {"name": "Test"}
+        # Page count stays at 3 (over the budget of 2); cascade exhausts.
+        page_counts = iter([3])
+
+        with (
+            patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
+            patch("curator.renderer.get_page_count", side_effect=page_counts),
+        ):
+            (
+                _final_sections,
+                _final_interests,
+                trim_log,
+                pages,
+                safety_valve_fired,
+                add_back_count,
+                over_budget,
+            ) = _trim_to_fit(
+                sections,
+                basics,
+                None,
+                output_dir,
+                tpl,
+                ["work", "skills", "projects", "certificates", "education"],
+                max_pages=2,
+                max_trim_iterations=15,
+                # Per-entry floor of 1 (base_floor > 0) blocks tier 8 from
+                # draining w1's last highlight; cascade exhausts cleanly.
+                work_position_floors=(3, 3, 3, 3, 3),
+                certificate_floor=0,
+                skill_group_floor=0,
+                education_floor=0,
+            )
+
+        assert safety_valve_fired is True
+        assert over_budget is True
+        assert pages == 3
+        assert add_back_count == 0
+        assert trim_log == []
 
 
 # ---------------------------------------------------------------------------
