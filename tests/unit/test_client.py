@@ -253,6 +253,32 @@ class TestCurationResult:
         }
         assert CurationResult(**kwargs) == CurationResult(**kwargs)
 
+    def test_cache_ttl_defaults_to_none(self, valid_curation: ResumeCuration) -> None:
+        # ``cache_ttl`` defaults to None so scripts/rerender.py and the
+        # static path (neither of which has TTL context) can construct
+        # CurationResult without supplying the field.
+        result = CurationResult(
+            curation=valid_curation,
+            model="test",
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+        assert result.cache_ttl is None
+
+    def test_cache_ttl_round_trips(self, valid_curation: ResumeCuration) -> None:
+        result = CurationResult(
+            curation=valid_curation,
+            model="test",
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            cache_ttl="1h",
+        )
+        assert result.cache_ttl == "1h"
+
 
 # ---------------------------------------------------------------------------
 # TestCuratorClientInit
@@ -477,7 +503,11 @@ class TestCurate:
 
         client.curate(portfolio_data, "Job description.")
 
-        mock_build.assert_called_once_with(portfolio_data, with_cover_letter=False)
+        mock_build.assert_called_once_with(
+            portfolio_data,
+            with_cover_letter=False,
+            cache_ttl="1h",
+        )
 
     def test_calls_build_user_message(
         self,
@@ -2440,3 +2470,141 @@ class TestPerEntryEmitCapUsesChronologicalPosition:
         # Oldest role (listed FIRST in portfolio order) must get cap
         # 3 - the smallest. Pre-fix it got cap 12.
         assert trimmed["oldest"] == 3
+
+
+class TestCurateCacheTtl:
+    """Cache-TTL plumbing: settings -> build_system_prompt, audit, WARN log."""
+
+    def test_default_passes_1h_to_build_system_prompt(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        message = _make_mock_message(valid_curation)
+        _wire_mock_stream(mocker, message)
+        mock_build = mocker.patch("curator.client.build_system_prompt")
+        mock_build.return_value = [{"type": "text", "text": "test"}]
+
+        client = CuratorClient(mock_settings)
+        client.curate(portfolio_data, "Job description.")
+
+        # mock_settings has cache_ttl="1h" by default (the field default).
+        kwargs = mock_build.call_args.kwargs
+        assert kwargs["cache_ttl"] == "1h"
+
+    def test_override_5m_threads_through(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        # Mutate via model_copy since CuratorSettings instances are
+        # immutable post-validation.
+        settings_5m = mock_settings.model_copy(update={"cache_ttl": "5m"})
+        message = _make_mock_message(valid_curation)
+        _wire_mock_stream(mocker, message)
+        mock_build = mocker.patch("curator.client.build_system_prompt")
+        mock_build.return_value = [{"type": "text", "text": "test"}]
+
+        client = CuratorClient(settings_5m)
+        client.curate(portfolio_data, "Job description.")
+
+        assert mock_build.call_args.kwargs["cache_ttl"] == "5m"
+
+    def test_curation_result_carries_cache_ttl(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        message = _make_mock_message(valid_curation)
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Job description.")
+
+        # mock_settings carries the 1h default.
+        assert result.cache_ttl == "1h"
+
+    def test_warn_when_1h_cache_created_no_reuse(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        # Cold cache: creation > 0, read == 0. Default settings cache_ttl="1h".
+        usage = _make_mock_usage(
+            cache_creation_input_tokens=29250,
+            cache_read_input_tokens=0,
+        )
+        message = _make_mock_message(valid_curation, usage=usage)
+        _wire_mock_stream(mocker, message)
+        warn_mock = mocker.patch("curator.client.logger.warning")
+        client = CuratorClient(mock_settings)
+
+        client.curate(portfolio_data, "Job description.")
+
+        matching = [
+            call
+            for call in warn_mock.call_args_list
+            if isinstance(call.args[0], str) and "2x write" in call.args[0]
+        ]
+        assert len(matching) == 1, warn_mock.call_args_list
+
+    def test_no_warn_when_cache_hits(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        # Warm cache: read > 0. Should NOT emit the 2x-write warning.
+        usage = _make_mock_usage(
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=29250,
+        )
+        message = _make_mock_message(valid_curation, usage=usage)
+        _wire_mock_stream(mocker, message)
+        warn_mock = mocker.patch("curator.client.logger.warning")
+        client = CuratorClient(mock_settings)
+
+        client.curate(portfolio_data, "Job description.")
+
+        matching = [
+            call
+            for call in warn_mock.call_args_list
+            if isinstance(call.args[0], str) and "2x write" in call.args[0]
+        ]
+        assert matching == []
+
+    def test_no_warn_when_5m_cache_created(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        # 5m cache write is only 1.25x (no penalty worth warning about).
+        settings_5m = mock_settings.model_copy(update={"cache_ttl": "5m"})
+        usage = _make_mock_usage(
+            cache_creation_input_tokens=29250,
+            cache_read_input_tokens=0,
+        )
+        message = _make_mock_message(valid_curation, usage=usage)
+        _wire_mock_stream(mocker, message)
+        warn_mock = mocker.patch("curator.client.logger.warning")
+        client = CuratorClient(settings_5m)
+
+        client.curate(portfolio_data, "Job description.")
+
+        matching = [
+            call
+            for call in warn_mock.call_args_list
+            if isinstance(call.args[0], str) and "2x write" in call.args[0]
+        ]
+        assert matching == []

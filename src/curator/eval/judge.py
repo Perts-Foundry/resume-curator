@@ -602,13 +602,21 @@ def build_judge_messages(
     return [{"role": "user", "content": user_text}]
 
 
-def _build_system_blocks() -> list[dict[str, Any]]:
-    """Build system message blocks with prompt caching on the rubric."""
+def _build_system_blocks(cache_ttl: str = "1h") -> list[dict[str, Any]]:
+    """Build system message blocks with prompt caching on the rubric.
+
+    ``cache_ttl`` selects between Anthropic's 5-minute default ("5m", omit
+    ``ttl`` key) and the GA 1-hour extended cache ("1h", explicit ``ttl``).
+    See ``CuratorSettings.cache_ttl`` for the cost/break-even rationale.
+    """
+    cache_control: dict[str, str] = {"type": "ephemeral"}
+    if cache_ttl == "1h":
+        cache_control["ttl"] = "1h"
     return [
         {
             "type": "text",
             "text": _RUBRIC_SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": cache_control,
         }
     ]
 
@@ -695,7 +703,7 @@ def evaluate_tier2(
         max_pages=ctx.max_pages,
     )
 
-    system = _build_system_blocks()
+    system = _build_system_blocks(cache_ttl=settings.cache_ttl)
     model = settings.judge_model
 
     # Build API kwargs. temperature=0 reduces score variance between runs

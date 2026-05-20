@@ -11,6 +11,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import click
 import typer
 from loguru import logger
 from rich.console import Console
@@ -404,6 +405,17 @@ def curate(
             "in the profile directory."
         ),
     ),
+    cache_ttl: str | None = typer.Option(
+        None,
+        "--cache-ttl",
+        click_type=click.Choice(["5m", "1h"]),
+        help=(
+            "Anthropic prompt-cache TTL on the portfolio block. '5m' "
+            "matches Anthropic's default; '1h' uses the extended GA cache "
+            "(2x write, same read; default for this tool). Overrides "
+            "CURATOR_CACHE_TTL."
+        ),
+    ),
 ) -> None:
     """Curate a resume tailored to a job description."""
     from pydantic import ValidationError
@@ -422,24 +434,26 @@ def curate(
             raise typer.Exit(code=1)
 
         try:
-            settings = (
-                CuratorSettings(max_pages=pages)
-                if pages is not None
-                else CuratorSettings()
-            )
+            overrides: dict[str, Any] = {}
+            if pages is not None:
+                overrides["max_pages"] = pages
+            if cache_ttl is not None:
+                overrides["cache_ttl"] = cache_ttl
+            settings = CuratorSettings(**overrides)
         except ValidationError as e:
             raise ConfigError(str(e)) from e
 
         # Log resolved config for troubleshooting.
         logger.info(
             "Config: model={}, max_tokens={}, effort={}, "
-            "max_pages={}, max_trim={}, retries={}",
+            "max_pages={}, max_trim={}, retries={}, cache_ttl={}",
             settings.model,
             settings.max_tokens,
             settings.effort,
             settings.max_pages,
             settings.max_trim_iterations,
             settings.api_max_retries,
+            settings.cache_ttl,
         )
         logger.info("Portfolio: {}", settings.portfolio_data_path)
         logger.info("Output dir: {}", settings.output_dir)

@@ -529,7 +529,7 @@ class TestWriteAuditArtifacts:
             SYSTEM_PROMPT_HASH,
         )
 
-        assert log_data["format_version"] == "2.5"
+        assert log_data["format_version"] == "2.6"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
         assert log_data["prompt_version"] == "2026-05-23"
@@ -545,6 +545,11 @@ class TestWriteAuditArtifacts:
         assert log_data["input_tokens"] == 1000
         assert "timestamp" in log_data
         assert log_data["cover_letter"] == {"enabled": False}
+        # cache_ttl + cache_outcome (2.6): the fixture has
+        # cache_creation > 0 and cache_read == 0, so outcome is "create".
+        # The fixture's cache_ttl defaults to None (rerender-shape result).
+        assert log_data["cache_ttl"] is None
+        assert log_data["cache_outcome"] == "create"
 
     def test_jd_text_preserved(
         self,
@@ -740,6 +745,83 @@ class TestWriteAuditArtifacts:
         log_data = json.loads(log_path.read_text())
         assert log_data["source"] == "static"
         assert log_data["model"] == "n/a"
+        # Static path has no API call: cache_ttl and cache_outcome are
+        # both null so a log reader can't be misled into thinking a TTL
+        # applied.
+        assert log_data["cache_ttl"] is None
+        assert log_data["cache_outcome"] is None
+
+
+class TestAuditLogCacheFields:
+    """``cache_ttl`` and derived ``cache_outcome`` in curation_log.json."""
+
+    def _result(
+        self,
+        simple_curation: ResumeCuration,
+        *,
+        cache_creation: int,
+        cache_read: int,
+        cache_ttl: str | None,
+        source: str = "api",
+    ) -> CurationResult:
+        return CurationResult(
+            curation=simple_curation,
+            model="claude-sonnet-4-6-20260217" if source == "api" else "n/a",
+            input_tokens=1000,
+            output_tokens=200,
+            cache_creation_input_tokens=cache_creation,
+            cache_read_input_tokens=cache_read,
+            source=source,  # type: ignore[arg-type]
+            cache_ttl=cache_ttl,
+        )
+
+    def test_outcome_hit_when_cache_read_positive(
+        self,
+        tmp_path: Path,
+        simple_curation: ResumeCuration,
+    ) -> None:
+        result = self._result(
+            simple_curation,
+            cache_creation=0,
+            cache_read=29250,
+            cache_ttl="1h",
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["cache_outcome"] == "hit"
+        assert log_data["cache_ttl"] == "1h"
+
+    def test_outcome_create_when_only_creation_positive(
+        self,
+        tmp_path: Path,
+        simple_curation: ResumeCuration,
+    ) -> None:
+        result = self._result(
+            simple_curation,
+            cache_creation=29250,
+            cache_read=0,
+            cache_ttl="1h",
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["cache_outcome"] == "create"
+
+    def test_outcome_miss_when_both_zero(
+        self,
+        tmp_path: Path,
+        simple_curation: ResumeCuration,
+    ) -> None:
+        # Unusual but defined: caching disabled or below-threshold prompt.
+        result = self._result(
+            simple_curation,
+            cache_creation=0,
+            cache_read=0,
+            cache_ttl="5m",
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["cache_outcome"] == "miss"
+        assert log_data["cache_ttl"] == "5m"
 
 
 class TestApplySelectionsSafetyNet:

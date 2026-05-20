@@ -189,13 +189,17 @@ class TestStaticRenderArtifacts:
         result = _render_static(static_portfolio, tmp_path)
 
         log = json.loads(result.curation_log_path.read_text())
-        assert log["format_version"] == "2.5"
+        assert log["format_version"] == "2.6"
         assert log["source"] == "static"
         assert log["model"] == "n/a"
         assert log["input_tokens"] == 0
         assert log["output_tokens"] == 0
         assert log["max_pages"] >= 1
         assert log["cover_letter"]["enabled"] is False
+        # Static path: no API call, so cache fields are null. A log
+        # reader cannot mistake a static run for a cache-miss API run.
+        assert log["cache_ttl"] is None
+        assert log["cache_outcome"] is None
 
     def test_mode_txt_descriptor(
         self, static_portfolio: PortfolioData, tmp_path: Path

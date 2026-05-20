@@ -35,7 +35,11 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from anthropic.types import MessageParam, TextBlockParam
+    from anthropic.types import (
+        CacheControlEphemeralParam,
+        MessageParam,
+        TextBlockParam,
+    )
 
 from curator.exceptions import JobDescriptionError
 from curator.models import AI_RANKED_SECTIONS, PortfolioData
@@ -683,6 +687,7 @@ def build_system_prompt(
     portfolio: PortfolioData,
     *,
     with_cover_letter: bool = False,
+    cache_ttl: str = "1h",
 ) -> list[TextBlockParam]:
     """Construct system message content blocks for the curation API call.
 
@@ -699,8 +704,23 @@ def build_system_prompt(
     ``with_cover_letter`` between requests drops the cache; additionally,
     Anthropic's structured-output feature invalidates the cache when
     ``output_format`` changes.
+
+    ``cache_ttl`` selects between Anthropic's 5-minute default ("5m",
+    omit ``ttl`` key on the cache_control dict) and the GA 1-hour
+    extended cache ("1h", explicit ``ttl: "1h"``). The default "1h"
+    targets multi-run application sessions; see
+    ``CuratorSettings.cache_ttl`` for the cost/break-even rationale.
+    If a future change adds a second cache_control on an earlier block
+    (e.g., the cover-letter block), 1h blocks MUST come before 5m blocks
+    per Anthropic's mixed-TTL ordering constraint.
     """
     portfolio_text = _serialize_portfolio(portfolio)
+
+    cache_control: CacheControlEphemeralParam
+    if cache_ttl == "1h":
+        cache_control = {"type": "ephemeral", "ttl": "1h"}
+    else:
+        cache_control = {"type": "ephemeral"}
 
     blocks: list[TextBlockParam] = [
         {"type": "text", "text": _SYSTEM_PROMPT_TEXT},
@@ -711,7 +731,7 @@ def build_system_prompt(
         {
             "type": "text",
             "text": portfolio_text,
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": cache_control,
         }
     )
     return blocks

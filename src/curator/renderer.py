@@ -989,9 +989,13 @@ def _write_audit_artifacts(
     # selection (``bands_for_pages``). 2.5 adds the optional
     # ``ai_hints.work_highlight_weights_raw`` mirror so an over-emitting
     # AI is visible in the audit trail even when the validator clamped
-    # the primary field. Renderer caps are deterministic from
-    # ``max_pages`` via ``_caps_for_pages`` and are intentionally not
-    # persisted; storing both invites drift.
+    # the primary field. 2.6 adds ``cache_ttl`` (the configured TTL for
+    # this request) and ``cache_outcome`` (a derived signal of whether
+    # the prompt cache hit, missed, or was just created), so a cost-
+    # conscious operator can answer "did my 2x write pay off?" without
+    # manually correlating tokens across runs. Renderer caps are
+    # deterministic from ``max_pages`` via ``_caps_for_pages`` and are
+    # intentionally not persisted; storing both invites drift.
     #
     # Version semantics: a minor bump (2.x -> 2.y) covers all additive
     # field surfaces shipped in the same PR. The number identifies the
@@ -1001,8 +1005,23 @@ def _write_audit_artifacts(
     # detection. Major bumps (2.x -> 3.x) are reserved for
     # non-additive changes that require reader updates.
     log_path = output_dir / "curation_log.json"
+    # cache_outcome: derived from token counts. "hit" when reuse
+    # happened (cheap call), "create" when the cache was written
+    # this run (expensive call, future runs will be cheap), "miss"
+    # when neither happened (rare; usually only when caching was
+    # disabled or the prompt was below the minimum cacheable size).
+    # ``None`` on the static path (no API call).
+    cache_outcome: str | None
+    if curation.source == "static":
+        cache_outcome = None
+    elif curation.cache_read_input_tokens > 0:
+        cache_outcome = "hit"
+    elif curation.cache_creation_input_tokens > 0:
+        cache_outcome = "create"
+    else:
+        cache_outcome = "miss"
     log_data: dict[str, Any] = {
-        "format_version": "2.5",
+        "format_version": "2.6",
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "system_prompt_hash": SYSTEM_PROMPT_HASH,
@@ -1013,6 +1032,8 @@ def _write_audit_artifacts(
         "output_tokens": curation.output_tokens,
         "cache_creation_input_tokens": curation.cache_creation_input_tokens,
         "cache_read_input_tokens": curation.cache_read_input_tokens,
+        "cache_ttl": curation.cache_ttl,
+        "cache_outcome": cache_outcome,
         "max_pages": max_pages,
         "timestamp": datetime.now(tz=UTC).isoformat(),
     }

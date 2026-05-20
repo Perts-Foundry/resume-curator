@@ -76,8 +76,18 @@ class TestBuildSystemPrompt:
     def test_second_block_has_cache_control(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # Default cache_ttl="1h" surfaces as explicit ttl on the dict.
         result = build_system_prompt(portfolio_data)
+        assert result[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    def test_cache_ttl_5m_omits_ttl_key(self, portfolio_data: PortfolioData) -> None:
+        # "5m" matches Anthropic's default and is signaled by omitting ttl.
+        result = build_system_prompt(portfolio_data, cache_ttl="5m")
         assert result[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_cache_ttl_1h_sets_ttl_key(self, portfolio_data: PortfolioData) -> None:
+        result = build_system_prompt(portfolio_data, cache_ttl="1h")
+        assert result[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_second_block_contains_portfolio_data_tags(
         self, portfolio_data: PortfolioData
@@ -703,8 +713,8 @@ class TestCoverLetterFlag:
         blocks = build_system_prompt(portfolio_data, with_cover_letter=True)
         assert "<cover_letter_rules>" in blocks[1]["text"]
         assert blocks[2]["text"].startswith("<portfolio_data>")
-        # Portfolio block must retain the cache breakpoint.
-        assert blocks[2]["cache_control"] == {"type": "ephemeral"}
+        # Portfolio block must retain the cache breakpoint; default ttl=1h.
+        assert blocks[2]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_off_path_no_cover_letter_block(
         self, portfolio_data: PortfolioData
