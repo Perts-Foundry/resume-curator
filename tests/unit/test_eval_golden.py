@@ -539,7 +539,7 @@ class TestMaterializeProfile:
         log_data = json.loads(
             (target / "curation_log.json").read_text(encoding="utf-8"),
         )
-        assert log_data["format_version"] == "2.5"
+        assert log_data["format_version"] == "2.6"
         assert log_data["max_pages"] == 1
 
     def test_validates_resume_curation_schema(self, tmp_path: Path) -> None:

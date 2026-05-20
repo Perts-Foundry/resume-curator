@@ -1057,8 +1057,18 @@ class TestBuildSystemBlocks:
         assert blocks[0]["type"] == "text"
 
     def test_block_has_cache_control(self) -> None:
+        # Default cache_ttl="1h" surfaces as explicit ttl on the dict.
         blocks = _build_system_blocks()
+        assert blocks[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    def test_cache_ttl_5m_omits_ttl_key(self) -> None:
+        # "5m" is Anthropic's default and is signaled by omitting ttl.
+        blocks = _build_system_blocks(cache_ttl="5m")
         assert blocks[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_cache_ttl_1h_sets_ttl_key(self) -> None:
+        blocks = _build_system_blocks(cache_ttl="1h")
+        assert blocks[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_block_contains_rubric(self) -> None:
         blocks = _build_system_blocks()

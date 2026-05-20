@@ -76,8 +76,18 @@ class TestBuildSystemPrompt:
     def test_second_block_has_cache_control(
         self, portfolio_data: PortfolioData
     ) -> None:
+        # Default cache_ttl="1h" surfaces as explicit ttl on the dict.
         result = build_system_prompt(portfolio_data)
+        assert result[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    def test_cache_ttl_5m_omits_ttl_key(self, portfolio_data: PortfolioData) -> None:
+        # "5m" matches Anthropic's default and is signaled by omitting ttl.
+        result = build_system_prompt(portfolio_data, cache_ttl="5m")
         assert result[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_cache_ttl_1h_sets_ttl_key(self, portfolio_data: PortfolioData) -> None:
+        result = build_system_prompt(portfolio_data, cache_ttl="1h")
+        assert result[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_second_block_contains_portfolio_data_tags(
         self, portfolio_data: PortfolioData
@@ -661,7 +671,7 @@ class TestPromptVersion:
     def test_pinned_value(self) -> None:
         # Snapshot pin: bumping this in prompt.py is a deliberate signal that
         # the system prompt changed. Update in lockstep.
-        assert PROMPT_VERSION == "2026-05-22"
+        assert PROMPT_VERSION == "2026-05-23"
 
 
 class TestSystemPromptByteIdentity:
@@ -678,7 +688,7 @@ class TestSystemPromptByteIdentity:
     #   _SYSTEM_PROMPT_TEXT as t; \
     #   print(hashlib.sha256(t.encode()).hexdigest())"
     # then update both the digest below and ``PROMPT_VERSION`` in prompt.py.
-    EXPECTED_SHA256: str = "96317c3d0b58a80da51f3044590fc16dc0ab59b06080f0619ebbd23ee97292ca"  # pragma: allowlist secret  # noqa: E501
+    EXPECTED_SHA256: str = "b35f91e214effb141c341883a9eae76b1e390dc226b3731a2aa9fda423dd50e1"  # pragma: allowlist secret  # noqa: E501
 
     def test_off_path_system_prompt_text_hash(self) -> None:
         digest = hashlib.sha256(_SYSTEM_PROMPT_TEXT.encode("utf-8")).hexdigest()
@@ -703,8 +713,8 @@ class TestCoverLetterFlag:
         blocks = build_system_prompt(portfolio_data, with_cover_letter=True)
         assert "<cover_letter_rules>" in blocks[1]["text"]
         assert blocks[2]["text"].startswith("<portfolio_data>")
-        # Portfolio block must retain the cache breakpoint.
-        assert blocks[2]["cache_control"] == {"type": "ephemeral"}
+        # Portfolio block must retain the cache breakpoint; default ttl=1h.
+        assert blocks[2]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_off_path_no_cover_letter_block(
         self, portfolio_data: PortfolioData

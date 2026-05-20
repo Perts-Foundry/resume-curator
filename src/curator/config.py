@@ -67,6 +67,20 @@ class CuratorSettings(BaseSettings):
         default=None,
         description="Effort level for response quality tuning",
     )
+    cache_ttl: Literal["5m", "1h"] = Field(
+        default="1h",
+        description=(
+            "TTL for the Anthropic prompt cache breakpoint on the portfolio "
+            "block (and the judge rubric block on the eval path). '1h' uses "
+            "the extended-cache TTL (GA on the Claude API; writes 2x input, "
+            "reads 0.1x). '5m' uses the default (writes 1.25x input, reads "
+            "0.1x). The 1h option breaks even at >=1.11 reuses within the "
+            "hour, so the default '1h' favors multi-run application sessions; "
+            "single-shot users should pass --cache-ttl 5m to avoid paying "
+            "the 2x write penalty without reuse. TTL refreshes on each cache "
+            "read, so live sessions stay warm indefinitely."
+        ),
+    )
 
     # Paths
     portfolio_path: Path = Field(

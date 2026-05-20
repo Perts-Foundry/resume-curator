@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import anthropic
 import httpx
@@ -602,13 +602,24 @@ def build_judge_messages(
     return [{"role": "user", "content": user_text}]
 
 
-def _build_system_blocks() -> list[dict[str, Any]]:
-    """Build system message blocks with prompt caching on the rubric."""
+def _build_system_blocks(
+    cache_ttl: Literal["5m", "1h"] = "1h",
+) -> list[dict[str, Any]]:
+    """Build system message blocks with prompt caching on the rubric.
+
+    ``cache_ttl`` selects between Anthropic's 5-minute default and the GA
+    1-hour extended cache. Delegates to ``curator.prompt.make_cache_control``
+    so the curate and judge paths share one source of truth for the
+    cache_control dict shape. See ``CuratorSettings.cache_ttl`` for the
+    cost/break-even rationale.
+    """
+    from curator.prompt import make_cache_control
+
     return [
         {
             "type": "text",
             "text": _RUBRIC_SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": make_cache_control(cache_ttl),
         }
     ]
 
@@ -695,7 +706,7 @@ def evaluate_tier2(
         max_pages=ctx.max_pages,
     )
 
-    system = _build_system_blocks()
+    system = _build_system_blocks(cache_ttl=settings.cache_ttl)
     model = settings.judge_model
 
     # Build API kwargs. temperature=0 reduces score variance between runs

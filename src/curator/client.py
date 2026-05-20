@@ -80,6 +80,34 @@ class CurationResult:
     cache_read_input_tokens: int
     source: Literal["api", "static"] = "api"
     cover_letter: CoverLetterCuration | None = None
+    #: Anthropic prompt-cache TTL active for this request ("5m" or "1h").
+    #: ``None`` on the static path (no API call) and on the rerender path
+    #: (scripts/rerender.py constructs CurationResult directly from a
+    #: persisted curation YAML and has no TTL context).
+    cache_ttl: Literal["5m", "1h"] | None = None
+
+    @property
+    def cache_outcome(self) -> Literal["hit", "create", "miss"] | None:
+        """Derived cache-outcome signal for audit-log readers.
+
+        Returns ``"hit"`` when ``cache_read_input_tokens > 0`` (cheap call),
+        ``"create"`` when only ``cache_creation_input_tokens > 0`` (expensive
+        write; future runs within the TTL will be cheap), ``"miss"`` when
+        both are zero (rare; usually caching disabled or below the minimum
+        cacheable size). ``None`` on the static path (no API call happened).
+
+        Lives on ``CurationResult`` rather than on the audit-log writer so a
+        non-renderer consumer (an in-process eval harness, a future
+        ``--show-last-cache-status`` CLI) can read it without reconstructing
+        the three-branch ladder from raw token counts.
+        """
+        if self.source == "static":
+            return None
+        if self.cache_read_input_tokens > 0:
+            return "hit"
+        if self.cache_creation_input_tokens > 0:
+            return "create"
+        return "miss"
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +501,7 @@ class CuratorClient:
         self._model = settings.model
         self._max_tokens = settings.max_tokens
         self._effort = settings.effort
+        self._cache_ttl = settings.cache_ttl
 
     # -- Context manager --------------------------------------------------
 
@@ -533,7 +562,11 @@ class CuratorClient:
                 (propagated from ``build_user_message``).
         """
         # 1. Build prompts (delegates to prompt.py)
-        system = build_system_prompt(portfolio, with_cover_letter=with_cover_letter)
+        system = build_system_prompt(
+            portfolio,
+            with_cover_letter=with_cover_letter,
+            cache_ttl=self._cache_ttl,
+        )
         messages = build_user_message(
             job_description, with_cover_letter=with_cover_letter
         )
@@ -570,12 +603,13 @@ class CuratorClient:
         prompt_chars = sum(len(b["text"]) for b in system)
         logger.info(
             "API request: model={}, prompt={}chars, jd={}chars, max_tokens={}, "
-            "cover_letter={}{}",
+            "cover_letter={}, cache_ttl={}{}",
             self._model,
             prompt_chars,
             len(job_description),
             effective_max_tokens,
             with_cover_letter,
+            self._cache_ttl,
             f", effort={self._effort}" if self._effort else "",
         )
 
@@ -721,6 +755,23 @@ class CuratorClient:
                 cache_read,
             )
 
+            # 7a. WARN if a 1h cache write happened with no reuse. The 1h
+            # TTL costs 2x base input on creation vs. 1.25x for 5m, so a
+            # cold-cache single-shot run with cache_ttl="1h" is the one
+            # waste pattern the configurable knob is meant to surface.
+            # Hits and reads (cache_read > 0) are exempt; future runs
+            # within the window will amortize the write.
+            if self._cache_ttl == "1h" and cache_read == 0 and cache_create > 0:
+                logger.warning(
+                    "Paid 2x write for 1h cache but no reuse occurred yet "
+                    "(cache_create={}, cache_read=0). If this is a "
+                    "single-shot run, consider --cache-ttl 5m to avoid "
+                    "the write penalty. If you plan another run within "
+                    "an hour, the next call should hit cache and "
+                    "amortize the cost.",
+                    cache_create,
+                )
+
             # 8. Log curation summary at INFO.
             total_highlights = sum(
                 len(wh.highlight_ids) for wh in curation.work_highlights
@@ -746,6 +797,7 @@ class CuratorClient:
                 ),
                 cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0),
                 cover_letter=cover_letter,
+                cache_ttl=self._cache_ttl,
             )
 
         except (APIRefusalError, APIResponseError):

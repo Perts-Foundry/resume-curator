@@ -20,6 +20,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("CURATOR_MAX_TOKENS", raising=False)
     monkeypatch.delenv("CURATOR_PORTFOLIO_PATH", raising=False)
     monkeypatch.delenv("CURATOR_EFFORT", raising=False)
+    monkeypatch.delenv("CURATOR_CACHE_TTL", raising=False)
     monkeypatch.chdir(tmp_path)
 
 
@@ -74,6 +75,9 @@ class TestCuratorSettings:
         assert settings.allow_api_spend is False
         assert settings.judge_model == "claude-haiku-4-5"
         assert settings.judge_effort is None
+        # cache_ttl defaults to "1h" so multi-run application sessions
+        # amortize the 2x write cost across reads.
+        assert settings.cache_ttl == "1h"
 
     def test_env_var_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CURATOR_ANTHROPIC_API_KEY", "test-key-from-env")
@@ -122,6 +126,31 @@ class TestCuratorSettings:
     def test_effort_valid_levels(self, level: str) -> None:
         settings = _settings(effort=level)
         assert settings.effort == level
+
+    @pytest.mark.parametrize("ttl", ["5m", "1h"])
+    def test_cache_ttl_valid_values(self, ttl: str) -> None:
+        settings = _settings(cache_ttl=ttl)
+        assert settings.cache_ttl == ttl
+
+    @pytest.mark.parametrize("invalid", ["", "2h", "30s", "5min", "1H"])
+    def test_cache_ttl_invalid_values_rejected(self, invalid: str) -> None:
+        with pytest.raises(ValidationError):
+            _settings(cache_ttl=invalid)
+
+    def test_cache_ttl_env_var_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CURATOR_ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.setenv("CURATOR_CACHE_TTL", "5m")
+        settings = CuratorSettings()
+        assert settings.cache_ttl == "5m"
+
+    def test_cache_ttl_cli_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # CLI surfaces as an init kwarg (see cli.py CuratorSettings(**overrides)),
+        # which pydantic-settings ranks above env vars per its precedence
+        # documentation. Env says 5m, init kwarg says 1h -> 1h wins.
+        monkeypatch.setenv("CURATOR_ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.setenv("CURATOR_CACHE_TTL", "5m")
+        settings = CuratorSettings(cache_ttl="1h")
+        assert settings.cache_ttl == "1h"
 
     def test_effort_none_default(self) -> None:
         settings = _settings()
