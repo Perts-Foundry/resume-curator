@@ -210,7 +210,7 @@ class TestCurateHappyPath:
         output_dir = _find_output_dir(e2e_output_dir)
 
         log = json.loads((output_dir / "curation_log.json").read_text())
-        assert log["format_version"] == "2.6"
+        assert log["format_version"] == "2.7"
         assert log["source"] == "api"
         assert log["model"] == "claude-sonnet-4-6-20260217"
         assert log["input_tokens"] == 5000
