@@ -138,6 +138,19 @@ class RenderOutput:
     1-page budget where the cascade gave up reads ``True``. Surfaces the
     "shipped what we could fit" path so downstream eval / dashboards can
     distinguish intentional 2-page output from non-converged output."""
+    add_back_count: int = 0
+    """Number of trims the post-fit add-back pass successfully restored.
+    Mirrors the same field in ``curation_log.json`` so callers don't have
+    to re-parse the audit JSON to know how much whitespace the cascade
+    over-trimmed. Always ``0`` when no cascade trims occurred, when the
+    add-back loop early-exited at ``pages == max_pages``, or when the
+    safety-valve path short-circuited the success branch."""
+    over_budget: bool = False
+    """True when the final rendered page count exceeded ``max_pages``.
+    Distinguishes the two states ``safety_valve_fired=True`` now carries
+    (cascade-exhausted-while-over-budget vs add-back-failed). Mirrors
+    the audit-log field. On the success path this is always ``False``;
+    on the safety-valve paths it reflects ``page_count > max_pages``."""
 
 
 # ---------------------------------------------------------------------------
@@ -615,6 +628,13 @@ def _generate_next_trim(
         # the historical "header-only older role" behavior because the
         # 1-page budget was designed for that asymmetry. Position-index
         # reasoning matches tier 6 above.
+        #
+        # ``weight_hints`` are intentionally NOT applied here: this tier
+        # is the last-resort floor and the per-entry guarantee must hold
+        # regardless of how the AI weighted the role. Tier 6 already
+        # scaled the floor via weights; if a low weight drove tier 6's
+        # effective floor to 0, this tier still blocks the drain-to-zero
+        # via ``min_keep = 1 if base_floor > 0``.
         work = sections.get("work", [])
         floors_len = len(work_position_floors)
         last_floor = work_position_floors[-1] if floors_len > 0 else 0
@@ -791,7 +811,7 @@ def _trim_to_fit(
     physical drop order may differ from the AI's preference order;
     LIFO follows physical drop order, not preference order. This
     asymmetry is documented and pinned by
-    ``test_trim_to_fit_addback_lifo_with_ai_trim_priority``.
+    ``test_addback_lifo_with_ai_trim_priority``.
 
     Args:
         sections: Curated section data (work, skills, etc.).
@@ -834,8 +854,10 @@ def _trim_to_fit(
         ``add_back_count`` is the number of trims that were
         successfully reverted by the add-back pass (zero when no
         cascade trims occurred or when no restore fit).
-        ``over_budget`` is True when ``page_count > max_pages``,
-        which can happen via the safety-valve paths.
+        ``over_budget`` is True when ``page_count > max_pages``. The
+        success path (cascade converged) always returns ``False``; the
+        flag can only be ``True`` via the two safety-valve exits
+        (cascade exhausted or ``max_trim_iterations`` reached).
     """
     trim_log: list[str] = []
 
@@ -894,10 +916,14 @@ def _trim_to_fit(
                 _invoke_typst(output_dir, template_path)
                 candidate_pages = get_page_count(output_dir / "resume.pdf")
                 if candidate_pages <= max_pages:
-                    # Accept: the trim was unnecessary.
-                    restored = trim_log.pop() if trim_log else "<unknown>"
+                    # Accept: the trim was unnecessary. ``snapshots`` and
+                    # ``trim_log`` grow together (one push per applied
+                    # trim) so the lengths are an invariant; let an
+                    # IndexError surface if it's ever violated rather
+                    # than masking the bug with a default sentinel.
+                    restored = trim_log.pop()
                     logger.info(
-                        "Add-back accepted ({} page(s)): reverted {!r}",
+                        "Add-back accepted ({} page(s)): reverted {}",
                         candidate_pages,
                         restored,
                     )
@@ -951,6 +977,10 @@ def _trim_to_fit(
             # downstream observability: the rendered PDF exceeds the
             # budget and the cascade has no remaining moves, which is
             # the same operational concern as iteration exhaustion.
+            # ``over_budget=True`` is hardcoded safely: control flow
+            # reaches this branch only when ``pages > max_pages``
+            # (the success branch at line 879 checks ``pages <=
+            # max_pages`` and returns first).
             return sections, interests, trim_log, pages, True, 0, True
 
         # Observability: warn if we cross the prior default iteration
@@ -1508,11 +1538,16 @@ def render(
             )
             pdf_path = output_dir / "resume.pdf"
             if over_budget:
+                # The cascade gave up before reaching budget. Today
+                # ``over_budget=True`` implies ``safety_valve_fired=True``
+                # (the success path always returns over_budget=False), so
+                # the safety-valve signal is redundant in this WARN — kept
+                # implicit. If a future code path adds a third over-budget
+                # exit, log both flags explicitly.
                 logger.warning(
-                    "Page budget exceeded: {} > {} pages (safety_valve_fired={})",
+                    "Page budget exceeded: {} > {} pages",
                     final_page_count,
                     settings.max_pages,
-                    safety_valve_fired,
                 )
         else:
             # No-PDF mode: write data files and layout without compiling.
@@ -1575,4 +1610,6 @@ def render(
         cover_letter_yaml_path=cover_letter_yaml_path,
         cover_letter_pdf_path=cover_letter_pdf_path,
         safety_valve_fired=safety_valve_fired,
+        add_back_count=add_back_count,
+        over_budget=over_budget,
     )
