@@ -90,11 +90,17 @@ def evaluate_selection(
     # the full employment timeline). Per-position bullet expectations are
     # page-budget-aware via ``bands.work_position_floors`` (sourced from the
     # renderer cascade): on 1-page profiles the floor is ``(3, 3, 0, 0, 0)``,
-    # so older positions render as header-only rows ("ghost rows") and the
-    # metric treats that as acceptable (lower bound 0). On 2+-page profiles
-    # the older floors are non-zero (`(8, 6, 6, 2, 2)` on 2-page), so the
-    # metric expects positions 2+ to carry content; an unexpectedly empty
-    # older role on 2-page output flags as below-band.
+    # so older positions whose floor is 0 may render as header-only rows
+    # ("ghost rows") and the metric treats that as acceptable (lower bound
+    # 0). On 2+-page profiles the older floors are non-zero (`(8, 6, 6, 2,
+    # 2)` on 2-page), so the metric expects positions 2+ to carry content;
+    # an unexpectedly empty older role on 2-page output flags as below-band.
+    # The renderer's tier 8 per-entry floor (RENDERER_BEHAVIOR_INVARIANT in
+    # ``src/curator/renderer.py``) further guarantees at least one bullet
+    # per rendered entry whenever ``base_floor > 0`` for that position, so
+    # the eval band (which uses ``lo = floor``, already >= 2 on 2-page) is
+    # strictly tighter than the renderer floor; the per-entry floor surfaces
+    # here only as a redundant safety net.
     if not rendered_work:
         results.append(
             EvalMetricResult(

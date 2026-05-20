@@ -359,17 +359,23 @@ def _apply_selections(
 # the most recent career content.
 #
 # RENDERER_BEHAVIOR_INVARIANT: this trimmer preserves every portfolio
-# work entry on the rendered page, even when its highlight list is
-# drained to zero. Older roles render as header-only rows (position,
-# company, dates) so the complete employment timeline stays visible.
-# This is a deliberate product choice for transparency on bulk
+# work entry on the rendered page. On 2+-page runs, each preserved
+# entry also retains at least one highlight bullet so the row is never
+# a dangling header (tier 8 enforces this via the per-entry floor
+# keyed on ``work_position_floors[i] > 0``). On 1-page runs,
+# positions whose ``work_position_floors[i] == 0`` (positions 2+ under
+# the ``(3, 3, 0, 0, 0)`` 1-page tuple) may still render as
+# header-only rows (position, company, dates) so the complete
+# employment timeline stays visible without consuming the tight 1-page
+# budget. This is a deliberate product choice for transparency on bulk
 # applications. The Tier 2 judge rubric in
 # ``src/curator/eval/judge.py`` ``<conventions>`` block codifies the
 # downstream "score against rendered output, do not penalize the
 # AI-selected-vs-rendered gap" framing this invariant requires. Any
-# change to the empty-work-entry preservation policy here MUST update
-# the judge convention block in lockstep AND bump JUDGE_VERSION; bump
-# PROMPT_VERSION too if curator-prompt language refers to it.
+# change to the per-entry floor or to the conditions under which a
+# header-only row may render MUST update the judge convention block in
+# lockstep AND bump JUDGE_VERSION; bump PROMPT_VERSION too if
+# curator-prompt language refers to it.
 
 # ``CERTIFICATE_FLOOR``, ``_PageCaps``, and ``_caps_for_pages`` live in
 # :mod:`curator.page_caps` (imported and re-exported above) so
@@ -601,10 +607,22 @@ def _generate_next_trim(
         return None
 
     def _eval_work_highlights_below_floor() -> TrimStep | None:
+        # Per-entry floor (RENDERER_BEHAVIOR_INVARIANT): when the
+        # per-position ``base_floor`` is positive, the entry must retain
+        # at least one bullet so the rendered row is never a dangling
+        # header. Positions whose ``base_floor == 0`` (1-page mode
+        # positions 2+ under the ``(3, 3, 0, 0, 0)`` tuple) preserve
+        # the historical "header-only older role" behavior because the
+        # 1-page budget was designed for that asymmetry. Position-index
+        # reasoning matches tier 6 above.
         work = sections.get("work", [])
+        floors_len = len(work_position_floors)
+        last_floor = work_position_floors[-1] if floors_len > 0 else 0
         for i in range(len(work) - 1, -1, -1):
             highlights = work[i].get("highlights", [])
-            if len(highlights) > 0:
+            base_floor = work_position_floors[i] if i < floors_len else last_floor
+            min_keep = 1 if base_floor > 0 else 0
+            if len(highlights) > min_keep:
                 wid = work[i].get("id", "unknown")
                 hid = highlights[-1].get("id", "unknown")
                 return TrimStep(
@@ -707,6 +725,12 @@ def _prune_empty_sections(
     output always renders every portfolio work entry as a header row
     (position, company, dates) so the complete employment timeline is
     visible, even when the trim cascade has drained its highlight list.
+    Note that as of the per-entry floor in tier 8 (see
+    ``RENDERER_BEHAVIOR_INVARIANT``), the cascade itself no longer
+    produces zero-highlight work entries on 2+-page runs except in a
+    rare safety-valve overflow. A zero-highlight entry surfacing here
+    on a 2+-page render therefore indicates either a non-cascade
+    source (manual edit, partial reload) or that safety valve.
 
     Called by ``_trim_to_fit`` before each write/compile pass so the
     rendered PDF never contains a skeleton skill group with no keywords.

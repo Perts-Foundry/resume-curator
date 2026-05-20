@@ -3432,10 +3432,12 @@ class TestGenerateNextTrimEdgeCases:
         #    - w3 (pos 2, floor 0): len 2>0 -> h8, then h7
         #    - w2 (pos 1, floor 3): len 3>3 false -> skip
         #    - w1 (pos 0, floor 3): len 3>3 false -> skip
-        #  - below-floor last resort, scan N-1..0 for first non-empty:
-        #    - w4 empty, w3 empty
-        #    - w2 -> h6, h5, h4 (3 below-floor steps)
-        #    - w1 -> h3, h2, h1 (3 below-floor steps)
+        #  - below-floor last resort, scan N-1..0 for first above
+        #    min_keep (= 1 when base_floor > 0, = 0 when base_floor == 0):
+        #    - w4 (base_floor=0, min_keep=0) empty -> skip
+        #    - w3 (base_floor=0, min_keep=0) empty -> skip
+        #    - w2 (base_floor=3, min_keep=1) -> h6, h5 (stops at 1)
+        #    - w1 (base_floor=3, min_keep=1) -> h3, h2 (stops at 1)
         expected = [
             "Removed interests section",
             "Removed highlight: ph2 from project: p2",
@@ -3449,10 +3451,8 @@ class TestGenerateNextTrimEdgeCases:
             "Removed highlight: h7 from work entry: w3",
             "Removed highlight: h6 from work entry: w2",
             "Removed highlight: h5 from work entry: w2",
-            "Removed highlight: h4 from work entry: w2",
             "Removed highlight: h3 from work entry: w1",
             "Removed highlight: h2 from work entry: w1",
-            "Removed highlight: h1 from work entry: w1",
         ]
         assert descriptions == expected
         # Top 3 certs survived through the entire cascade.
@@ -4158,11 +4158,14 @@ class TestPerPositionFloorEdgeCases:
         step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
         assert step is None  # nothing to trim, no infinite loop
 
-    def test_below_floor_tier_skips_empty_positions(self) -> None:
-        """Tier 8 (below-floor) scans bottom-up for first non-empty position.
+    def test_below_floor_tier_skips_empty_and_at_min_keep_positions(self) -> None:
+        """Tier 8 (below-floor) scans bottom-up for the first entry above
+        its per-entry floor.
 
-        Positions already at 0 are skipped; the first non-empty
-        position bottom-up is the trim target.
+        Positions whose ``base_floor > 0`` retain at least one bullet
+        (per-entry floor of 1); the scan skips both empty positions and
+        positions that have exactly one highlight remaining. The first
+        entry above its min_keep bottom-up is the trim target.
         """
         from curator.renderer import _generate_next_trim
 
@@ -4170,7 +4173,7 @@ class TestPerPositionFloorEdgeCases:
             "work": [
                 {"id": "w1", "highlights": [{"id": "h1_0"}, {"id": "h1_1"}]},
                 {"id": "w2", "highlights": []},  # pos 1 empty
-                {"id": "w3", "highlights": [{"id": "h3_0"}]},  # pos 2
+                {"id": "w3", "highlights": [{"id": "h3_0"}]},  # pos 2 at min_keep
                 {"id": "w4", "highlights": []},  # pos 3 empty
             ],
             "skills": [],
@@ -4178,13 +4181,42 @@ class TestPerPositionFloorEdgeCases:
             "certificates": [],
             "education": [],
         }
-        # All work positions already <= floor (or empty). Skill groups
-        # empty too. Only tier 8 (below_floor) can fire. Bottom-up
-        # scan: w4 empty (skip), w3 has 1 (trim with below_floor=True).
+        # All positions have base_floor > 0, so per-entry floor is 1.
+        # Bottom-up scan: w4 empty (skip), w3 at min_keep=1 (skip),
+        # w2 empty (skip), w1 has 2 > 1 (trim with below_floor=True).
         step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 3, 3, 3))
         assert step is not None
-        assert step.target_id == "w3"
+        assert step.target_id == "w1"
         assert step.below_floor is True
+
+    def test_base_floor_zero_position_drains_to_zero_via_tier6(self) -> None:
+        """A position with ``base_floor == 0`` (1-page mode positions 2+
+        under the ``(3, 3, 0, 0, 0)`` tuple) can drain its last highlight
+        in tier 6 itself. Tier 6 trims when ``len(highlights) >
+        effective_floor`` and the effective floor here is 0, so a single
+        highlight is trimmed by tier 6 (``below_floor=False``). Tier 8's
+        per-entry floor only protects positions whose ``base_floor > 0``.
+        """
+        from curator.renderer import _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": f"h1_{i}"} for i in range(3)]},
+                {"id": "w2", "highlights": [{"id": f"h2_{i}"} for i in range(3)]},
+                {"id": "w3", "highlights": [{"id": "h3_0"}]},  # pos 2, base_floor=0
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # Positions 0/1 at floor; position 2 above its effective floor of 0.
+        # Tier 6 fires (not tier 8), draining w3 to zero.
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 0, 0, 0))
+        assert step is not None
+        assert step.target_id == "w3"
+        assert step.description == "Removed highlight: h3_0 from work entry: w3"
+        assert step.below_floor is False
 
 
 class TestCascadeCliffRegression:
@@ -4259,3 +4291,169 @@ class TestCascadeCliffRegression:
             sections, _ = _apply_trim(sections, None, step)
         sizes = [len(e["highlights"]) for e in sections["work"]]
         assert sizes == [3, 3, 0]
+
+
+class TestTier8PerEntryFloor:
+    """Pin the tier 8 per-entry floor: positions whose ``base_floor > 0``
+    retain at least one highlight so the rendered row is never a dangling
+    header. Positions whose ``base_floor == 0`` (1-page positions 2+ under
+    the ``(3, 3, 0, 0, 0)`` tuple) may still drain to 0.
+    """
+
+    def test_tier8_never_drains_last_highlight_on_2page(self) -> None:
+        """2-page floor `(8, 6, 6, 2, 2)` -> every position has
+        base_floor > 0, so every entry retains at least one highlight.
+        With every entry at exactly one highlight, tier 8 returns None.
+        """
+        from curator.renderer import _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": "h1_0"}]},
+                {"id": "w2", "highlights": [{"id": "h2_0"}]},
+                {"id": "w3", "highlights": [{"id": "h3_0"}]},
+                {"id": "w4", "highlights": [{"id": "h4_0"}]},
+                {"id": "w5", "highlights": [{"id": "h5_0"}]},
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        step = _generate_next_trim(sections, None, work_position_floors=(8, 6, 6, 2, 2))
+        assert step is None
+
+    def test_cascade_drains_to_zero_on_1page_for_old_roles(self) -> None:
+        """1-page floor `(3, 3, 0, 0, 0)` -> positions 2+ have
+        base_floor == 0, so the cascade is allowed to drain those
+        positions to 0 (preserves the 1-page ghost-row policy).
+        Positions 0/1 retain their per-entry floor of 1 enforced by
+        tier 8. Walks the full cascade and verifies the end state.
+        """
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": "h1_0"}, {"id": "h1_1"}]},
+                {"id": "w2", "highlights": [{"id": "h2_0"}, {"id": "h2_1"}]},
+                {"id": "w3", "highlights": [{"id": "h3_0"}]},
+                {"id": "w4", "highlights": [{"id": "h4_0"}]},
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # Tier 6 fires first (w4 and w3 have 1 > effective_floor=0);
+        # then tier 8 takes w2 (2 > min_keep=1) and w1 (2 > 1) down to
+        # min_keep. Convergence regardless of which tier fires each step.
+        iterations = 0
+        while True:
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(3, 3, 0, 0, 0)
+            )
+            if step is None:
+                break
+            sections, _ = _apply_trim(sections, None, step)
+            iterations += 1
+            assert iterations < 20  # safety
+        sizes = [len(e["highlights"]) for e in sections["work"]]
+        # Older roles drained to 0 (1-page ghost-row policy); positions
+        # 0/1 retain at least one bullet (per-entry floor of 1).
+        assert sizes == [1, 1, 0, 0]
+
+    def test_tier8_partial_drain_on_2page_stops_at_one_per_entry(self) -> None:
+        """Tier 8 on 2-page floors trims iteratively, stopping when every
+        entry has exactly one highlight remaining. Bottom-up scan.
+        """
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": f"h1_{i}"} for i in range(2)]},
+                {"id": "w2", "highlights": [{"id": f"h2_{i}"} for i in range(2)]},
+                {"id": "w3", "highlights": [{"id": f"h3_{i}"} for i in range(2)]},
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # All positions have base_floor > 0 (using a flat 2-tuple).
+        # All entries at 2 highlights, all above min_keep=1.
+        # Cascade drains bottom-up to floor 1 per entry, then returns None.
+        iterations = 0
+        while True:
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(2, 2, 2, 2, 2)
+            )
+            if step is None:
+                break
+            assert step.below_floor is True
+            sections, _ = _apply_trim(sections, None, step)
+            iterations += 1
+            assert iterations < 10  # safety
+        sizes = [len(e["highlights"]) for e in sections["work"]]
+        assert sizes == [1, 1, 1]
+
+
+class TestCommit1DCIRegression:
+    """Pin that the per-entry floor alone resolves the DCI regression:
+    the saved 2026-05-20-direct-care-innovations curated.yaml drained
+    nswc-software-developer's three highlights to zero, leaving a
+    dangling header. Under the new floor every work entry retains >=1
+    highlight after the full cascade.
+    """
+
+    def test_commit1_alone_resolves_dci_regression(self) -> None:
+        from curator.renderer import _apply_trim, _generate_next_trim
+
+        # DCI-shaped: 5 work entries, oldest (nswc-software-developer)
+        # has 3 highlights, all below the position-4 base_floor of 2
+        # but allowed to drain past it by tier 8.
+        sections: dict[str, Any] = {
+            "work": [
+                {
+                    "id": "pf-senior-devsecops-consultant",
+                    "highlights": [{"id": f"h0_{i}"} for i in range(12)],
+                },
+                {
+                    "id": "pf-senior-devops-consultant",
+                    "highlights": [{"id": f"h1_{i}"} for i in range(9)],
+                },
+                {
+                    "id": "aws-cloud-support-engineer",
+                    "highlights": [{"id": f"h2_{i}"} for i in range(9)],
+                },
+                {
+                    "id": "nswc-devops-engineer",
+                    "highlights": [{"id": f"h3_{i}"} for i in range(3)],
+                },
+                {
+                    "id": "nswc-software-developer",
+                    "highlights": [{"id": f"h4_{i}"} for i in range(3)],
+                },
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # 2-page floors -> base_floor > 0 for every position ->
+        # per-entry floor of 1 applies to every entry. Cascade runs
+        # until it converges (or exhausts).
+        iterations = 0
+        while True:
+            step = _generate_next_trim(
+                sections, None, work_position_floors=(8, 6, 6, 2, 2)
+            )
+            if step is None:
+                break
+            sections, _ = _apply_trim(sections, None, step)
+            iterations += 1
+            assert iterations < 200  # safety
+        # No work entry should be drained to zero highlights.
+        sizes = [len(e["highlights"]) for e in sections["work"]]
+        assert all(s >= 1 for s in sizes), (
+            f"DCI regression: entry drained to zero, sizes={sizes}"
+        )

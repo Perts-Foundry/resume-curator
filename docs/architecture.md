@@ -427,8 +427,10 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
       no separate description-drain tier, so when highlights reach 0 the template
       renders the description as the single remaining bullet until tier 3 cuts
       the whole entry. Work entries are never removed wholesale: every
-      AI-selected work entry stays (as a header-only row if drained) to preserve
-      the employment timeline
+      AI-selected work entry stays to preserve the employment timeline. On
+      2+-page renders the entry retains at least one bullet (tier 8 per-entry
+      floor); on 1-page renders positions 2+ may render as header-only rows
+      because the per-position `base_floor == 0` for those slots
     - Skill groups are removed atomically in the middle band (default
       position 5, AI-reorderable), one whole group per iteration
       (lowest-priority first). Dropping a group frees a full section
@@ -452,8 +454,15 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
       their per-position floor before the top role loses any content. Tier 8
       (below-floor) generalizes the prior tiers 11/12 to all positions: when
       the cascade has nothing left to cut, scan bottom-up for the first
-      non-empty position and trim with `below_floor=True` so the trim loop
-      logs a WARNING
+      entry above its per-entry floor and trim with `below_floor=True` so the
+      trim loop logs a WARNING. The **per-entry floor** is keyed on the
+      same `work_position_floors` tuple: positions whose `base_floor > 0`
+      retain at least one bullet (so 2+-page renders never produce a
+      dangling header), positions whose `base_floor == 0` (1-page
+      positions 2+ under the `(3, 3, 0, 0, 0)` tuple) may drain to zero
+      and render as header-only ghost rows. This preserves the 1-page
+      ghost-row policy while guaranteeing the 2+-page floor of one bullet
+      per rendered entry (`RENDERER_BEHAVIOR_INVARIANT` in `renderer.py`)
     - Each project renders with at most 2 content bullets (description first
       when present, then highlights filling any remainder); excess highlights
       are dropped at hydration so the cascade never wastes iterations on them
