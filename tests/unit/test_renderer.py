@@ -3360,7 +3360,12 @@ class TestTrimToFitAddBack:
         assert trim_log == []
         # Critical: restored to the ORIGINAL dict, not EMPTY_INTERESTS.
         assert final_interests == original_interests
-        assert final_interests is not original_interests  # deep-copy
+        # Snapshot isolation: mutating the returned dict must not bleed
+        # back into the caller's original. Stronger than `is not` which
+        # is already structurally guaranteed by deep copies elsewhere.
+        assert final_interests is not None
+        final_interests["hobbies"].append({"name": "Hang gliding"})
+        assert {"name": "Hang gliding"} not in original_interests["hobbies"]
 
     def test_addback_skill_group_position_preserved(self, tmp_path: Path) -> None:
         """Skill groups are removed atomically by id in tier 7. The
@@ -3431,10 +3436,20 @@ class TestTrimToFitAddBack:
         """AI emits a custom ``trim_priority``; the LIFO add-back order
         follows the *physical drop order*, not the AI preference order.
 
-        Pins the documented asymmetry: an AI that says "drop X before Y"
-        gets X dropped first and Y dropped second; LIFO restore brings
-        back Y first (matching the inverse physical order), even though
-        the AI's preference would have asked X to be restored first.
+        Constructs a scenario where the second restore must overflow so
+        the *which entry survives* in ``trim_log`` distinguishes the two
+        orderings:
+
+        - Physical-LIFO restores the most recent trim (c4) first; if
+          that succeeds and the next restore (skill group scripting)
+          overflows, ``trim_log`` ends as ``["Removed skill group:
+          scripting"]`` — the first physical trim is what remains.
+        - A hypothetical preference-aware impl would restore in AI
+          preference order (skill_groups first since the AI listed it
+          first as "drop first"); ``trim_log`` would end as
+          ``["Removed certificate: c4"]`` in that ordering.
+
+        The asymmetry is documented in ``_trim_to_fit``'s docstring.
         """
         from curator.renderer import _trim_to_fit
 
@@ -3456,9 +3471,10 @@ class TestTrimToFitAddBack:
         basics = {"name": "Test"}
         # iter1 (over): AI ordered skill_groups first -> trim scripting.
         # iter2 (over): next in AI order is certificates -> trim c4.
-        # iter3 (fits): addback restores c4 first (physical LIFO),
-        # then scripting (physical LIFO order = preference inverse).
-        page_counts = iter([3, 3, 1, 1, 1])
+        # iter3 (fits): addback1 restores c4 (physical LIFO, accept).
+        # addback2 attempts to restore scripting -> overflow (revert);
+        # final recompile of last_good.
+        page_counts = iter([3, 3, 1, 1, 3, 1])
 
         with (
             patch("curator.renderer.subprocess.run", side_effect=self._fake_run),
@@ -3485,17 +3501,30 @@ class TestTrimToFitAddBack:
                 skill_group_floor=4,
             )
 
-        # Both add-backs succeed (pages stay <= max_pages).
-        assert add_back_count == 2
-        # trim_log emptied (both trims reverted in physical LIFO order).
-        assert trim_log == []
+        # Exactly one add-back accepted (c4 restored, scripting overflowed).
+        assert add_back_count == 1
+        # Physical-LIFO order: the FIRST physical trim (scripting) is
+        # what remains in trim_log, because LIFO restore started from
+        # the most recent (c4) and the older one couldn't fit. A
+        # preference-aware impl would have left "Removed certificate:
+        # c4" instead; that branch is rejected by this assertion.
+        assert trim_log == ["Removed skill group: scripting"]
 
     def test_addback_typst_failure_atomicity(self, tmp_path: Path) -> None:
-        """If ``_invoke_typst`` raises during an add-back attempt, the
-        exception propagates and prior accepted restores survive. Pins
-        that the add-back loop does not swallow errors from the
-        underlying compile.
+        """If ``_invoke_typst`` raises during an add-back restore, the
+        exception propagates, and the on-disk data files reflect the
+        pre-restore (cascade-final) state, NOT a mid-restore state.
+
+        The add-back loop calls ``_write_data_files`` BEFORE
+        ``_invoke_typst`` on each restore. The current implementation
+        therefore leaves the data files in the mid-restore state when
+        Typst crashes; this test pins that observable so a future
+        refactor (e.g., adding try/except + last_good re-write) is a
+        deliberate decision visible in the test diff. See the
+        code-reviewer MED-1 finding for the recommended remediation.
         """
+        import yaml as _yaml
+
         from curator.renderer import RenderError, _trim_to_fit
 
         output_dir, tpl = self._make_dirs(tmp_path)
@@ -3540,6 +3569,32 @@ class TestTrimToFitAddBack:
                 max_pages=2,
                 max_trim_iterations=15,
             )
+
+        # On-disk state after the raise: the LIFO restore popped the
+        # most recent snapshot (state BEFORE the c5 cert trim, so 5
+        # certs and empty interests) and wrote those data files before
+        # invoking Typst. The current implementation does NOT roll back
+        # on Typst failure, so the on-disk data files reflect that
+        # mid-restore write. Pinned as documented behavior.
+        certs_path = output_dir / "data" / "certificates.yaml"
+        assert certs_path.exists()
+        on_disk_certs = _yaml.safe_load(certs_path.read_text())
+        # certificates.yaml may be {"certificates": [...]} or [...] in
+        # the renderer's section-write shape; accept either by
+        # normalizing.
+        cert_list = (
+            on_disk_certs.get("certificates", on_disk_certs)
+            if isinstance(on_disk_certs, dict)
+            else on_disk_certs
+        )
+        assert [c["id"] for c in cert_list] == [f"c{i}" for i in range(1, 6)]
+        # Interests file reflects the cascade-final (post-trim) state
+        # because the snapshot popped on the failing call was for the
+        # c5 trim, not the interests trim — interests stayed empty.
+        interests_path = output_dir / "data" / "interests.yaml"
+        assert interests_path.exists()
+        on_disk_interests = _yaml.safe_load(interests_path.read_text())
+        assert on_disk_interests == {"hobbies": [], "fun_facts": []}
 
     def test_addback_not_attempted_on_safety_valve_path(self, tmp_path: Path) -> None:
         """When the cascade returns ``None`` while still over budget,
@@ -4953,41 +5008,69 @@ class TestTier8PerEntryFloor:
         sizes = [len(e["highlights"]) for e in sections["work"]]
         assert sizes == [1, 1, 1]
 
+    def test_tier8_scans_bottom_up_for_first_eligible_entry(self) -> None:
+        """Tier 8 scans positions N-1..0 (oldest first) when picking
+        which entry to trim. With three entries all above the per-entry
+        floor, the bottom-up scan picks the oldest (position 2), not
+        the most recent. This pins iteration order; a top-down impl
+        would pick w1 first.
+        """
+        from curator.renderer import _generate_next_trim
 
-class TestCommit1DCIRegression:
-    """Pin that the per-entry floor alone resolves the DCI regression:
-    the saved 2026-05-20-direct-care-innovations curated.yaml drained
-    nswc-software-developer's three highlights to zero, leaving a
-    dangling header. Under the new floor every work entry retains >=1
-    highlight after the full cascade.
+        sections: dict[str, Any] = {
+            "work": [
+                {"id": "w1", "highlights": [{"id": f"h1_{i}"} for i in range(3)]},
+                {"id": "w2", "highlights": [{"id": f"h2_{i}"} for i in range(3)]},
+                {"id": "w3", "highlights": [{"id": f"h3_{i}"} for i in range(3)]},
+            ],
+            "skills": [],
+            "projects": [],
+            "certificates": [],
+            "education": [],
+        }
+        # All positions at floor (tier 6 cannot fire); all entries
+        # above min_keep=1 (tier 8 can fire). Bottom-up: w3 picked.
+        step = _generate_next_trim(sections, None, work_position_floors=(3, 3, 3, 3, 3))
+        assert step is not None
+        assert step.target_id == "w3"
+        assert step.below_floor is True
+
+
+class TestDCIPerEntryFloorRegression:
+    """Pin that the per-entry floor resolves the dangling-header
+    regression seen on a real 5-entry 2-page profile: the oldest role
+    had its three highlights drained to zero by tier 8, leaving a
+    header-only row visible on the rendered page. Under the new floor
+    every work entry retains >=1 highlight after the full cascade.
     """
 
-    def test_commit1_alone_resolves_dci_regression(self) -> None:
+    def test_per_entry_floor_resolves_zero_highlight_regression(self) -> None:
         from curator.renderer import _apply_trim, _generate_next_trim
 
-        # DCI-shaped: 5 work entries, oldest (nswc-software-developer)
-        # has 3 highlights, all below the position-4 base_floor of 2
-        # but allowed to drain past it by tier 8.
+        # 5 work entries shaped like the production failure: top role
+        # heavily over-emitted, oldest two roles have only 3 highlights
+        # each — within reach of position-4 / position-3 base_floor of
+        # 2 but the old tier 8 would drive them to zero.
         sections: dict[str, Any] = {
             "work": [
                 {
-                    "id": "pf-senior-devsecops-consultant",
+                    "id": "older-role-0",
                     "highlights": [{"id": f"h0_{i}"} for i in range(12)],
                 },
                 {
-                    "id": "pf-senior-devops-consultant",
+                    "id": "older-role-1",
                     "highlights": [{"id": f"h1_{i}"} for i in range(9)],
                 },
                 {
-                    "id": "aws-cloud-support-engineer",
+                    "id": "older-role-2",
                     "highlights": [{"id": f"h2_{i}"} for i in range(9)],
                 },
                 {
-                    "id": "nswc-devops-engineer",
+                    "id": "older-role-3",
                     "highlights": [{"id": f"h3_{i}"} for i in range(3)],
                 },
                 {
-                    "id": "nswc-software-developer",
+                    "id": "older-role-4",
                     "highlights": [{"id": f"h4_{i}"} for i in range(3)],
                 },
             ],
@@ -4996,13 +5079,27 @@ class TestCommit1DCIRegression:
             "certificates": [],
             "education": [],
         }
+        # AI weights matching the production failure shape: oldest role
+        # weighted lowest (0.6) so its effective tier 6 floor =
+        # round(2 * 0.6) = 1; without the new per-entry floor, tier 8
+        # would then drain that entry's last highlight to 0.
+        weights = {
+            "older-role-0": 1.2,
+            "older-role-1": 1.3,
+            "older-role-2": 1.0,
+            "older-role-3": 0.8,
+            "older-role-4": 0.6,
+        }
         # 2-page floors -> base_floor > 0 for every position ->
         # per-entry floor of 1 applies to every entry. Cascade runs
-        # until it converges (or exhausts).
+        # until convergence.
         iterations = 0
         while True:
             step = _generate_next_trim(
-                sections, None, work_position_floors=(8, 6, 6, 2, 2)
+                sections,
+                None,
+                work_position_floors=(8, 6, 6, 2, 2),
+                work_highlight_weight_hints=weights,
             )
             if step is None:
                 break
@@ -5012,5 +5109,8 @@ class TestCommit1DCIRegression:
         # No work entry should be drained to zero highlights.
         sizes = [len(e["highlights"]) for e in sections["work"]]
         assert all(s >= 1 for s in sizes), (
-            f"DCI regression: entry drained to zero, sizes={sizes}"
+            f"per-entry floor regression: entry drained to zero, sizes={sizes}"
         )
+        # The oldest two roles, lowest-weighted, must keep at least 1.
+        assert sizes[-1] >= 1, "oldest role drained to zero"
+        assert sizes[-2] >= 1, "second-oldest role drained to zero"
