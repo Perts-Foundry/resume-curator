@@ -222,14 +222,20 @@ jobs:
             // Strip <details>...</details> from the body before matching.
             // Those blocks contain verbatim commit subjects from the
             // dependency's own git history, including commits whose
-            // subject is literally "Bump <pkg> from X.Y.Z to Y.Y.Z" (e.g.
+            // subject is literally "Bump <pkg> from A.B.C to D.E.F" (e.g.
             // idna's own CI dependency bumps appearing inside an idna PR
             // body, observed on PR #13). The regex cannot tell those apart
             // from Dependabot's own summary line. Dependabot's own summary
             // lines (single-package PR title, grouped-PR per-package
-            // "Updates `pkg` from … to …" lines) live OUTSIDE <details>.
-            // Non-greedy [\s\S]*? handles nested blocks innermost-first;
-            // do not change to greedy.
+            // "Updates `pkg` from ... to ..." lines) live OUTSIDE <details>.
+            // Non-greedy [\s\S]*? matches each <details>...</details>
+            // pair left-to-right. Dependabot does not emit nested
+            // <details>; if upstream ever does, the inner match would
+            // leave the outer </details> orphaned. Do not "fix" this
+            // by adding a fallback like <details>[\s\S]*$, which would
+            // silently swallow real summary text after a malformed tag.
+            // The safe failure mode is to keep a false positive (current
+            // behavior), not to lose a real summary line.
             const stripDetails = (s) => s.replace(/<details\b[\s\S]*?<\/details>/gi, '');
             const bumpRegex = /\b(?:bumps?|updates?)\s+\S+\s+from\s+v?(\d+)\.\d+\.\d+\S*\s+to\s+v?(\d+)\.\d+\.\d+/gi;
             const haystack = `${pr.title}\n${stripDetails(pr.body || '')}`;
