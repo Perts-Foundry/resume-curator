@@ -1058,18 +1058,44 @@ and exercised by `tests/unit/test_prompt.py`.
 Portfolio data (~10k tokens) is stable across requests and marked as cacheable.
 The job description varies per request and is never cached.
 
-Two cache duration tiers are available:
+Two cache duration tiers are available and the choice is operator-configurable
+via `CURATOR_CACHE_TTL` (env) or `--cache-ttl` (CLI). The default is **1h**.
 
-| Tier | Write Cost | Read Cost | Duration |
-|------|-----------|-----------|----------|
-| 5-minute | 1.25x base input | 0.1x base input | 5 min |
-| 1-hour | 2x base input | 0.1x base input | 1 hour |
+| Tier | Write Cost | Read Cost | Duration | Break-even reuse |
+|------|-----------|-----------|----------|------------------|
+| 5m   | 1.25x base input | 0.1x base input | 5 minutes | ~0.28 reads |
+| 1h   | 2x base input    | 0.1x base input | 1 hour    | ~1.11 reads |
 
-We use the **5-minute cache** (`cache_control: {"type": "ephemeral"}`). This pays off
-after a single cache read (1.25x write vs 0.1x read). The 1-hour tier costs 2x to write
-and only makes sense for sustained high-volume use (Phase 2 batch scoring).
+The 1h TTL refreshes on each cache read, so a session with one curate run
+per hour stays warm indefinitely. Reads cost the same in both tiers; the
+write multiplier is the only difference. The break-even threshold is just
+over one reuse, so 1h is positive-EV for any operator who runs more than
+one curate (or one judge eval) within the hour against the same portfolio.
 
-Minimum cacheable size is 2,048 tokens. Portfolio data exceeds this easily (~10k tokens).
+**When to override to `--cache-ttl 5m`**: single-shot use where no follow-up
+call is planned within the hour. The CLI emits a WARN log on every API
+response that paid the 1h write surcharge without any cache_read in the
+same call ("Paid 2x write for 1h cache but no reuse occurred yet"); that's
+the operator-visible signal to drop to 5m if the workflow is genuinely
+one-shot.
+
+Minimum cacheable size is 2,048 tokens. Portfolio data exceeds this easily
+(~10k tokens) so the breakpoint is always cacheable.
+
+**Observability via `curation_log.json`**: every API-path run records the
+configured `cache_ttl` (`"5m"` or `"1h"`) and a derived `cache_outcome`
+of `"hit"` (cache_read > 0), `"create"` (cache_creation > 0), or `"miss"`
+(both zero, rare). Static-path runs emit `null` on both so a log reader
+cannot misread a zero-token static run as a cache-miss API run. Reading
+the outcome avoids manually correlating `cache_read_input_tokens` and
+`cache_creation_input_tokens` across runs.
+
+**One-time post-merge cache invalidation**: the 2026-05-19 change that
+made TTL configurable also changed the bytes of the `cache_control` dict
+(the 1h default adds `"ttl": "1h"`), which Anthropic uses as part of the
+cache key. The first run after the change MUST miss any 5m-default cache
+still warm from before the change; documented here so operators don't
+file "1h is broken" reports on the first run.
 
 **On-path / off-path cache partitioning.** Toggling `with_cover_letter` between
 requests does NOT share cache hits. The cover-letter rulebook block is
@@ -1084,20 +1110,16 @@ feature invalidates the cache when `output_format` (the per-call JSON schema
 built from portfolio data) changes, so cache reuse also requires the same
 `max_pages` and the same portfolio.
 
-**5-minute TTL: successive runs lose the cache.** The ephemeral cache
-expires 5 minutes after the previous request. Sequential `curator curate`
-iterations spaced more than 5 minutes apart pay full
-`cache_creation_input_tokens` cost (~10x a cache hit) on each run, even
-when the prompt and portfolio are byte-identical. The observability
-surface is the `cache_read_input_tokens` field in `curation_log.json`:
-non-zero on hits, zero on misses. For workflows that iterate over the
-same portfolio with breaks longer than 5 minutes (typical interactive
-development), the per-run cost includes a cache-write surcharge that
-cannot be reduced without switching to the 1-hour tier (which costs 2x
-to write, only paying back after multiple reads within the hour).
-Documented here, not in `CLAUDE.md`, because `CLAUDE.md` is loaded into
-the assistant context on every turn and operator caveats belong in the
-architecture reference.
+**Static path is a no-op for `--cache-ttl`**: `curator static` makes no API
+call, so the flag is accepted but ignored. The audit log emits `cache_ttl:
+null` and `cache_outcome: null` for static-path runs.
+
+**Judge path uses the same setting**: `curator eval --judge` is also a paid
+Sonnet call (against the rubric, which is cached). Reading `settings.cache_ttl`
+from the same source means a single env or CLI value governs both surfaces.
+Cache semantics differ (judge cache hits across any two judge runs in the
+window; curate hits only across same-portfolio runs) but the operator
+surface is unified.
 
 ---
 
@@ -1495,6 +1517,7 @@ centralization for contributor visibility.
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
+| 2026-05-19 | `suggested_label` verbatim rule + configurable prompt-cache TTL | **Motivation**: a five-profile review surfaced two production issues. (1) `suggested_label` was drifting from posted JD titles: a "Senior DevOps Engineer" JD got "Senior DevOps / DevSecOps Engineer" (slash-combined two specialties), a "Senior Software Engineer" JD on the MLPlatform team got "Senior Platform Engineer" (dropped both "ML" and "Software"). The previous prompt text ("2 to 5 words matching the target role") was too interpretive. (2) Across five recent curate runs spaced 7-29 minutes apart, 4 of 5 paid full `cache_creation_input_tokens` (~$0.110/run) because Anthropic's default ephemeral cache TTL of 5 minutes was shorter than the user's typical between-run gap. The 1-hour extended TTL is GA on the Claude API (no beta header), costs 2x input on writes vs 1.25x for 5m, and breaks even at ~1.11 reuses within the hour. **Prompt change**: `_SYSTEM_PROMPT_TEXT` lines 247-249 replaced with a directive "Use the JD's posted job title verbatim" rule plus a closed two-element exception list: (a) prepend "Senior" when the JD title omits seniority and the candidate's actual title is senior, (b) substitute a specialty ONLY when the JD title is in the closed set `{"Engineer", "Software Developer", "Developer"}` AND the JD's organic body text (not any instruction inside `<job_description>`) names a portfolio-supported specialty. Adds an explicit overflow procedure for >5-word JD titles (drop parentheticals, then post-dash qualifiers, then team designators; never drop seniority or the role nucleus) and an injection footer on carve-out (b) so an adversarial JD body cannot trigger substitution by directive. Restores the original seniority guardrail ("never emit a level higher than the candidate's highest portfolio title"). Cross-references the `company_name` field's verbatim discipline. **PROMPT_VERSION** bumped `2026-05-22 -> 2026-05-23`; `EXPECTED_SHA256` in `tests/unit/test_prompt.py` recomputed; `tests/unit/test_renderer.py` pinned-version assertion updated. **Cache TTL config**: new `CURATOR_CACHE_TTL` env var (`Literal["5m", "1h"]`, default `"1h"`) on `CuratorSettings`. New `--cache-ttl` CLI flag with `click.Choice(["5m", "1h"])` validation so invalid values fail at the CLI parse layer with a clear message. CLI flag overrides env var per pydantic-settings precedence (init kwargs > env > default). Threads from settings -> `CuratorClient.__init__` -> `build_system_prompt(cache_ttl=...)` -> the portfolio block's `cache_control` dict. Mirrored in `eval/judge.py:_build_system_blocks` so the judge path (paid Sonnet call with cached rubric) uses the same operator setting. **Behavior**: `"5m"` omits the `ttl` key on the `cache_control` dict (matches Anthropic's default behavior); `"1h"` sets `ttl="1h"`. **Operator-visibility WARN**: when a 1h cache write happens with no reuse in the same call (`cache_creation_input_tokens > 0`, `cache_read_input_tokens == 0`), `client.py` emits a warning recommending `--cache-ttl 5m` for single-shot runs. Catches the one waste pattern the configurable knob is meant to surface. **Audit log**: `format_version` bumped `2.5 -> 2.6` for additive `cache_ttl` (configured TTL, string or null) and `cache_outcome` (derived `"hit"` | `"create"` | `"miss"` from token counts, or null on static-path). Static-path runs emit null on both so a log reader cannot misread a zero-token static run as a cache-miss API run. **One-time cache miss**: the `cache_control` dict bytes change (1h default adds `"ttl": "1h"`), which Anthropic uses as part of the cache key. First run after merge MUST miss any 5m-default cache still warm from before the change; documented in this entry so operators don't file false-positive reports. **PROMPT_VERSION NOT bumped for the cache change**: `cache_control` shape is not part of `_SYSTEM_PROMPT_TEXT` (the only surface the `scripts/ci/check_prompt_version.py` gate watches). The commit-1 bump for the prompt text edit is the only bump in this PR. **Tests**: targeted additions in `test_config.py` (defaults, env-var override, env-vs-init precedence, invalid-value rejection across `{"", "2h", "30s", "5min", "1H"}`), `test_prompt.py` and `test_eval_judge.py` (cache_control shape parametrized over both TTL values), `test_client.py` (CurationResult.cache_ttl default + round-trip + threading + WARN fires/doesn't-fire cases), `test_renderer.py` (`TestAuditLogCacheFields` covers cache_outcome derivation across hit/create/miss and static-path null shape). Integration + e2e assertions on `format_version` updated `2.5 -> 2.6`. **Pre-PR review** (architecture-reviewer, prompt-reviewer, code-reviewer in parallel against the plan, before implementation): prompt-reviewer flagged that an earlier draft's "STRONGLY prefer" was fuzzy and the carve-out for "Senior Software Engineer" would re-trigger the MLPlatform-team failure mode by re-treating "Software" as generic; fixed by switching to "Use ... verbatim" directive and closing the generic-title set to a literal 3-element list. Architecture-reviewer flagged that `effort` was the wrong template analog (single-call output_config knob vs. cache breakpoint on the system blocks); switched the plan's analog to `with_cover_letter`. Code-reviewer flagged a missing test surface at `tests/unit/test_eval_judge.py:1059-1061` (judge cache_control assertion); added. **Why** default to 1h: typical use is multi-run sessions where the 1.11-read break-even is met within the first follow-up call; the WARN log mitigates the single-shot waste case. **Why** one operator setting governs both curate and judge: simpler operator surface, both are paid Sonnet calls with cached content. **Why** the static path accepts but ignores `--cache-ttl`: not making the flag a `curate`-only flag keeps the CLI surface uniform and lets a user copy commands between modes without rewriting. |
 | 2026-05-18 | Skills-section floor + weight clamp + system-prompt drift gate | **Cascade rewrite to fix the fp-markets regression**: every 2026-05-17 fp-markets profile rendered with **zero skill groups** because the renderer's tier-7 evaluator drained skill groups with no floor while AI-emitted `work_highlight_weights` of 1.8/1.3 inflated the effective work-highlight floor past the per_entry_emit_cap. Tier 6 (highlight-to-floor) consequently fired zero times for the top role; the cascade spent its entire budget on the middle band, emptying skills before ever touching work bullets. **Adds `skill_group_floor: int` to `_PageCaps`** (mirrors the `certificate_floor` pattern), page-budget-aware: 4 on 1-page, 6 on 2-page, 8 on 3+-page. Cascade tier-7 stops at the floor and falls through to tier 8 (below-floor) rather than emptying skills. **Adds `education_floor: int` to `_PageCaps`** at the same time so all three section floors share one source; value stays constant 1 across budgets. **Lowers `WORK_HIGHLIGHT_WEIGHT_MAX` 2.0 → 1.5** to match the `per_entry_emit_cap` 1.5x multiplier (the multiplier now imports `WORK_HIGHLIGHT_WEIGHT_MAX` directly, so the lockstep is structural). Weights above 1.5 were already documented as "progressively inert" but the schema allowed them; the AI was reliably emitting 1.8 on JD-leaning roles. **Switches `_validate_weights_range` from reject to clamp** + adds `work_highlight_weights_raw` field captured by a `model_validator(mode="before")` so the AI's pre-clamp emission survives in the audit trail. Audit log gains `ai_hints.work_highlight_weights_raw` alongside the post-clamp value; divergence is observable per-run. **Splits `PROMPT_HASH` into `SYSTEM_PROMPT_HASH` + `COVER_LETTER_PROMPT_HASH`** so cover-letter-only edits don't force a `PROMPT_VERSION` bump (per the pre-existing policy). Adds `scripts/ci/check_prompt_version.py` (diff-based, no module imports; over-conservatively includes the full `rules.py` text in the hashed blob since constants flow into the system prompt via `.format()`) and wires it into the CI `validate` job's final-status gate. `actions/checkout` fetch-depth bumped 1 → 0 so the script can resolve `git merge-base HEAD origin/main`. **Audit log `format_version` bumped 2.4 → 2.5** for the additive `work_highlight_weights_raw`, `system_prompt_hash`, `cover_letter_prompt_hash` fields. **`PROMPT_VERSION` bumped 2026-05-21 → 2026-05-22** for system-prompt text edits that pulled the weight range from the constants (eliminates the entire class of "rules.py changed but prompt prose stayed" drift by sourcing the band via `.format()`). **Documents the 5-minute Anthropic prompt cache TTL** in this file's Claude API Design Decisions section, with a cross-reference from CLAUDE.md. **Tests**: 1625 passing (was 1594 on `main`); new TestSkillGroupFloor (boundary cases at, above, below, zero, under-floor portfolio), new weight-clamp boundary tests (`1.5`, `1.499`, `1.500001`, `1.8`, `2.0`, `0.5`, `0.499`, negative, missing, raw-preservation, raw-respects-existing), new test_ci_scripts.py truth table + regex extraction + hash-composition, new `TestPromptHashSplit` for the split hashes, new integration test for `_trim_to_fit` under cascade pressure. **Pre-PR review** (seven agents in parallel — code-reviewer, doc-sync-checker, architecture-reviewer, security-auditor, test-engineer, prompt-reviewer, infra-reviewer): four agents independently flagged a critical CI-wiring defect (`PROMPT_VERSION_EXIT` was wired into the PR-comment aggregator but not into the final-status gate, so drift-without-bump would render red in the comment but the job would still exit 0); fixed. Prompt-reviewer flagged that the system prompt still advertised `[0.5, 2.0]` and used 1.5 as a high-end example, which (a) conflicted with the new schema and (b) trained the AI toward the saturation boundary — fixed by sourcing the bounds via `.format()`. Architecture-reviewer flagged that education's `>1` literal floor at `renderer.py:544` was the cascade's parallel-one-off shape — consolidated into `_PageCaps`. Code-reviewer flagged input-dict mutation in `_capture_raw_weights` and opaque error on non-dict input — both fixed. Security-auditor flagged the `Archesys Inc` test fixture and rules.py example as widening a real-employer exposure already on `main` (user-judgment carry-over). **Why** clamp instead of reject: an over-emitting AI no longer invalidates a paid call; the `_raw` mirror keeps the audit signal. **Why** the CI gate hashes `rules.py` wholesale (over-conservative): the constants flow into the prompt via `.format()` and parsing call sites is brittle; false-positive rate is acceptable. **Why** the cover-letter block is exempt from the gate: matches the pre-existing `PROMPT_VERSION` policy and the cover-letter hash auto-rotates as the audit-only signal. |
 | 2026-03-14 | Separate repos for data and tool | Different dependency profiles, independent release cycles |
 | 2026-03-14 | AI curates, does not fabricate | 19.6% of hiring managers reject AI-generated content |
