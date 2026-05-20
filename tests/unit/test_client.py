@@ -279,6 +279,51 @@ class TestCurationResult:
         )
         assert result.cache_ttl == "1h"
 
+    def test_cache_outcome_hit(self, valid_curation: ResumeCuration) -> None:
+        result = CurationResult(
+            curation=valid_curation,
+            model="test",
+            input_tokens=1,
+            output_tokens=1,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=29250,
+        )
+        assert result.cache_outcome == "hit"
+
+    def test_cache_outcome_create(self, valid_curation: ResumeCuration) -> None:
+        result = CurationResult(
+            curation=valid_curation,
+            model="test",
+            input_tokens=1,
+            output_tokens=1,
+            cache_creation_input_tokens=29250,
+            cache_read_input_tokens=0,
+        )
+        assert result.cache_outcome == "create"
+
+    def test_cache_outcome_miss(self, valid_curation: ResumeCuration) -> None:
+        result = CurationResult(
+            curation=valid_curation,
+            model="test",
+            input_tokens=1,
+            output_tokens=1,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+        assert result.cache_outcome == "miss"
+
+    def test_cache_outcome_static_is_none(self, valid_curation: ResumeCuration) -> None:
+        result = CurationResult(
+            curation=valid_curation,
+            model="n/a",
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            source="static",
+        )
+        assert result.cache_outcome is None
+
 
 # ---------------------------------------------------------------------------
 # TestCuratorClientInit

@@ -1005,21 +1005,9 @@ def _write_audit_artifacts(
     # detection. Major bumps (2.x -> 3.x) are reserved for
     # non-additive changes that require reader updates.
     log_path = output_dir / "curation_log.json"
-    # cache_outcome: derived from token counts. "hit" when reuse
-    # happened (cheap call), "create" when the cache was written
-    # this run (expensive call, future runs will be cheap), "miss"
-    # when neither happened (rare; usually only when caching was
-    # disabled or the prompt was below the minimum cacheable size).
-    # ``None`` on the static path (no API call).
-    cache_outcome: str | None
-    if curation.source == "static":
-        cache_outcome = None
-    elif curation.cache_read_input_tokens > 0:
-        cache_outcome = "hit"
-    elif curation.cache_creation_input_tokens > 0:
-        cache_outcome = "create"
-    else:
-        cache_outcome = "miss"
+    # cache_outcome derivation lives on CurationResult.cache_outcome so a
+    # non-renderer consumer can read it without reconstructing the
+    # three-branch ladder from raw token counts.
     log_data: dict[str, Any] = {
         "format_version": "2.6",
         "prompt_version": PROMPT_VERSION,
@@ -1033,7 +1021,7 @@ def _write_audit_artifacts(
         "cache_creation_input_tokens": curation.cache_creation_input_tokens,
         "cache_read_input_tokens": curation.cache_read_input_tokens,
         "cache_ttl": curation.cache_ttl,
-        "cache_outcome": cache_outcome,
+        "cache_outcome": curation.cache_outcome,
         "max_pages": max_pages,
         "timestamp": datetime.now(tz=UTC).isoformat(),
     }

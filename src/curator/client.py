@@ -84,7 +84,30 @@ class CurationResult:
     #: ``None`` on the static path (no API call) and on the rerender path
     #: (scripts/rerender.py constructs CurationResult directly from a
     #: persisted curation YAML and has no TTL context).
-    cache_ttl: str | None = None
+    cache_ttl: Literal["5m", "1h"] | None = None
+
+    @property
+    def cache_outcome(self) -> Literal["hit", "create", "miss"] | None:
+        """Derived cache-outcome signal for audit-log readers.
+
+        Returns ``"hit"`` when ``cache_read_input_tokens > 0`` (cheap call),
+        ``"create"`` when only ``cache_creation_input_tokens > 0`` (expensive
+        write; future runs within the TTL will be cheap), ``"miss"`` when
+        both are zero (rare; usually caching disabled or below the minimum
+        cacheable size). ``None`` on the static path (no API call happened).
+
+        Lives on ``CurationResult`` rather than on the audit-log writer so a
+        non-renderer consumer (an in-process eval harness, a future
+        ``--show-last-cache-status`` CLI) can read it without reconstructing
+        the three-branch ladder from raw token counts.
+        """
+        if self.source == "static":
+            return None
+        if self.cache_read_input_tokens > 0:
+            return "hit"
+        if self.cache_creation_input_tokens > 0:
+            return "create"
+        return "miss"
 
 
 # ---------------------------------------------------------------------------

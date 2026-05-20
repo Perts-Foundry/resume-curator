@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import fields
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
@@ -683,11 +683,32 @@ def validate_job_description(job_description: str) -> None:
         raise JobDescriptionError(msg)
 
 
+def make_cache_control(
+    cache_ttl: Literal["5m", "1h"],
+) -> CacheControlEphemeralParam:
+    """Build the Anthropic ``cache_control`` dict for a cached prompt block.
+
+    Single source of truth shared by ``build_system_prompt`` (curate path)
+    and ``curator.eval.judge._build_system_blocks`` (judge path). Centralizing
+    here keeps the two paths from drifting and gives a future cover-letter
+    cache breakpoint a single place to opt into 1h ordering.
+
+    ``"5m"`` omits the ``ttl`` key entirely, matching Anthropic's documented
+    default behavior; ``"1h"`` sets ``ttl: "1h"`` explicitly to engage the
+    GA extended cache. If a future change adds a second cache breakpoint
+    on an earlier block (e.g., the cover-letter block), 1h blocks MUST
+    come before 5m blocks per Anthropic's mixed-TTL ordering constraint.
+    """
+    if cache_ttl == "1h":
+        return {"type": "ephemeral", "ttl": "1h"}
+    return {"type": "ephemeral"}
+
+
 def build_system_prompt(
     portfolio: PortfolioData,
     *,
     with_cover_letter: bool = False,
-    cache_ttl: str = "1h",
+    cache_ttl: Literal["5m", "1h"] = "1h",
 ) -> list[TextBlockParam]:
     """Construct system message content blocks for the curation API call.
 
@@ -705,22 +726,14 @@ def build_system_prompt(
     Anthropic's structured-output feature invalidates the cache when
     ``output_format`` changes.
 
-    ``cache_ttl`` selects between Anthropic's 5-minute default ("5m",
-    omit ``ttl`` key on the cache_control dict) and the GA 1-hour
-    extended cache ("1h", explicit ``ttl: "1h"``). The default "1h"
-    targets multi-run application sessions; see
-    ``CuratorSettings.cache_ttl`` for the cost/break-even rationale.
-    If a future change adds a second cache_control on an earlier block
-    (e.g., the cover-letter block), 1h blocks MUST come before 5m blocks
-    per Anthropic's mixed-TTL ordering constraint.
+    ``cache_ttl`` selects between Anthropic's 5-minute default ("5m") and
+    the GA 1-hour extended cache ("1h"). See ``make_cache_control`` for the
+    cache_control dict shape and ``CuratorSettings.cache_ttl`` for the
+    cost/break-even rationale.
     """
     portfolio_text = _serialize_portfolio(portfolio)
 
-    cache_control: CacheControlEphemeralParam
-    if cache_ttl == "1h":
-        cache_control = {"type": "ephemeral", "ttl": "1h"}
-    else:
-        cache_control = {"type": "ephemeral"}
+    cache_control = make_cache_control(cache_ttl)
 
     blocks: list[TextBlockParam] = [
         {"type": "text", "text": _SYSTEM_PROMPT_TEXT},

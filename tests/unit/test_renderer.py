@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
@@ -761,7 +761,7 @@ class TestAuditLogCacheFields:
         *,
         cache_creation: int,
         cache_read: int,
-        cache_ttl: str | None,
+        cache_ttl: Literal["5m", "1h"] | None,
         source: str = "api",
     ) -> CurationResult:
         return CurationResult(
