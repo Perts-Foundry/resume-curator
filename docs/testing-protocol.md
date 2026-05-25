@@ -115,7 +115,11 @@ uv run curator curate testing/jds/s1-devops.txt --cover-letter
 uv run curator eval profiles/<slug>/ --portfolio "$CURATOR_PORTFOLIO_PATH/data" --judge --json \
   > testing/results/s1-devops-eval.json
 
-# Step 5: Open resume.pdf AND cover_letter.pdf and review visually
+# Step 5: Open resume.pdf AND cover_letter.pdf and review visually.
+# Also `cat cover_letter.txt | head -40` to spot-check the paste-ready
+# sidecar (paragraphs separated by blank lines, no internal wrapping,
+# ASCII hyphens preserved). See `docs/architecture.md` "Clipboard
+# defenses" for the rationale.
 ```
 
 **Gate:** If any of the following trip on S1, stop and investigate before running S2-S4:
@@ -171,9 +175,9 @@ uv run curator static --cover-letter --name sanity-static   # zero-API; validate
 
 Verify structurally similar output to the file-path run (not identical due to API
 non-determinism, but same work entries selected). The `static --cover-letter` smoke
-should produce `resume.pdf`, `cover_letter.pdf`, and `data/cover_letter.yaml` with
-no API call (confirm `source: "static"` and `cover_letter.enabled=true` in
-`curation_log.json`).
+should produce `resume.pdf`, `cover_letter.pdf`, `cover_letter.txt`, and
+`data/cover_letter.yaml` with no API call (confirm `source: "static"` and
+`cover_letter.enabled=true` in `curation_log.json`).
 
 ### Phase 4: Edge Cases (15 min, ~$0.14)
 
@@ -244,7 +248,9 @@ run implies PASS. Confirm by checking the artifacts exist and the log records th
 - No words or phrases from `COVER_LETTER_FORBIDDEN_*` lists
 - No literal `[UPPERCASE]` bracketed placeholders (a successful-validator run that
   still contains one means the validator has a bug; treat as BLOCKER)
-- `cover_letter.pdf` and `data/cover_letter.yaml` present in the profile dir
+- `cover_letter.pdf`, `cover_letter.txt`, and `data/cover_letter.yaml` present in
+  the profile dir (the `.txt` is the paste-ready sidecar; see
+  `docs/architecture.md` "Clipboard defenses")
 - `curation_log.json` has `cover_letter.enabled=true` and a positive `word_count`
 
 ### Grounding (human)
