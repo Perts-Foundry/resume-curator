@@ -1122,6 +1122,40 @@ class CoverLetterCuration(BaseModel):
         """
         return [self.body_paragraph_1, self.body_paragraph_2]
 
+    def to_plaintext(self, signer_name: str) -> str:
+        """Render the cover letter as paste-ready plain text.
+
+        Blocks separated by a single blank line, with no internal line
+        wrapping. Field-level ``_no_control_chars`` already guarantees no
+        embedded newlines, so each paragraph is one line and the
+        destination editor's wrapping takes over on paste.
+
+        Punctuation rules (only one piece of punctuation is added):
+        ``salutation`` already ends with ``,`` per ``_salutation_shape``
+        and is emitted verbatim. ``closing`` is emitted verbatim; the
+        helper does not append punctuation (no validator enforces a
+        trailing period, so a future contributor must not assume one).
+        ``sign_off`` has no trailing ``,`` per ``_sign_off_shape``;
+        this helper appends exactly one comma, matching the Typst
+        template at ``cover_letter.typ`` (``#letter.sign_off,``). Do
+        not generalize this comma-appending to other fields.
+
+        ASCII hyphens are preserved verbatim. The U+2011 substitution
+        applied to the rendered PDF body is a PDF-reader-clipboard
+        workaround and is NOT relevant when reading from a plain-text
+        file.
+        """
+        blocks = (
+            self.salutation,
+            self.opening,
+            self.body_paragraph_1,
+            self.body_paragraph_2,
+            self.closing,
+            f"{self.sign_off},",
+            signer_name.strip(),
+        )
+        return "\n\n".join(blocks) + "\n"
+
 
 class ResumeCurationWithCoverLetter(BaseModel):
     """Wrapper output schema used only when ``--cover-letter`` is on.

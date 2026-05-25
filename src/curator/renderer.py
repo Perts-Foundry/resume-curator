@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path  # noqa: TC003 — used in dataclass field types at runtime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from loguru import logger
 
@@ -112,9 +112,11 @@ class RenderOutput:
     When the curation source is static, ``jd_path`` is ``None`` and
     ``mode_path`` points to the ``mode.txt`` descriptor instead.
 
-    ``cover_letter_yaml_path`` and ``cover_letter_pdf_path`` are populated
-    only when the curation carries a cover letter. PDF path is also
-    ``None`` when ``skip_pdf`` is set.
+    ``cover_letter_yaml_path``, ``cover_letter_txt_path``, and
+    ``cover_letter_pdf_path`` are populated only when the curation
+    carries a cover letter. PDF path is also ``None`` when ``skip_pdf``
+    is set. The ``.txt`` sidecar (paste-ready plain text) always lands
+    when the letter is present; see ``CoverLetterCuration.to_plaintext``.
     """
 
     profile_dir: Path
@@ -129,6 +131,7 @@ class RenderOutput:
     page_count: int | None = None
     mode_path: Path | None = None
     cover_letter_yaml_path: Path | None = None
+    cover_letter_txt_path: Path | None = None
     cover_letter_pdf_path: Path | None = None
     safety_valve_fired: bool = False
     """True when the trim cascade exhausted ``max_trim_iterations`` without
@@ -1328,17 +1331,35 @@ def _cover_letter_word_count(letter: CoverLetterCuration) -> int:
     return total
 
 
+class CoverLetterArtifacts(NamedTuple):
+    """Paths and metadata produced by ``_render_cover_letter``.
+
+    Returned as a NamedTuple rather than a bare tuple so callers access
+    fields by name and future additions (e.g. an HTML sidecar) extend
+    the type instead of growing positional unpacks at every call site.
+    """
+
+    yaml_path: Path
+    txt_path: Path
+    pdf_path: Path | None
+    page_count: int | None
+
+
 def _render_cover_letter(
     output_dir: Path,
     letter: CoverLetterCuration,
     template_path: Path,
     *,
+    signer_name: str,
     skip_pdf: bool,
-) -> tuple[Path, Path | None, int | None]:
-    """Write cover_letter.yaml and (optionally) compile cover_letter.pdf.
+) -> CoverLetterArtifacts:
+    """Write cover_letter.{yaml,txt} and (optionally) compile cover_letter.pdf.
 
-    Returns ``(yaml_path, pdf_path, page_count)``. The PDF path is None
-    when ``skip_pdf`` is True. Page count is None when not compiled.
+    Returns ``CoverLetterArtifacts(yaml_path, txt_path, pdf_path,
+    page_count)``. The PDF path is None when ``skip_pdf`` is True. Page
+    count is None when not compiled. The ``.txt`` sidecar always lands
+    when this function is called (it's the paste-ready artifact for
+    Gmail and web forms; not gated on Typst).
 
     The renderer performs a single-pass Typst compile; there is no trim
     cascade. If the rendered PDF exceeds one page, a WARNING is logged
@@ -1363,8 +1384,17 @@ def _render_cover_letter(
     atomic_yaml_write(yaml_path, payload)
     logger.info("Cover letter YAML written: {}", yaml_path.name)
 
+    # Paste-ready plaintext sidecar (paragraphs separated by blank lines,
+    # no internal wrapping). Lands in the profile dir root alongside the
+    # PDF so a `cat profiles/<slug>/cover_letter.txt | xclip` round-trip
+    # is one shell command. Not gated on Typst; this is the headline fix
+    # for the line-break-on-paste and tofu-box issues with the PDF.
+    txt_path = output_dir / "cover_letter.txt"
+    atomic_text_write(txt_path, letter.to_plaintext(signer_name))
+    logger.info("Cover letter text written: {}", txt_path.name)
+
     if skip_pdf:
-        return yaml_path, None, None
+        return CoverLetterArtifacts(yaml_path, txt_path, None, None)
 
     # Single-pass Typst compile (no trim cascade).
     pdf_path = output_dir / "cover_letter.pdf"
@@ -1400,7 +1430,7 @@ def _render_cover_letter(
             page_count,
             _cover_letter_word_count(letter),
         )
-    return yaml_path, pdf_path, page_count
+    return CoverLetterArtifacts(yaml_path, txt_path, pdf_path, page_count)
 
 
 # ---------------------------------------------------------------------------
@@ -1568,14 +1598,19 @@ def render(
         # Cover letter (if present on the curation result). Runs after the
         # resume trim cascade so it never interacts with page-fit logic.
         cover_letter_yaml_path: Path | None = None
+        cover_letter_txt_path: Path | None = None
         cover_letter_pdf_path: Path | None = None
         if curation.cover_letter is not None:
-            cover_letter_yaml_path, cover_letter_pdf_path, _ = _render_cover_letter(
+            artifacts = _render_cover_letter(
                 output_dir,
                 curation.cover_letter,
                 settings.cover_letter_template_path,
+                signer_name=portfolio.basics.name,
                 skip_pdf=skip_pdf,
             )
+            cover_letter_yaml_path = artifacts.yaml_path
+            cover_letter_txt_path = artifacts.txt_path
+            cover_letter_pdf_path = artifacts.pdf_path
 
         # Collect final data file paths.
         data_dir = output_dir / "data"
@@ -1608,6 +1643,7 @@ def render(
         page_count=final_page_count,
         mode_path=mode_path,
         cover_letter_yaml_path=cover_letter_yaml_path,
+        cover_letter_txt_path=cover_letter_txt_path,
         cover_letter_pdf_path=cover_letter_pdf_path,
         safety_valve_fired=safety_valve_fired,
         add_back_count=add_back_count,

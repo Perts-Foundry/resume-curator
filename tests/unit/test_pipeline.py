@@ -58,6 +58,7 @@ def _make_mock_render_output(
     page_count: int | None = 1,
     cover_letter_pdf_path: Path | None = None,
     cover_letter_yaml_path: Path | None = None,
+    cover_letter_txt_path: Path | None = None,
 ) -> MagicMock:
     """Build a MagicMock RenderOutput with pdf_path, trim_log, page_count."""
     output = MagicMock()
@@ -67,6 +68,7 @@ def _make_mock_render_output(
     output.page_count = page_count
     output.cover_letter_pdf_path = cover_letter_pdf_path
     output.cover_letter_yaml_path = cover_letter_yaml_path
+    output.cover_letter_txt_path = cover_letter_txt_path
     return output
 
 
@@ -714,3 +716,29 @@ class TestCoverLetterPipeline:
             on_status=status.append,
         )
         assert not any("Cover letter" in m for m in status)
+
+    def test_summary_emits_paste_ready_line_when_txt_present(
+        self, tmp_path: Path
+    ) -> None:
+        # New sidecar artifact gets a parallel status line. Always rides
+        # alongside the PDF/YAML line so users see all three paths.
+        settings = _make_mock_settings(tmp_path)
+        curation = _make_mock_result()
+        render_out = _make_mock_render_output(
+            tmp_path,
+            page_count=1,
+            cover_letter_pdf_path=tmp_path / "cover_letter.pdf",
+            cover_letter_txt_path=tmp_path / "cover_letter.txt",
+        )
+        portfolio = MagicMock()
+        status: list[str] = []
+        _summarize_pipeline_result(
+            curation=curation,
+            render_output=render_out,
+            portfolio=portfolio,
+            skip_pdf=False,
+            settings=settings,
+            on_status=status.append,
+        )
+        assert any("Cover letter paste-ready" in m for m in status)
+        assert any("cover_letter.txt" in m for m in status)

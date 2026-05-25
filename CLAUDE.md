@@ -119,10 +119,20 @@ submittable prose with no placeholders and no TEMPLATE banner.
   `StaticModeError` pointing at the `COVER_LETTER_*` constants in
   `src/curator/rules.py`. `--name` affects the output directory only,
   not the letter body.
-- **Outputs**: `cover_letter.pdf` and `data/cover_letter.yaml` land in
-  the same profile directory as the resume. Neither payload includes
-  `is_template` (the field was retired when the TEMPLATE banner was
-  deleted).
+- **Outputs**: `cover_letter.pdf`, `cover_letter.txt`, and
+  `data/cover_letter.yaml` land in the same profile directory as the
+  resume. None of the payloads include `is_template` (the field was
+  retired when the TEMPLATE banner was deleted). The `.txt` is the
+  paste-ready sidecar (paragraphs separated by blank lines, no
+  internal wrapping, ASCII hyphens preserved); the user copies from
+  it rather than from the PDF to avoid clipboard line-break and
+  soft-hyphen artifacts. The `.txt` always lands when a cover letter
+  is present, even with `--no-pdf`. The PDF's body section also
+  substitutes ASCII `-` with U+2011 NON-BREAKING HYPHEN to defend
+  copy-from-PDF flows where the .txt isn't reachable; letterhead
+  URL/email/phone keep ASCII `-` so paste-to-mailto/tel/URL still
+  resolves. See `docs/architecture.md` "Clipboard defenses" for the
+  full mechanism.
 - **Validator (one for both paths)**: `validate_cover_letter` enforces
   word counts (total **soft cap** 250-360: under-min is a hard reject;
   over-max is a `logger.warning` and ships anyway), 40-90 per body

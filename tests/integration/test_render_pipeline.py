@@ -448,8 +448,52 @@ class TestSafetyNetCapEndToEnd:
 # ---------------------------------------------------------------------------
 
 
+def _decode_page_content_streams(pdf_path: Path) -> list[bytes]:
+    """Return decoded content-stream bytes for each page of *pdf_path*.
+
+    Uses pypdf's filter-aware stream walking so callers don't reimplement
+    FlateDecode chain handling, ObjStm decoding, or CRLF quirks. Pages
+    with no /Contents entry contribute an empty bytes object so the
+    return list always lines up with the page index.
+
+    Used by both the soft-hyphen ActualText regression
+    (``_content_streams_contain_hex(pdf, "FEFF00AD")``) and the
+    non-breaking-hyphen body-rule regression
+    (``_content_streams_contain_hex(pdf, "2011")``). Keep the decoder
+    in one place so future PDF tests share the filter-aware walk.
+    """
+    reader = pypdf.PdfReader(str(pdf_path))
+    out: list[bytes] = []
+    for page in reader.pages:
+        content = page.get_contents()
+        if content is None:
+            out.append(b"")
+            continue
+        # PDF /Contents may be an array of streams; pypdf concatenates via
+        # ContentStream / EncodedStreamObject. get_data() returns decoded
+        # bytes for the page's combined content.
+        try:
+            out.append(content.get_data())
+        except AttributeError:
+            out.append(bytes(content))
+    return out
+
+
+def _content_streams_contain_hex(pdf_path: Path, hex_literal: str) -> bool:
+    """Return True if any page's decoded content stream contains *hex_literal*.
+
+    Comparison is case-insensitive (PDF hex strings may be either case).
+    The literal must be the exact substring you'd see inside a PDF
+    operator (e.g. ``"FEFF00AD"`` for an /ActualText soft-hyphen marker,
+    ``"2011"`` for a U+2011 non-breaking hyphen inside a hex-encoded
+    glyph run).
+    """
+    needle = hex_literal.upper().encode("ascii")
+    return any(needle in raw.upper() for raw in _decode_page_content_streams(pdf_path))
+
+
 def _content_streams_have_soft_hyphen_actualtext(pdf_path: Path) -> bool:
-    """Return True if any page's content stream contains the marker.
+    """Return True if any page's content stream contains the soft-hyphen marker.
 
     Looks for the literal ``FEFF00AD`` byte sequence (UTF-16 BOM + soft
     hyphen) that Typst writes inside ``/ActualText <...>`` when it
@@ -459,26 +503,8 @@ def _content_streams_have_soft_hyphen_actualtext(pdf_path: Path) -> bool:
     tags), and a stray ``00AD`` byte sequence elsewhere in the same page
     (font CID, coordinate, hex string) would otherwise produce a false
     positive against a benign tag.
-
-    Uses pypdf's filter-aware stream walking so the assertion is robust
-    against PDF encoding variations (FlateDecode chains, ObjStm, CRLF
-    differences) that a manual regex would miss.
     """
-    reader = pypdf.PdfReader(str(pdf_path))
-    for page in reader.pages:
-        content = page.get_contents()
-        if content is None:
-            continue
-        # PDF /Contents may be an array of streams; pypdf concatenates via
-        # ContentStream / EncodedStreamObject. get_data() returns decoded
-        # bytes for the page's combined content.
-        try:
-            raw = content.get_data()
-        except AttributeError:
-            raw = bytes(content)
-        if b"FEFF00AD" in raw.upper():
-            return True
-    return False
+    return _content_streams_contain_hex(pdf_path, "FEFF00AD")
 
 
 def _write_minimal_basics(output_dir: Path) -> None:
@@ -552,12 +578,15 @@ class TestCoverLetterSoftHyphenRegression:
             "or move this test to a local high-water-mark fixture."
         )
 
-        _, pdf_path, pages = _render_cover_letter(
+        artifacts = _render_cover_letter(
             typst_safe_dir,
             letter,
             default_cover_letter_template_path(),
+            signer_name="Test Candidate",
             skip_pdf=False,
         )
+        pdf_path = artifacts.pdf_path
+        pages = artifacts.page_count
         assert pdf_path is not None
         assert pdf_path.exists()
         assert pages == 1, (
@@ -599,18 +628,49 @@ class TestCoverLetterSoftHyphenRegression:
         patched_template = template_dir / "cover_letter_hyphenate_true.typ"
         original = default_cover_letter_template_path().read_text(encoding="utf-8")
         patched = original.replace("hyphenate: false", "hyphenate: true")
+        # The body-scoped `#show "-": "\u{2011}"` rule (added 2026-05-25)
+        # also defends against the soft-hyphen-on-copy bug by pre-empting
+        # line breaks at hyphens. The positive control must defeat ALL
+        # defenses in the template, otherwise the FEFF00AD assertion is
+        # vacuous: with the show rule active, body hyphens become U+2011
+        # before Typst's hyphenation algorithm runs, so even with
+        # hyphenate: true no markers are emitted in the body.
+        patched = patched.replace('#show "-": "\\u{2011}"\n', "")
         assert patched != original, (
             "Failed to patch hyphenate flag; template format changed?"
+        )
+        # Symmetric assertions: the hyphenate flip and the show-rule strip
+        # must BOTH actually land. Either silent no-op would make the
+        # FEFF00AD assertion vacuous (the strip protects against the body
+        # show rule pre-empting auto-hyphenation; the flip protects
+        # against the original hyphenate: false defense suppressing
+        # ActualText markers entirely).
+        assert "hyphenate: true" in patched, (
+            "Failed to flip hyphenate flag to true; the `hyphenate: false` "
+            "literal in cover_letter.typ likely drifted (whitespace, "
+            "comma placement, quoting). Without the flip, no /ActualText "
+            "FEFF00AD markers will appear and the assertion stays vacuous."
+        )
+        assert "hyphenate: false" not in patched, (
+            "Patched template still contains `hyphenate: false`; the "
+            "replace did not land or there's a second occurrence to strip."
+        )
+        assert '#show "-": "\\u{2011}"' not in patched, (
+            "Failed to strip U+2011 show rule from positive-control "
+            "template; the rule must be removed alongside the hyphenate "
+            "flip or the FEFF00AD assertion stays vacuous."
         )
         patched_template.write_text(patched, encoding="utf-8")
 
         letter = valid_cover_letter()
-        _, pdf_path, _ = _render_cover_letter(
+        artifacts = _render_cover_letter(
             render_dir,
             letter,
             patched_template,
+            signer_name="Test Candidate",
             skip_pdf=False,
         )
+        pdf_path = artifacts.pdf_path
         assert pdf_path is not None
         assert pdf_path.exists()
         assert _content_streams_have_soft_hyphen_actualtext(pdf_path), (
@@ -620,4 +680,220 @@ class TestCoverLetterSoftHyphenRegression:
             "meaningless. Likely causes: Typst version dropped ActualText "
             "tagging, fixture no longer triggers hyphenation at this "
             "font/geometry, or pypdf stream walking changed."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Non-breaking hyphen (U+2011) substitution in the cover letter body
+#
+# Background: even with `hyphenate: false` preventing Typst from inserting
+# /ActualText FEFF00AD markers (above), the cover letter PDF still exposes
+# the user to tofu boxes when Chrome/Acrobat copy a line break that falls
+# on an existing hyphen. Those readers heuristically rewrite "word-\nrest"
+# into "word­rest" (SOFT HYPHEN), which web fonts lacking U+00AD
+# render as boxes on paste.
+#
+# Defense (in `cover_letter.typ`): a body-scoped `#show "-": "\u{2011}"`
+# rule replaces ASCII hyphens with U+2011 NON-BREAKING HYPHEN inside the
+# salutation-through-name block. Typst cannot break a line at U+2011, so
+# the reader heuristic never fires. Letterhead URL/email/phone retain
+# ASCII `-` so they paste as resolvable identifiers.
+# ---------------------------------------------------------------------------
+
+
+def _extract_pdf_text(pdf_path: Path) -> str:
+    """Return the concatenated text of every page via pdfplumber.
+
+    Uses pdfplumber rather than pypdf for text extraction because
+    pdfplumber's character iteration honors ToUnicode CMaps consistently
+    across font subsets, including the non-BMP codepoints the U+2011
+    substitution emits. Pages are joined by ``\\n``.
+    """
+    import pdfplumber
+
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        return "\n".join((page.extract_text() or "") for page in pdf.pages)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not TYPST_AVAILABLE, reason="Typst not installed")
+class TestCoverLetterNonBreakingHyphens:
+    """Pin the body-scoped U+2011 substitution in cover_letter.typ.
+
+    Geometry-independent tests assert the substitution mechanism without
+    coupling to the template's line-wrap positions, which drift with
+    fixture word counts and font availability. The positive control
+    compiles a checked-in template variant that omits the show rule,
+    proving the negative tests aren't passing because the source already
+    had no hyphens or because the assertion harness is broken.
+    """
+
+    def test_body_hyphens_substituted_with_u2011(self, typst_safe_dir: Path) -> None:
+        """U+2011 appears in the body text wherever the source had `-`."""
+        from curator import default_cover_letter_template_path
+        from tests.helpers import valid_cover_letter
+
+        _write_minimal_basics(typst_safe_dir)
+        letter = valid_cover_letter()
+
+        # Fixture sanity: the assertion below relies on specific compounds
+        # being present in the body and closing. If the fixture loses any
+        # of them, surface the decoupling here instead of letting the
+        # substitution assertion below fail with a confusing diff.
+        body_text = " ".join([letter.opening, *letter.body_paragraphs, letter.closing])
+        expected_source_compounds = (
+            "multi-region",  # body_paragraph_1
+            "nine-month",  # body_paragraph_1
+            "developer-hour",  # body_paragraph_1
+            "deployment-safety",  # closing
+        )
+        for compound in expected_source_compounds:
+            assert compound in body_text, (
+                f"Fixture lost compound {compound!r}; the U+2011 "
+                "substitution assertion below is no longer meaningful. "
+                "Restore in tests/helpers.valid_cover_letter_kwargs() "
+                "or update this list."
+            )
+
+        artifacts = _render_cover_letter(
+            typst_safe_dir,
+            letter,
+            default_cover_letter_template_path(),
+            signer_name="Test Candidate",
+            skip_pdf=False,
+        )
+        assert artifacts.pdf_path is not None
+        text = _extract_pdf_text(artifacts.pdf_path)
+
+        # Property-level guarantee: U+2011 is the substitution destination,
+        # so it MUST appear in the rendered text.
+        assert "\u2011" in text, (
+            "Cover letter body has no U+2011 codepoint. The "
+            '`#show "-": "\\u{2011}"` rule in cover_letter.typ likely '
+            "did not fire. Check the body-scoped content block in "
+            "src/curator/templates/cover_letter.typ."
+        )
+
+        # Substitution covers every body hyphen across multiple paragraphs,
+        # not just the first one or just the first paragraph. Catches a
+        # regression where the show rule fires only at the first match,
+        # is scoped to a single paragraph, or stops applying to ``closing``.
+        for compound in expected_source_compounds:
+            u2011_form = compound.replace("-", "\u2011")
+            assert u2011_form in text, (
+                f"Expected {compound!r} from the fixture to render as "
+                f"{u2011_form!r} in the PDF; got plain ASCII. The show "
+                "rule may have been scoped narrower than intended "
+                "(first-match-only, or only one paragraph)."
+            )
+
+    def test_letterhead_retains_ascii_hyphens(self, typst_safe_dir: Path) -> None:
+        """Letterhead URL/email/phone keep ASCII `-` so paste resolves them."""
+        from curator import default_cover_letter_template_path
+        from tests.helpers import valid_cover_letter
+
+        # Letterhead fields with hyphens that MUST paste as ASCII so the
+        # destination application can resolve them as a phone number,
+        # mailto: target, and URL respectively.
+        data_dir = typst_safe_dir / "data"
+        data_dir.mkdir(exist_ok=True)
+        (data_dir / "basics.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "name": "Test Candidate",
+                    "email": "first-last@example.com",
+                    "phone": "(555) 202-2179",
+                    "url": "https://example-domain.test/about/",
+                }
+            ),
+            encoding="utf-8",
+        )
+        letter = valid_cover_letter()
+
+        artifacts = _render_cover_letter(
+            typst_safe_dir,
+            letter,
+            default_cover_letter_template_path(),
+            signer_name="Test Candidate",
+            skip_pdf=False,
+        )
+        assert artifacts.pdf_path is not None
+        text = _extract_pdf_text(artifacts.pdf_path)
+
+        # Each letterhead identifier must paste as ASCII. The U+2011
+        # substitution must NOT have reached these fields. Phone number
+        # is the most user-visible (clipboard-paste-to-tel:).
+        assert "(555) 202-2179" in text, (
+            "Letterhead phone number was rewritten or dropped. The "
+            "U+2011 show rule must be scoped to the body block in "
+            "cover_letter.typ; check that the letterhead lives OUTSIDE "
+            "the body content block."
+        )
+        assert "first-last@example.com" in text, (
+            "Letterhead email local-part hyphen was rewritten. Same "
+            "scoping concern as above."
+        )
+        assert "example-domain.test" in text, (
+            "Letterhead URL slug hyphen was rewritten. Same scoping concern as above."
+        )
+
+    def test_positive_control_no_show_rule_emits_ascii_hyphens(
+        self, typst_safe_dir: Path
+    ) -> None:
+        """Without the show rule, ASCII hyphens survive into the PDF.
+
+        Proves the negative tests above aren't passing vacuously (e.g.
+        because pdfplumber strips U+2011, or because the fixture has no
+        hyphens to begin with). The variant template is checked in at
+        ``tests/integration/templates/cover_letter_no_show_rule.typ``;
+        if it ever silently mirrors the packaged template, the drift
+        check fires before the substantive assertion.
+        """
+        from curator import default_cover_letter_template_path
+        from tests.helpers import valid_cover_letter
+
+        variant_path = (
+            Path(__file__).parent / "templates" / "cover_letter_no_show_rule.typ"
+        )
+        packaged_path = default_cover_letter_template_path()
+
+        # Drift check: variant must differ from packaged. A future
+        # contributor that "fixes" the variant to match packaged would
+        # silently turn the positive control vacuous.
+        assert variant_path.read_text(encoding="utf-8") != packaged_path.read_text(
+            encoding="utf-8"
+        ), (
+            "Positive-control template is identical to the packaged "
+            "template. The variant must omit the "
+            '`#show "-": "\\u{2011}"` line; see the file header for '
+            "rationale."
+        )
+
+        _write_minimal_basics(typst_safe_dir)
+        letter = valid_cover_letter()
+
+        artifacts = _render_cover_letter(
+            typst_safe_dir,
+            letter,
+            variant_path,
+            signer_name="Test Candidate",
+            skip_pdf=False,
+        )
+        assert artifacts.pdf_path is not None
+        text = _extract_pdf_text(artifacts.pdf_path)
+
+        # Without the show rule, body hyphens must survive as ASCII.
+        assert "multi-region" in text, (
+            "Positive control failed: without the show rule, "
+            "'multi-region' should render as ASCII in the PDF text. "
+            "Either pdfplumber is normalizing U+2011 -> '-' (which "
+            "would invalidate the negative tests above) or Typst is "
+            "applying an unexpected substitution. Investigate before "
+            "trusting the negative tests."
+        )
+        # And U+2011 must NOT appear without the show rule.
+        assert "\u2011" not in text, (
+            "Positive control template emitted U+2011 despite omitting "
+            "the show rule. Source of the U+2011 is unclear; review the "
+            "variant and rule out font ligatures or Typst defaults."
         )

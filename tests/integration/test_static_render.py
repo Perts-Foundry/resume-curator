@@ -237,6 +237,17 @@ class TestStaticCoverLetterIntegration:
         assert result.cover_letter_pdf_path.exists()
         assert result.cover_letter_yaml_path is not None
         assert result.cover_letter_yaml_path.exists()
+        # Paste-ready plaintext sidecar lands on the static path too —
+        # both API and static paths share ``_render_cover_letter`` so the
+        # contract is symmetric. Pinned here so a regression on one path
+        # is caught even if the other is silent.
+        assert result.cover_letter_txt_path is not None
+        assert result.cover_letter_txt_path.exists()
+        assert result.cover_letter_txt_path.name == "cover_letter.txt"
+        assert static_portfolio.cover_letter is not None
+        assert result.cover_letter_txt_path.read_text(encoding="utf-8") == (
+            static_portfolio.cover_letter.to_plaintext(static_portfolio.basics.name)
+        )
 
     def test_cover_letter_yaml_has_no_is_template_and_renders_verbatim(
         self, static_portfolio: PortfolioData, tmp_path: Path
