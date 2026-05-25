@@ -326,10 +326,15 @@ design choice.
 
 - [ ] Trimmer drops the certificates section entirely when it ends up
   empty after the cascade, instead of rendering an empty heading.
-- [ ] Decide and document the work-entry zero-highlight policy.
-  Current behavior (preserve every portfolio work entry as a
-  header-only row) is intentional product design; pin it explicitly
-  in `docs/architecture.md` so future contributors don't "fix" it.
+- [x] Decide and document the work-entry zero-highlight policy.
+  The 2026-05-20 PR pinned the policy at three sites
+  (`renderer.py` `RENDERER_BEHAVIOR_INVARIANT`, `eval/judge.py`
+  `<conventions>`, `docs/architecture.md` cascade narrative): on
+  2+-page renders every entry retains at least one bullet (tier 8
+  per-entry floor keyed on `base_floor > 0`); on 1-page renders
+  positions 2+ may still render header-only. The earlier "preserve
+  every entry as header-only" framing now scopes to the surviving
+  1-page asymmetry only.
 - [ ] Per-group keyword filter is too permissive. Prompt should
   pressure the model harder to pick fewer, more targeted keywords per
   group; or tighten via schema once the per-call dynamic schema work
@@ -452,8 +457,9 @@ expanding scope. Each is independently shippable.
   `human_scores` are stamped with `judge_version="2026-04-26"`. Until
   re-baselined, `compare_judge_against_golden` short-circuits with a
   WARNING for each (no ERROR). Run the judge once against all 24 cases
-  (paid; ~$1.20), lift `meta.judge_version` to `"2026-05-09"` where
+  (paid; ~$1.20), lift `meta.judge_version` to `"2026-05-20"` where
   diffs ≤ tolerance, mark out-of-tolerance cases for fresh human review.
+  Bundles the 2026-05-09 and 2026-05-20 judge bumps into one re-baseline.
 
 - [ ] **CR-21 / Annotate stale band claims**: the design-log entries
   dated 2026-04-10, 2026-04-13, and 2026-04-14 still describe band
@@ -464,6 +470,30 @@ expanding scope. Each is independently shippable.
   review.)
 
 ## Trim Cascade Rebalance Follow-ups (from 2026-05-10 work)
+
+- [ ] **Preference-aware add-back ordering** (from 2026-05-20 PR):
+  the post-fit add-back loop in `_trim_to_fit` walks the trim history
+  in strict physical LIFO order. When the AI emits a custom
+  `trim_priority` the restore order is the inverse of physical drop,
+  not the inverse of preference; an AI that says "drop X before Y"
+  gets X dropped first, and on add-back X is restored last, even
+  though the AI's preference would have asked X restored first.
+  Asymmetry is documented and pinned by
+  `tests/unit/test_renderer.py::test_addback_lifo_with_ai_trim_priority`.
+  Promote to preference-aware (walk `trim_log` in reverse but skip
+  and defer entries whose `TrimKind` belongs to a tier the AI ranked
+  as "drop first") only if real runs show LIFO restoring the wrong
+  content. Likely a small change in `_trim_to_fit` plus a richer
+  snapshot tuple carrying the originating `TrimKind`.
+
+- [ ] **Extract `_add_back_pass` helper from `_trim_to_fit`**
+  (from 2026-05-20 PR architecture review): the function is now
+  ~210 lines with two distinct phases (drain + add-back) sharing
+  only the final return tuple. Extracting the add-back loop would
+  shrink the success path to ~3 lines, localize the LIFO invariant
+  tests around a single named function, and let add-back be
+  unit-tested with a hand-built snapshot list. No behavior change
+  expected.
 
 - [ ] **Calibrate `work_position_floors` from real runs**: the
   `(8, 6, 6, 2, 2)` 2-page profile is a starting point. After N>=10

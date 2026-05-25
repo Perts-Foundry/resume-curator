@@ -308,7 +308,7 @@ def materialize_profile(golden: GoldenCase, target_dir: Path) -> Path:
     atomic_json_write(
         target_dir / "curation_log.json",
         {
-            "format_version": "2.6",
+            "format_version": "2.7",
             "max_pages": golden.meta.max_pages,
         },
     )

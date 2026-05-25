@@ -138,6 +138,19 @@ class RenderOutput:
     1-page budget where the cascade gave up reads ``True``. Surfaces the
     "shipped what we could fit" path so downstream eval / dashboards can
     distinguish intentional 2-page output from non-converged output."""
+    add_back_count: int = 0
+    """Number of trims the post-fit add-back pass successfully restored.
+    Mirrors the same field in ``curation_log.json`` so callers don't have
+    to re-parse the audit JSON to know how much whitespace the cascade
+    over-trimmed. Always ``0`` when no cascade trims occurred, when the
+    add-back loop early-exited at ``pages == max_pages``, or when the
+    safety-valve path short-circuited the success branch."""
+    over_budget: bool = False
+    """True when the final rendered page count exceeded ``max_pages``.
+    Distinguishes the two states ``safety_valve_fired=True`` now carries
+    (cascade-exhausted-while-over-budget vs add-back-failed). Mirrors
+    the audit-log field. On the success path this is always ``False``;
+    on the safety-valve paths it reflects ``page_count > max_pages``."""
 
 
 # ---------------------------------------------------------------------------
@@ -359,17 +372,23 @@ def _apply_selections(
 # the most recent career content.
 #
 # RENDERER_BEHAVIOR_INVARIANT: this trimmer preserves every portfolio
-# work entry on the rendered page, even when its highlight list is
-# drained to zero. Older roles render as header-only rows (position,
-# company, dates) so the complete employment timeline stays visible.
-# This is a deliberate product choice for transparency on bulk
+# work entry on the rendered page. On 2+-page runs, each preserved
+# entry also retains at least one highlight bullet so the row is never
+# a dangling header (tier 8 enforces this via the per-entry floor
+# keyed on ``work_position_floors[i] > 0``). On 1-page runs,
+# positions whose ``work_position_floors[i] == 0`` (positions 2+ under
+# the ``(3, 3, 0, 0, 0)`` 1-page tuple) may still render as
+# header-only rows (position, company, dates) so the complete
+# employment timeline stays visible without consuming the tight 1-page
+# budget. This is a deliberate product choice for transparency on bulk
 # applications. The Tier 2 judge rubric in
 # ``src/curator/eval/judge.py`` ``<conventions>`` block codifies the
 # downstream "score against rendered output, do not penalize the
 # AI-selected-vs-rendered gap" framing this invariant requires. Any
-# change to the empty-work-entry preservation policy here MUST update
-# the judge convention block in lockstep AND bump JUDGE_VERSION; bump
-# PROMPT_VERSION too if curator-prompt language refers to it.
+# change to the per-entry floor or to the conditions under which a
+# header-only row may render MUST update the judge convention block in
+# lockstep AND bump JUDGE_VERSION; bump PROMPT_VERSION too if
+# curator-prompt language refers to it.
 
 # ``CERTIFICATE_FLOOR``, ``_PageCaps``, and ``_caps_for_pages`` live in
 # :mod:`curator.page_caps` (imported and re-exported above) so
@@ -601,10 +620,29 @@ def _generate_next_trim(
         return None
 
     def _eval_work_highlights_below_floor() -> TrimStep | None:
+        # Per-entry floor (RENDERER_BEHAVIOR_INVARIANT): when the
+        # per-position ``base_floor`` is positive, the entry must retain
+        # at least one bullet so the rendered row is never a dangling
+        # header. Positions whose ``base_floor == 0`` (1-page mode
+        # positions 2+ under the ``(3, 3, 0, 0, 0)`` tuple) preserve
+        # the historical "header-only older role" behavior because the
+        # 1-page budget was designed for that asymmetry. Position-index
+        # reasoning matches tier 6 above.
+        #
+        # ``weight_hints`` are intentionally NOT applied here: this tier
+        # is the last-resort floor and the per-entry guarantee must hold
+        # regardless of how the AI weighted the role. Tier 6 already
+        # scaled the floor via weights; if a low weight drove tier 6's
+        # effective floor to 0, this tier still blocks the drain-to-zero
+        # via ``min_keep = 1 if base_floor > 0``.
         work = sections.get("work", [])
+        floors_len = len(work_position_floors)
+        last_floor = work_position_floors[-1] if floors_len > 0 else 0
         for i in range(len(work) - 1, -1, -1):
             highlights = work[i].get("highlights", [])
-            if len(highlights) > 0:
+            base_floor = work_position_floors[i] if i < floors_len else last_floor
+            min_keep = 1 if base_floor > 0 else 0
+            if len(highlights) > min_keep:
                 wid = work[i].get("id", "unknown")
                 hid = highlights[-1].get("id", "unknown")
                 return TrimStep(
@@ -707,6 +745,12 @@ def _prune_empty_sections(
     output always renders every portfolio work entry as a header row
     (position, company, dates) so the complete employment timeline is
     visible, even when the trim cascade has drained its highlight list.
+    Note that as of the per-entry floor in tier 8 (see
+    ``RENDERER_BEHAVIOR_INVARIANT``), the cascade itself no longer
+    produces zero-highlight work entries on 2+-page runs except in a
+    rare safety-valve overflow. A zero-highlight entry surfacing here
+    on a 2+-page render therefore indicates either a non-cascade
+    source (manual edit, partial reload) or that safety valve.
 
     Called by ``_trim_to_fit`` before each write/compile pass so the
     rendered PDF never contains a skeleton skill group with no keywords.
@@ -739,12 +783,35 @@ def _trim_to_fit(
     education_floor: int = EDUCATION_FLOOR,
     trim_priority: Sequence[str] | None = None,
     work_highlight_weight_hints: Mapping[str, float] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int, bool]:
-    """Iteratively trim content until the PDF fits within max_pages.
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[str], int, bool, int, bool]:
+    """Iteratively trim content, then optionally restore the last trim(s).
+
+    Trims iteratively until the PDF fits within ``max_pages``, then runs
+    a bounded add-back pass to undo the most recent trim(s) when the
+    page budget allows, minimizing trailing whitespace.
 
     Writes data files, compiles Typst, checks page count, and applies
     trim steps one at a time. Each Typst compile is <1s so even 25
     iterations is fast.
+
+    After the cascade converges (``pages <= max_pages``), runs a
+    bounded **add-back pass**: walks the trim history in strict LIFO
+    order, restoring each pre-trim snapshot and recompiling. Each
+    restore that still fits the budget is accepted and the
+    corresponding entry is removed from ``trim_log``; the first
+    restore that overflows reverts to the last-good state and the
+    pass exits. An early-exit fires when ``pages == max_pages`` after
+    an accepted restore (no further restore can succeed at exact
+    budget). The pass is bounded by the number of cascade trims;
+    expected cost is 1-2 extra Typst compiles for tight portfolios.
+
+    LIFO is structurally correct for the canonical cascade (lowest-
+    value trims fire last, so reversing them first restores highest-
+    value content). When the AI emits a custom ``trim_priority`` the
+    physical drop order may differ from the AI's preference order;
+    LIFO follows physical drop order, not preference order. This
+    asymmetry is documented and pinned by
+    ``test_addback_lifo_with_ai_trim_priority``.
 
     Args:
         sections: Curated section data (work, skills, etc.).
@@ -780,10 +847,25 @@ def _trim_to_fit(
 
     Returns:
         Tuple of (final_sections, final_interests, trim_log,
-        page_count, safety_valve_fired). The boolean is True if the
-        cascade exhausted ``max_trim_iterations`` without converging.
+        page_count, safety_valve_fired, add_back_count, over_budget).
+        ``safety_valve_fired`` is True if the cascade exhausted
+        ``max_trim_iterations`` or returned ``None`` from
+        ``_generate_next_trim`` while still over budget.
+        ``add_back_count`` is the number of trims that were
+        successfully reverted by the add-back pass (zero when no
+        cascade trims occurred or when no restore fit).
+        ``over_budget`` is True when ``page_count > max_pages``. The
+        success path (cascade converged) always returns ``False``; the
+        flag can only be ``True`` via the two safety-valve exits
+        (cascade exhausted or ``max_trim_iterations`` reached).
     """
     trim_log: list[str] = []
+
+    # Snapshots: each entry is the (sections, interests) state BEFORE
+    # the corresponding trim_log entry was applied. Indices align with
+    # trim_log indices, so restoring snapshots[k] undoes trim_log[k]
+    # together with every trim that came after it (LIFO restore).
+    snapshots: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     pages = 0
 
     for iteration in range(1, max_trim_iterations + 1):
@@ -808,7 +890,71 @@ def _trim_to_fit(
                     pages,
                     len(trim_log),
                 )
-            return sections, interests, trim_log, pages, False
+            # Add-back pass: try restoring trims in LIFO order while the
+            # page budget still permits. The current (sections,
+            # interests, pages) is our running ``last_good``; on the
+            # first restore that overflows we re-write+recompile from
+            # ``last_good`` so the on-disk PDF matches what we return.
+            add_back_count = 0
+            last_good_sections = sections
+            last_good_interests = interests
+            last_good_pages = pages
+            while snapshots:
+                if last_good_pages == max_pages:
+                    # Exact-budget early exit: any restore must overflow.
+                    logger.info(
+                        "Add-back early exit at page budget ({} pages)",
+                        max_pages,
+                    )
+                    break
+                snap_sections, snap_interests = snapshots.pop()
+                candidate_sections = _prune_empty_sections(snap_sections)
+                _write_data_files(
+                    output_dir, candidate_sections, basics, snap_interests
+                )
+                _write_layout(output_dir, section_order)
+                _invoke_typst(output_dir, template_path)
+                candidate_pages = get_page_count(output_dir / "resume.pdf")
+                if candidate_pages <= max_pages:
+                    # Accept: the trim was unnecessary. ``snapshots`` and
+                    # ``trim_log`` grow together (one push per applied
+                    # trim) so the lengths are an invariant; let an
+                    # IndexError surface if it's ever violated rather
+                    # than masking the bug with a default sentinel.
+                    restored = trim_log.pop()
+                    logger.info(
+                        "Add-back accepted ({} page(s)): reverted {}",
+                        candidate_pages,
+                        restored,
+                    )
+                    last_good_sections = candidate_sections
+                    last_good_interests = snap_interests
+                    last_good_pages = candidate_pages
+                    add_back_count += 1
+                    continue
+                # Overflow: revert to last_good on disk and stop.
+                logger.info(
+                    "Add-back overflow ({} > {} pages); reverting",
+                    candidate_pages,
+                    max_pages,
+                )
+                _write_data_files(
+                    output_dir, last_good_sections, basics, last_good_interests
+                )
+                _write_layout(output_dir, section_order)
+                _invoke_typst(output_dir, template_path)
+                break
+            if add_back_count:
+                logger.info("Add-back restored {} trim(s)", add_back_count)
+            return (
+                last_good_sections,
+                last_good_interests,
+                trim_log,
+                last_good_pages,
+                False,
+                add_back_count,
+                False,
+            )
 
         # Generate next trim operation.
         step = _generate_next_trim(
@@ -823,7 +969,7 @@ def _trim_to_fit(
         )
         if step is None:
             logger.warning(
-                "Nothing left to trim, still {} page(s) (target: {})",
+                "Cascade exhausted, still {} page(s) over budget (target: {})",
                 pages,
                 max_pages,
             )
@@ -831,7 +977,11 @@ def _trim_to_fit(
             # downstream observability: the rendered PDF exceeds the
             # budget and the cascade has no remaining moves, which is
             # the same operational concern as iteration exhaustion.
-            return sections, interests, trim_log, pages, True
+            # ``over_budget=True`` is hardcoded safely: control flow
+            # reaches this branch only when ``pages > max_pages``
+            # (the success branch at line 879 checks ``pages <=
+            # max_pages`` and returns first).
+            return sections, interests, trim_log, pages, True, 0, True
 
         # Observability: warn if we cross the prior default iteration
         # count (15) so pathological convergence cases surface even while
@@ -852,6 +1002,9 @@ def _trim_to_fit(
 
         logger.info("Trim {}/{}: {}", iteration, max_trim_iterations, step.description)
         trim_log.append(step.description)
+        # Snapshot BEFORE applying the trim so add-back can restore
+        # this exact state (LIFO ordering matches trim_log).
+        snapshots.append((copy.deepcopy(sections), copy.deepcopy(interests)))
         sections, interests = _apply_trim(sections, interests, step)
 
     # Safety valve: max iterations reached.
@@ -862,7 +1015,7 @@ def _trim_to_fit(
     _invoke_typst(output_dir, template_path)
     pages = get_page_count(output_dir / "resume.pdf")
 
-    return sections, interests, trim_log, pages, True
+    return sections, interests, trim_log, pages, True, 0, pages > max_pages
 
 
 # ---------------------------------------------------------------------------
@@ -965,6 +1118,8 @@ def _write_audit_artifacts(
     *,
     trim_log: list[str] | None = None,
     max_pages: int,
+    add_back_count: int = 0,
+    over_budget: bool = False,
 ) -> tuple[Path, Path, Path | None, Path | None]:
     """Write curated.yaml, curation_log.json, and per-source descriptor.
 
@@ -993,9 +1148,14 @@ def _write_audit_artifacts(
     # this request) and ``cache_outcome`` (a derived signal of whether
     # the prompt cache hit, missed, or was just created), so a cost-
     # conscious operator can answer "did my 2x write pay off?" without
-    # manually correlating tokens across runs. Renderer caps are
-    # deterministic from ``max_pages`` via ``_caps_for_pages`` and are
-    # intentionally not persisted; storing both invites drift.
+    # manually correlating tokens across runs. 2.7 adds
+    # ``add_back_count`` (number of trims the post-fit add-back pass
+    # restored to minimize trailing whitespace) and ``over_budget``
+    # (True iff the final rendered page count exceeded ``max_pages``),
+    # disambiguating the two meanings ``safety_valve_fired`` now
+    # carries (cascade-exhausted vs add-back-failed). Renderer caps
+    # are deterministic from ``max_pages`` via ``_caps_for_pages`` and
+    # are intentionally not persisted; storing both invites drift.
     #
     # Version semantics: a minor bump (2.x -> 2.y) covers all additive
     # field surfaces shipped in the same PR. The number identifies the
@@ -1009,7 +1169,7 @@ def _write_audit_artifacts(
     # non-renderer consumer can read it without reconstructing the
     # three-branch ladder from raw token counts.
     log_data: dict[str, Any] = {
-        "format_version": "2.6",
+        "format_version": "2.7",
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "system_prompt_hash": SYSTEM_PROMPT_HASH,
@@ -1023,6 +1183,8 @@ def _write_audit_artifacts(
         "cache_ttl": curation.cache_ttl,
         "cache_outcome": curation.cache_outcome,
         "max_pages": max_pages,
+        "add_back_count": add_back_count,
+        "over_budget": over_budget,
         "timestamp": datetime.now(tz=UTC).isoformat(),
     }
     if trim_log is not None:
@@ -1347,6 +1509,8 @@ def render(
         trim_log: list[str] = []
         final_page_count: int | None = None
         safety_valve_fired = False
+        add_back_count = 0
+        over_budget = False
         if not skip_pdf:
             (
                 sections,
@@ -1354,6 +1518,8 @@ def render(
                 trim_log,
                 final_page_count,
                 safety_valve_fired,
+                add_back_count,
+                over_budget,
             ) = _trim_to_fit(
                 sections,
                 basics_dict,
@@ -1371,6 +1537,18 @@ def render(
                 work_highlight_weight_hints=rc.work_highlight_weights or None,
             )
             pdf_path = output_dir / "resume.pdf"
+            if over_budget:
+                # The cascade gave up before reaching budget. Today
+                # ``over_budget=True`` implies ``safety_valve_fired=True``
+                # (the success path always returns over_budget=False), so
+                # the safety-valve signal is redundant in this WARN — kept
+                # implicit. If a future code path adds a third over-budget
+                # exit, log both flags explicitly.
+                logger.warning(
+                    "Page budget exceeded: {} > {} pages",
+                    final_page_count,
+                    settings.max_pages,
+                )
         else:
             # No-PDF mode: write data files and layout without compiling.
             _write_data_files(output_dir, sections, basics_dict, interests_dict)
@@ -1383,6 +1561,8 @@ def render(
             jd_text,
             trim_log=trim_log or None,
             max_pages=settings.max_pages,
+            add_back_count=add_back_count,
+            over_budget=over_budget,
         )
 
         # Cover letter (if present on the curation result). Runs after the
@@ -1430,4 +1610,6 @@ def render(
         cover_letter_yaml_path=cover_letter_yaml_path,
         cover_letter_pdf_path=cover_letter_pdf_path,
         safety_valve_fired=safety_valve_fired,
+        add_back_count=add_back_count,
+        over_budget=over_budget,
     )
