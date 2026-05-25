@@ -1057,6 +1057,106 @@ class TestCoverLetterCurationStructure:
             CoverLetterCuration(**kwargs)
 
 
+class TestCoverLetterToPlaintext:
+    """Pin the paste-ready plain-text serialization of CoverLetterCuration.
+
+    ``to_plaintext`` powers the ``cover_letter.txt`` sidecar that lands in
+    every rendered profile dir. The helper is the only place that adds
+    punctuation, and the only place that flattens the model into a string.
+    These tests pin both rules so a future refactor can't quietly change
+    the paste-into-Gmail experience.
+    """
+
+    def test_blocks_separated_by_blank_line(self) -> None:
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("Seth Perts")
+        blocks = text.rstrip("\n").split("\n\n")
+        assert blocks == [
+            letter.salutation,
+            letter.opening,
+            letter.body_paragraph_1,
+            letter.body_paragraph_2,
+            letter.closing,
+            f"{letter.sign_off},",
+            "Seth Perts",
+        ]
+
+    def test_trailing_newline_present(self) -> None:
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        assert letter.to_plaintext("Seth Perts").endswith("\n")
+
+    def test_body_paragraphs_have_no_embedded_newlines(self) -> None:
+        # Catches a future refactor that fat-fingers ``\n`` for ``\n\n``
+        # in the join, which would merge paragraphs visually but emit
+        # them as separate visual lines in clipboard paste.
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("Seth Perts")
+        blocks = text.rstrip("\n").split("\n\n")
+        body_blocks = blocks[2:4]
+        for block in body_blocks:
+            assert "\n" not in block
+
+    def test_body_paragraph_order_preserved(self) -> None:
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("Seth Perts")
+        idx_one = text.index(letter.body_paragraph_1)
+        idx_two = text.index(letter.body_paragraph_2)
+        assert idx_one < idx_two
+
+    def test_salutation_not_double_commaed(self) -> None:
+        # ``salutation`` already ends with ``,`` per ``_salutation_shape``;
+        # to_plaintext emits it verbatim and must not append another comma.
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("Seth Perts")
+        salutation_line = text.split("\n", 1)[0]
+        assert salutation_line == letter.salutation
+        assert not salutation_line.endswith(",,")
+
+    def test_sign_off_gets_exactly_one_trailing_comma(self) -> None:
+        # ``sign_off`` is enum-restricted (no trailing comma in source);
+        # to_plaintext is the only thing that appends one.
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("Seth Perts")
+        sign_off_line = next(
+            line for line in text.split("\n") if line == f"{letter.sign_off},"
+        )
+        assert sign_off_line == "Sincerely,"
+        assert f"{letter.sign_off},," not in text
+
+    def test_closing_punctuation_not_modified(self) -> None:
+        # ``closing`` ends with its own sentence punctuation; the helper
+        # must not append a period or comma. Verifies the closing block
+        # in the output equals the model field byte-for-byte.
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("Seth Perts")
+        blocks = text.rstrip("\n").split("\n\n")
+        assert blocks[4] == letter.closing
+
+    def test_signer_name_whitespace_stripped(self) -> None:
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("   Seth Perts  \n")
+        assert text.rstrip("\n").endswith("\n\nSeth Perts")
+
+    def test_ascii_hyphens_preserved(self) -> None:
+        # The U+2011 substitution applied to the PDF body is a Typst-side
+        # rule for the rendered PDF only. The .txt sidecar must keep ASCII
+        # ``-`` so paste-into-email preserves real hyphens.
+        kwargs = _valid_letter_kwargs()
+        body_one = kwargs["body_paragraphs"][0]
+        assert "-" in body_one  # fixture sanity
+        letter = CoverLetterCuration(**kwargs)
+        text = letter.to_plaintext("Seth Perts")
+        assert "-" in text
+
+    def test_no_u2011_in_output(self) -> None:
+        # Pins the asymmetry with the Typst PDF rule. A future refactor
+        # that pipes the .txt through the same substitution would silently
+        # break paste-into-email; this assertion catches it.
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("Seth Perts")
+        assert "\u2011" not in text  # NON-BREAKING HYPHEN
+
+
 class TestResumeCurationWithCoverLetter:
     def test_round_trip(self) -> None:
         resume = ResumeCuration(

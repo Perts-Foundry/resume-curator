@@ -100,6 +100,10 @@ def _summarize_pipeline_result(
         on_status(
             f"Cover letter data written: {render_output.cover_letter_yaml_path.name}"
         )
+    if render_output.cover_letter_txt_path is not None:
+        on_status(
+            f"Cover letter paste-ready: {render_output.cover_letter_txt_path.name}"
+        )
 
     return PipelineResult(
         curation=curation,

@@ -552,12 +552,15 @@ class TestCoverLetterSoftHyphenRegression:
             "or move this test to a local high-water-mark fixture."
         )
 
-        _, pdf_path, pages = _render_cover_letter(
+        artifacts = _render_cover_letter(
             typst_safe_dir,
             letter,
             default_cover_letter_template_path(),
+            signer_name="Test Candidate",
             skip_pdf=False,
         )
+        pdf_path = artifacts.pdf_path
+        pages = artifacts.page_count
         assert pdf_path is not None
         assert pdf_path.exists()
         assert pages == 1, (
@@ -605,12 +608,14 @@ class TestCoverLetterSoftHyphenRegression:
         patched_template.write_text(patched, encoding="utf-8")
 
         letter = valid_cover_letter()
-        _, pdf_path, _ = _render_cover_letter(
+        artifacts = _render_cover_letter(
             render_dir,
             letter,
             patched_template,
+            signer_name="Test Candidate",
             skip_pdf=False,
         )
+        pdf_path = artifacts.pdf_path
         assert pdf_path is not None
         assert pdf_path.exists()
         assert _content_streams_have_soft_hyphen_actualtext(pdf_path), (

@@ -4352,15 +4352,16 @@ class TestRenderCoverLetter:
         from curator import default_cover_letter_template_path
 
         letter = _fresh_cover_letter()
-        yaml_path, pdf_path, pages = _render_cover_letter(
+        artifacts = _render_cover_letter(
             tmp_path,
             letter,
             default_cover_letter_template_path(),
+            signer_name="Test Candidate",
             skip_pdf=True,
         )
-        assert pdf_path is None
-        assert pages is None
-        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        assert artifacts.pdf_path is None
+        assert artifacts.page_count is None
+        data = yaml.safe_load(artifacts.yaml_path.read_text(encoding="utf-8"))
         for key in (
             "salutation",
             "opening",
@@ -4372,6 +4373,147 @@ class TestRenderCoverLetter:
         ):
             assert key in data
         assert "is_template" not in data
+
+
+class TestCoverLetterTxtSidecar:
+    """Pin the paste-ready ``cover_letter.txt`` sidecar contract.
+
+    The sidecar is the headline fix for the line-break-on-paste and
+    tofu-box issues that arise when copying from the PDF directly. It
+    must (a) land whenever a cover letter is rendered, regardless of
+    ``skip_pdf``, (b) contain exactly what ``CoverLetterCuration.
+    to_plaintext`` produces, (c) NOT land when the curation has no
+    cover letter, and (d) be surfaced on ``RenderOutput`` for callers.
+    """
+
+    def test_txt_emitted_in_skip_pdf_mode(self, tmp_path: Path) -> None:
+        from curator import default_cover_letter_template_path
+
+        letter = _fresh_cover_letter()
+        artifacts = _render_cover_letter(
+            tmp_path,
+            letter,
+            default_cover_letter_template_path(),
+            signer_name="Test Candidate",
+            skip_pdf=True,
+        )
+        assert artifacts.txt_path.exists()
+        assert artifacts.txt_path.name == "cover_letter.txt"
+        # Sidecar lives in the profile root, not under data/.
+        assert artifacts.txt_path.parent == tmp_path
+
+    def test_txt_content_matches_to_plaintext(self, tmp_path: Path) -> None:
+        from curator import default_cover_letter_template_path
+
+        letter = _fresh_cover_letter()
+        artifacts = _render_cover_letter(
+            tmp_path,
+            letter,
+            default_cover_letter_template_path(),
+            signer_name="Test Candidate",
+            skip_pdf=True,
+        )
+        written = artifacts.txt_path.read_text(encoding="utf-8")
+        assert written == letter.to_plaintext("Test Candidate")
+
+    def test_signer_name_appears_at_end(self, tmp_path: Path) -> None:
+        from curator import default_cover_letter_template_path
+
+        letter = _fresh_cover_letter()
+        artifacts = _render_cover_letter(
+            tmp_path,
+            letter,
+            default_cover_letter_template_path(),
+            signer_name="Test Candidate",
+            skip_pdf=True,
+        )
+        written = artifacts.txt_path.read_text(encoding="utf-8")
+        assert written.rstrip("\n").endswith("\n\nTest Candidate")
+
+    def test_render_output_carries_txt_path(
+        self,
+        portfolio_data: PortfolioData,
+        curation_result: CurationResult,
+        tmp_path: Path,
+    ) -> None:
+        # Pin: ``RenderOutput.cover_letter_txt_path`` is populated when a
+        # cover letter is present, and the file actually lands on disk.
+        from dataclasses import replace
+
+        letter = _fresh_cover_letter()
+        curation_with_letter = replace(curation_result, cover_letter=letter)
+        settings = type(
+            "FakeSettings",
+            (),
+            {
+                "output_dir": tmp_path / "output",
+                "template_path": tmp_path / "no" / "curated.typ",
+                "cover_letter_template_path": tmp_path / "no" / "cover_letter.typ",
+                "section_order": (
+                    "work",
+                    "skills",
+                    "projects",
+                    "certificates",
+                    "education",
+                ),
+                "max_pages": 1,
+                "max_trim_iterations": 15,
+            },
+        )()
+
+        output = render(
+            curation_with_letter,
+            portfolio_data,
+            "JD text.",
+            settings,
+            skip_pdf=True,
+        )
+
+        assert output.cover_letter_txt_path is not None
+        assert output.cover_letter_txt_path.exists()
+        assert output.cover_letter_txt_path.read_text(encoding="utf-8") == (
+            letter.to_plaintext(portfolio_data.basics.name)
+        )
+
+    def test_no_txt_when_letter_absent(
+        self,
+        portfolio_data: PortfolioData,
+        curation_result: CurationResult,
+        tmp_path: Path,
+    ) -> None:
+        # Mirror invariant of the existing ``cover_letter_pdf_path is None``
+        # case: when ``curation.cover_letter is None``, no .txt is written
+        # and the path field stays None. Guards against a future refactor
+        # that hoists the .txt write out of the ``if cover_letter is not
+        # None`` block.
+        assert curation_result.cover_letter is None
+        settings = type(
+            "FakeSettings",
+            (),
+            {
+                "output_dir": tmp_path / "output",
+                "template_path": tmp_path / "no" / "curated.typ",
+                "section_order": (
+                    "work",
+                    "skills",
+                    "projects",
+                    "certificates",
+                    "education",
+                ),
+                "max_pages": 1,
+                "max_trim_iterations": 15,
+            },
+        )()
+
+        output = render(
+            curation_result, portfolio_data, "JD text.", settings, skip_pdf=True
+        )
+
+        assert output.cover_letter_txt_path is None
+        # The render() call resolves a versioned output dir under
+        # settings.output_dir; nothing under that subtree should contain
+        # the sidecar.
+        assert not list(output.profile_dir.glob("cover_letter.txt"))
 
 
 class TestCurationLogCoverLetter:
