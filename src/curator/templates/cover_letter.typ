@@ -66,27 +66,44 @@
 #v(14pt)
 
 // ---------------------------------------------------------------------------
-// Salutation and body paragraphs.
+// Salutation, body paragraphs, sign-off, and name. Wrapped in a scoped
+// content block so the U+2011 substitution applies to the letter body
+// only, not the letterhead.
+//
+// Why U+2011: Chrome/Acrobat insert U+00AD (SOFT HYPHEN) into the
+// clipboard when copying across a hyphenated line break, rendering as
+// a .notdef tofu box in fonts lacking a U+00AD glyph. Replacing ASCII
+// hyphens with U+2011 (NON-BREAKING HYPHEN) prevents Typst from breaking
+// at the hyphen, so the reader heuristic never fires. Pair with
+// `hyphenate: false` above (different mechanism, same family).
+//
+// Why body-only: the letterhead URL, email, and phone (cover_letter.typ
+// lines 46-53) contain hyphens that must paste as ASCII so destination
+// applications resolve them as URLs, mailto: targets, and tel: numbers.
+// Typst's `link()` target stays intact under a global show rule but the
+// displayed text (what lands in the clipboard) would still be rewritten.
+// The escape form \u{2011} is used over a literal U+2011 for greppability
+// and to defend against editor smart-dash autocorrects.
 // ---------------------------------------------------------------------------
 
-#letter.salutation
-#v(10pt)
+#[
+  #show "-": "\u{2011}"
 
-#par[#letter.opening]
-#v(8pt)
+  #letter.salutation
+  #v(10pt)
 
-#for paragraph in letter.body_paragraphs [
-  #par[#paragraph]
+  #par[#letter.opening]
   #v(8pt)
+
+  #for paragraph in letter.body_paragraphs [
+    #par[#paragraph]
+    #v(8pt)
+  ]
+
+  #par[#letter.closing]
+  #v(22pt)
+
+  #letter.sign_off,
+  #v(14pt)
+  #basics.name
 ]
-
-#par[#letter.closing]
-#v(22pt)
-
-// ---------------------------------------------------------------------------
-// Sign-off and name.
-// ---------------------------------------------------------------------------
-
-#letter.sign_off,
-#v(14pt)
-#basics.name
