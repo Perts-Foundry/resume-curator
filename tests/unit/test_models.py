@@ -1112,16 +1112,25 @@ class TestCoverLetterToPlaintext:
         assert salutation_line == letter.salutation
         assert not salutation_line.endswith(",,")
 
-    def test_sign_off_gets_exactly_one_trailing_comma(self) -> None:
+    @pytest.mark.parametrize(
+        "sign_off",
+        # Enumerate over the full enum so a regression that special-cased
+        # one sign_off (e.g., "if sign_off == 'Sincerely': append comma")
+        # surfaces here rather than silently passing on the fixture default.
+        ["Sincerely", "Best regards", "Kind regards", "Regards", "Best"],
+    )
+    def test_sign_off_gets_exactly_one_trailing_comma(self, sign_off: str) -> None:
         # ``sign_off`` is enum-restricted (no trailing comma in source);
         # to_plaintext is the only thing that appends one.
-        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        kwargs = _valid_letter_kwargs()
+        kwargs["sign_off"] = sign_off
+        letter = CoverLetterCuration(**kwargs)
         text = letter.to_plaintext("Seth Perts")
         sign_off_line = next(
-            line for line in text.split("\n") if line == f"{letter.sign_off},"
+            line for line in text.split("\n") if line == f"{sign_off},"
         )
-        assert sign_off_line == "Sincerely,"
-        assert f"{letter.sign_off},," not in text
+        assert sign_off_line == f"{sign_off},"
+        assert f"{sign_off},," not in text
 
     def test_closing_punctuation_not_modified(self) -> None:
         # ``closing`` ends with its own sentence punctuation; the helper
@@ -1136,6 +1145,23 @@ class TestCoverLetterToPlaintext:
         letter = CoverLetterCuration(**_valid_letter_kwargs())
         text = letter.to_plaintext("   Seth Perts  \n")
         assert text.rstrip("\n").endswith("\n\nSeth Perts")
+
+    def test_empty_signer_name_emits_trailing_blank_line(self) -> None:
+        # Pin: an empty signer name (after .strip()) emits a trailing
+        # blank line where the name would be, not a magic substitution
+        # or an exception. Today this likely means a misconfigured
+        # portfolio; we surface the gap visibly in the .txt rather
+        # than silently using a fallback. A future contributor who
+        # prefers a hard reject should update this test in lockstep
+        # with the helper.
+        #
+        # Output structure: ``"\n\n".join(blocks)`` + ``"\n"`` where the
+        # final block is ``""``. That produces a trailing ``\n\n\n``
+        # after the sign-off: blank-line separator before the empty
+        # name, plus the trailing newline that every output gets.
+        letter = CoverLetterCuration(**_valid_letter_kwargs())
+        text = letter.to_plaintext("   ")
+        assert text.endswith("Sincerely,\n\n\n")
 
     def test_ascii_hyphens_preserved(self) -> None:
         # The U+2011 substitution applied to the PDF body is a Typst-side

@@ -4511,9 +4511,9 @@ class TestCoverLetterTxtSidecar:
 
         assert output.cover_letter_txt_path is None
         # The render() call resolves a versioned output dir under
-        # settings.output_dir; nothing under that subtree should contain
-        # the sidecar.
-        assert not list(output.profile_dir.glob("cover_letter.txt"))
+        # settings.output_dir; the sidecar must not land at the
+        # canonical profile-root path either.
+        assert not (output.profile_dir / "cover_letter.txt").exists()
 
 
 class TestCurationLogCoverLetter:

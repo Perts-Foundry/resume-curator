@@ -94,15 +94,19 @@ def _summarize_pipeline_result(
             curation.output_tokens,
         )
 
+    # Paste-ready text surfaces first because it's the headline deliverable
+    # for the user's email/web-form workflow; the PDF is the attached
+    # version. Surfacing the .txt second would invite the user to copy
+    # from the PDF (the workflow we're trying to replace).
+    if render_output.cover_letter_txt_path is not None:
+        on_status(
+            f"Cover letter paste-ready: {render_output.cover_letter_txt_path.name}"
+        )
     if render_output.cover_letter_pdf_path is not None:
         on_status(f"Cover letter generated: {render_output.cover_letter_pdf_path.name}")
     elif render_output.cover_letter_yaml_path is not None:
         on_status(
             f"Cover letter data written: {render_output.cover_letter_yaml_path.name}"
-        )
-    if render_output.cover_letter_txt_path is not None:
-        on_status(
-            f"Cover letter paste-ready: {render_output.cover_letter_txt_path.name}"
         )
 
     return PipelineResult(

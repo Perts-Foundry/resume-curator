@@ -167,6 +167,10 @@ class TestStaticCoverLetterCommand:
         # Catches a regression where the .txt write is wired in the
         # renderer but unhooked from the CLI status path or the public
         # render() integration.
+        import yaml as _yaml
+
+        from curator.models import Basics, CoverLetterCuration
+
         result = cli_runner.invoke(
             app, ["static", "--name", "cl-three-artifacts", "--cover-letter"]
         )
@@ -185,3 +189,26 @@ class TestStaticCoverLetterCommand:
         # No tofu-box ancestor characters from the PDF clipboard heuristic.
         assert "\u00ad" not in txt  # SOFT HYPHEN
         assert "\u2011" not in txt  # NON-BREAKING HYPHEN (PDF-only rule)
+
+        # Round-trip pin: the .txt content must equal the model serializer
+        # applied to the YAML the CLI just wrote, with the signer name
+        # from the rendered basics. Ties the CLI path, renderer, and
+        # model serializer together; catches silent encoding or
+        # normalization steps that would slip through the property-level
+        # assertions above (e.g., a future contributor adding a Typst
+        # post-processor that touches the .txt by accident).
+        yaml_data = _yaml.safe_load(
+            (out_dir / "data" / "cover_letter.yaml").read_text(encoding="utf-8")
+        )
+        basics_data = _yaml.safe_load(
+            (out_dir / "data" / "basics.yaml").read_text(encoding="utf-8")
+        )
+        letter = CoverLetterCuration(
+            salutation=yaml_data["salutation"],
+            opening=yaml_data["opening"],
+            body_paragraphs=yaml_data["body_paragraphs"],
+            closing=yaml_data["closing"],
+            sign_off=yaml_data["sign_off"],
+        )
+        basics = Basics.model_validate(basics_data)
+        assert txt == letter.to_plaintext(basics.name)

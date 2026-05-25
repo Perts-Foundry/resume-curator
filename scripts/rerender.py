@@ -123,6 +123,8 @@ def _main() -> None:
     print(f"Re-rendered: {output.pdf_path}")
     print(f"Page count: {output.page_count}")
     print(f"Trim steps: {len(output.trim_log)}")
+    if output.cover_letter_txt_path is not None:
+        print(f"Cover letter paste-ready: {output.cover_letter_txt_path}")
     if output.cover_letter_pdf_path is not None:
         print(f"Cover letter PDF: {output.cover_letter_pdf_path}")
 

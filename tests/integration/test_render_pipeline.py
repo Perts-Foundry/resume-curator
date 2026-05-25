@@ -489,9 +489,7 @@ def _content_streams_contain_hex(pdf_path: Path, hex_literal: str) -> bool:
     glyph run).
     """
     needle = hex_literal.upper().encode("ascii")
-    return any(
-        needle in raw.upper() for raw in _decode_page_content_streams(pdf_path)
-    )
+    return any(needle in raw.upper() for raw in _decode_page_content_streams(pdf_path))
 
 
 def _content_streams_have_soft_hyphen_actualtext(pdf_path: Path) -> bool:
@@ -641,6 +639,22 @@ class TestCoverLetterSoftHyphenRegression:
         assert patched != original, (
             "Failed to patch hyphenate flag; template format changed?"
         )
+        # Symmetric assertions: the hyphenate flip and the show-rule strip
+        # must BOTH actually land. Either silent no-op would make the
+        # FEFF00AD assertion vacuous (the strip protects against the body
+        # show rule pre-empting auto-hyphenation; the flip protects
+        # against the original hyphenate: false defense suppressing
+        # ActualText markers entirely).
+        assert "hyphenate: true" in patched, (
+            "Failed to flip hyphenate flag to true; the `hyphenate: false` "
+            "literal in cover_letter.typ likely drifted (whitespace, "
+            "comma placement, quoting). Without the flip, no /ActualText "
+            "FEFF00AD markers will appear and the assertion stays vacuous."
+        )
+        assert "hyphenate: false" not in patched, (
+            "Patched template still contains `hyphenate: false`; the "
+            "replace did not land or there's a second occurrence to strip."
+        )
         assert '#show "-": "\\u{2011}"' not in patched, (
             "Failed to strip U+2011 show rule from positive-control "
             "template; the rule must be removed alongside the hyphenate "
@@ -714,9 +728,7 @@ class TestCoverLetterNonBreakingHyphens:
     had no hyphens or because the assertion harness is broken.
     """
 
-    def test_body_hyphens_substituted_with_u2011(
-        self, typst_safe_dir: Path
-    ) -> None:
+    def test_body_hyphens_substituted_with_u2011(self, typst_safe_dir: Path) -> None:
         """U+2011 appears in the body text wherever the source had `-`."""
         from curator import default_cover_letter_template_path
         from tests.helpers import valid_cover_letter
@@ -724,17 +736,24 @@ class TestCoverLetterNonBreakingHyphens:
         _write_minimal_basics(typst_safe_dir)
         letter = valid_cover_letter()
 
-        # Fixture sanity: the standard fixture's body must contain at
-        # least one ASCII hyphen, otherwise this test would pass on a
-        # mechanism-broken template.
-        body_text = " ".join(
-            [letter.opening, *letter.body_paragraphs, letter.closing]
+        # Fixture sanity: the assertion below relies on specific compounds
+        # being present in the body and closing. If the fixture loses any
+        # of them, surface the decoupling here instead of letting the
+        # substitution assertion below fail with a confusing diff.
+        body_text = " ".join([letter.opening, *letter.body_paragraphs, letter.closing])
+        expected_source_compounds = (
+            "multi-region",  # body_paragraph_1
+            "nine-month",  # body_paragraph_1
+            "developer-hour",  # body_paragraph_1
+            "deployment-safety",  # closing
         )
-        assert "-" in body_text, (
-            "valid_cover_letter() body has no '-'; the U+2011 substitution "
-            "assertion is vacuous. Restore at least one hyphenated compound "
-            "in tests/helpers.valid_cover_letter_kwargs()."
-        )
+        for compound in expected_source_compounds:
+            assert compound in body_text, (
+                f"Fixture lost compound {compound!r}; the U+2011 "
+                "substitution assertion below is no longer meaningful. "
+                "Restore in tests/helpers.valid_cover_letter_kwargs() "
+                "or update this list."
+            )
 
         artifacts = _render_cover_letter(
             typst_safe_dir,
@@ -755,18 +774,20 @@ class TestCoverLetterNonBreakingHyphens:
             "src/curator/templates/cover_letter.typ."
         )
 
-        # Pick a known compound from the fixture and verify the substitution
-        # landed on it specifically (catches a regression where the rule
-        # fires on the first hyphen only).
-        assert "multi\u2011region" in text, (
-            "Expected 'multi-region' from the fixture to render as "
-            "'multi\\u2011region' in the PDF; got plain ASCII. The show "
-            "rule may have been scoped narrower than intended."
-        )
+        # Substitution covers every body hyphen across multiple paragraphs,
+        # not just the first one or just the first paragraph. Catches a
+        # regression where the show rule fires only at the first match,
+        # is scoped to a single paragraph, or stops applying to ``closing``.
+        for compound in expected_source_compounds:
+            u2011_form = compound.replace("-", "\u2011")
+            assert u2011_form in text, (
+                f"Expected {compound!r} from the fixture to render as "
+                f"{u2011_form!r} in the PDF; got plain ASCII. The show "
+                "rule may have been scoped narrower than intended "
+                "(first-match-only, or only one paragraph)."
+            )
 
-    def test_letterhead_retains_ascii_hyphens(
-        self, typst_safe_dir: Path
-    ) -> None:
+    def test_letterhead_retains_ascii_hyphens(self, typst_safe_dir: Path) -> None:
         """Letterhead URL/email/phone keep ASCII `-` so paste resolves them."""
         from curator import default_cover_letter_template_path
         from tests.helpers import valid_cover_letter
@@ -781,7 +802,7 @@ class TestCoverLetterNonBreakingHyphens:
                 {
                     "name": "Test Candidate",
                     "email": "first-last@example.com",
-                    "phone": "(686) 202-2179",
+                    "phone": "(555) 202-2179",
                     "url": "https://example-domain.test/about/",
                 }
             ),
@@ -802,7 +823,7 @@ class TestCoverLetterNonBreakingHyphens:
         # Each letterhead identifier must paste as ASCII. The U+2011
         # substitution must NOT have reached these fields. Phone number
         # is the most user-visible (clipboard-paste-to-tel:).
-        assert "(686) 202-2179" in text, (
+        assert "(555) 202-2179" in text, (
             "Letterhead phone number was rewritten or dropped. The "
             "U+2011 show rule must be scoped to the body block in "
             "cover_letter.typ; check that the letterhead lives OUTSIDE "
@@ -813,8 +834,7 @@ class TestCoverLetterNonBreakingHyphens:
             "scoping concern as above."
         )
         assert "example-domain.test" in text, (
-            "Letterhead URL slug hyphen was rewritten. Same scoping "
-            "concern as above."
+            "Letterhead URL slug hyphen was rewritten. Same scoping concern as above."
         )
 
     def test_positive_control_no_show_rule_emits_ascii_hyphens(

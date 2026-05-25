@@ -78,7 +78,7 @@
 // `hyphenate: false` above (different mechanism, same family).
 //
 // Why body-only: the letterhead URL, email, and phone (cover_letter.typ
-// lines 46-53) contain hyphens that must paste as ASCII so destination
+// lines 47-53) contain hyphens that must paste as ASCII so destination
 // applications resolve them as URLs, mailto: targets, and tel: numbers.
 // Typst's `link()` target stays intact under a global show rule but the
 // displayed text (what lands in the clipboard) would still be rewritten.
