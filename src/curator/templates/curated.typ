@@ -209,6 +209,17 @@
   ]
 }
 
+// Number of leading highlights glued to the role header so it never
+// stands alone at a page break. ATS resume parsers (Workday in
+// particular) drop an entry when the header lands at the bottom of a
+// page with all body content overflowing to the next. Keeping the
+// header plus the first two bullets in an unbreakable block guarantees
+// the parser sees enough of the entry on whichever page the header
+// lands on. 2 is the textbook widow/orphan threshold; lowering it
+// re-opens the parser-drop case, raising it makes tall entries skip
+// pages and waste real estate.
+#let WORK_HEADER_GLUE_BULLETS = 2
+
 #let render-work() = {
   if work.len() > 0 [
     == Experience
@@ -218,19 +229,27 @@
       // company+location overflows the left column.
       #let end_raw = job.at("end_date", default: "")
       #let end_display = if end_raw == "" or end_raw == none { [Present] } else { format-date(end_raw) }
-      #grid(
-        columns: (1fr, auto),
-        align: (left + top, right + top),
-        column-gutter: 0.5em,
-        [*#job.position* #h(0.5em) | #h(0.5em) #job.name #if job.at("location", default: "") != "" [#text(size: 8.5pt)[ · #job.location]]],
-        [#format-date(job.at("start_date", default: "")) -- #end_display],
-      )
       #let highlights = job.at("highlights", default: ())
-      #if highlights.len() > 0 [
-        #v(1pt)
-        #for h in highlights [
-          - #h.text
+      #let glue_count = calc.min(WORK_HEADER_GLUE_BULLETS, highlights.len())
+      #let glued = highlights.slice(0, glue_count)
+      #let rest = highlights.slice(glue_count)
+      #block(breakable: false)[
+        #grid(
+          columns: (1fr, auto),
+          align: (left + top, right + top),
+          column-gutter: 0.5em,
+          [*#job.position* #h(0.5em) | #h(0.5em) #job.name #if job.at("location", default: "") != "" [#text(size: 8.5pt)[ · #job.location]]],
+          [#format-date(job.at("start_date", default: "")) -- #end_display],
+        )
+        #if glued.len() > 0 [
+          #v(1pt)
+          #for h in glued [
+            - #h.text
+          ]
         ]
+      ]
+      #for h in rest [
+        - #h.text
       ]
     ]
   ]
