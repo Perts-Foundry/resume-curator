@@ -479,9 +479,16 @@ class ResumeCuration(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # The 750-char ceiling is a post-parse safety net only. Word-level
+    # steering for what the model actually generates lives in
+    # ``rules.SUMMARY_WORD_HARD_MAX`` (70 words) and is published through
+    # the prompt. The wire schema does not emit ``maxLength`` (see
+    # ``output_schema._build_summary_schema``), so this cap never reaches
+    # the model; it exists to absorb the upper tail of observed Sonnet
+    # output (65-85+ words / ~700 chars) without wasting a paid call.
     summary: str = Field(
         min_length=1,
-        max_length=600,
+        max_length=750,
         description=(
             f"2-3 sentence tailored professional summary, "
             f"{SUMMARY_WORD_TARGET_MIN}-{SUMMARY_WORD_TARGET_MAX} words soft "

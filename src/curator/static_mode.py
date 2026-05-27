@@ -6,7 +6,7 @@ checks as an API response and fed into the existing renderer path.
 
 Selection rules:
 
-- **Summary**: ``portfolio.basics.summary`` verbatim (truncated to 600 if
+- **Summary**: ``portfolio.basics.summary`` verbatim (truncated to 750 if
   oversized). Fallback is the portfolio ``label`` plus the mandatory
   mention when the portfolio has no summary.
 - **Label**: ``portfolio.basics.label`` verbatim (truncated to 60);
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from curator.models import PortfolioData
 
 # Field length ceilings mirror ResumeCuration schema constraints.
-_SUMMARY_MAX_LEN: int = 600
+_SUMMARY_MAX_LEN: int = 750
 _LABEL_MAX_LEN: int = 60
 _DEFAULT_LABEL: str = "Professional"
 
@@ -66,7 +66,7 @@ def _derive_summary(portfolio: PortfolioData) -> str:
     """Return a valid ``ResumeCuration.summary`` from portfolio data.
 
     Uses ``basics.summary`` verbatim when present, truncating with an
-    ellipsis when it exceeds the 600-char schema max. Falls back to a
+    ellipsis when it exceeds the 750-char schema max. Falls back to a
     short label + mandatory-mention string so the schema's
     ``min_length=1`` is always satisfied.
     """
