@@ -1341,12 +1341,14 @@ class TestValidateCoverLetter:
         # Does NOT raise (soft warn).
         validate_cover_letter(letter, _minimal_portfolio())
 
-    def test_per_paragraph_drift_band_emits_info_log(
+    def test_per_paragraph_drift_band_emits_info_log_api_path(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # 2026-05-26: paragraphs in the 87-115 drift band (between the
         # prompt-steering target and the validator cap) emit an INFO log
         # so drift remains observable after the cap recalibration.
+        # API path only (strict=False): the static path has no
+        # prompt-steering target to drift against.
         import sys as _sys
 
         from loguru import logger as _logger
@@ -1367,6 +1369,33 @@ class TestValidateCoverLetter:
         captured = capsys.readouterr()
         assert "above prompt-steering target" in captured.err
         assert str(COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX) in captured.err
+        _logger.remove()
+
+    def test_per_paragraph_drift_band_silent_on_static_path(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Static path (strict=True) does not emit the drift INFO log:
+        # the message frames the overshoot as drift from a prompt-
+        # steering target, which the static path has no concept of.
+        # Pins the strict-gating on the elif branch in
+        # validate_cover_letter.
+        import sys as _sys
+
+        from loguru import logger as _logger
+
+        _logger.remove()
+        _logger.add(_sys.stderr, level="INFO", format="{message}")
+
+        kwargs = _valid_letter_kwargs()
+        kwargs["body_paragraphs"][0] = "word " * 100  # in 87-115 drift band
+        kwargs["body_paragraphs"][1] = "word " * 60
+        kwargs["opening"] = "word " * 55
+        kwargs["closing"] = "word " * 45
+        letter = CoverLetterCuration(**kwargs)
+        validate_cover_letter(letter, _minimal_portfolio(), strict=True)
+
+        captured = capsys.readouterr()
+        assert "above prompt-steering target" not in captured.err
         _logger.remove()
 
     def test_per_paragraph_at_validator_cap_no_warn(

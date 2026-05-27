@@ -486,6 +486,10 @@ class ResumeCuration(BaseModel):
     # ``output_schema._build_summary_schema``), so this cap never reaches
     # the model; it exists to absorb the upper tail of observed Sonnet
     # output (65-85+ words / ~700 chars) without wasting a paid call.
+    # Arithmetic: 70 words at ~10 chars/word (technical vocabulary) is
+    # roughly 700 chars; 750 leaves a 50-char buffer for punctuation-
+    # heavy variants (em-dash-free prose still carries commas, semicolons,
+    # and parentheticals that nudge the per-word average up).
     summary: str = Field(
         min_length=1,
         max_length=750,
@@ -1332,7 +1336,11 @@ def validate_cover_letter(
                     "Letter will still be written; trim manually if required "
                     "by submission rules."
                 )
-        elif words > COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX:
+        elif words > COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX and not strict:
+            # Drift observability only fires on the API path. Static-path
+            # letters are portfolio-authored, not prompt-steered, so the
+            # "above prompt-steering target" framing makes no sense there;
+            # mirrors the strict-gated soft-warn branch above.
             logger.info(
                 "Cover letter body paragraph {} word count {} above "
                 "prompt-steering target {}; within validator cap {}.",
