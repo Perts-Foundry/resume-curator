@@ -568,7 +568,7 @@ closing ~40).
 paragraphs traces to portfolio data; nothing fabricated.
 - No literal placeholders ([UPPERCASE], {{...}}, etc.) anywhere.
 - Scan body_paragraph_1 and body_paragraph_2 for these words and \
-rewrite any sentence that contains one: "leverage", "leveraged", \
+rewrite any sentence that contains one: "leverage", "leverages", \
 "leveraging", "robust", "seamless", "innovative", "pivotal". These \
 are the validator-rejected words that ship the most often despite \
 appearing in the forbidden_words list above; the validator rejects \
