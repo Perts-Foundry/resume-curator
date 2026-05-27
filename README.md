@@ -290,6 +290,38 @@ uv run pytest --cov --cov-report=term-missing
 
 Coding standards are encoded in `pyproject.toml` (ruff, mypy, pytest configs); CI runs `ruff check`, `ruff format --check`, `mypy src/`, `pytest`, golden eval, `pip-audit`, gitleaks, and trufflehog. See the [CI/CD section](docs/architecture.md#cicd) in the architecture guide for the full pipeline.
 
+## Troubleshooting
+
+### Uploading from WSL: "this folder contains system files"
+
+Windows browser file pickers (Edge/Chrome) refuse to upload files from `\\wsl.localhost\...` (or `\\wsl$\...`) paths under Chromium's blocked-paths policy. The error reads "this folder contains system files", but the trigger is the UNC path itself, not any file attribute -- PowerShell will confirm every file in your profile directory reports `Attributes=Normal`.
+
+**Workarounds:**
+
+1. **One-off**: copy the PDF onto the Windows drive before uploading:
+
+   ```bash
+   cp profiles/<profile>/resume.pdf /mnt/c/Users/<you>/Downloads/
+   ```
+
+2. **Recurring**: configure `CURATOR_PUBLISH_DIR` once, then pass `--publish` on each run (or re-publish a past profile via `curator publish`):
+
+   ```bash
+   export CURATOR_PUBLISH_DIR=/mnt/c/Users/<you>/Downloads/resume-curator
+
+   # Fresh run:
+   curator curate jd.txt --publish --cover-letter
+   curator static --name general --publish
+
+   # Re-publish a past profile (overwrites the previous publish):
+   curator publish profiles/2026-05-27-acme
+
+   # Override the configured directory for one invocation:
+   curator publish profiles/2026-05-27-acme -d /mnt/c/Users/<you>/Desktop
+   ```
+
+`curator publish` copies `resume.pdf`, `cover_letter.pdf`, and `cover_letter.txt` (the upload-ready files) into `<CURATOR_PUBLISH_DIR>/<profile-name>/`. It does **not** publish to any registry or remote; the name reflects the upload-ready use case, not package distribution.
+
 ## Project Status
 
 | Phase | Status | Description |
