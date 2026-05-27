@@ -351,6 +351,12 @@ resume-curator/
       page_caps.py                  # _PageCaps + _caps_for_pages (work_position_floors tuple,
                                     #   certificate_floor); leaf module shared by renderer.py
                                     #   and eval/report.py to keep cascade and eval bands aligned
+      publish.py                    # publish_artifacts(profile_dir, destination): copies
+                                    #   RENDER_PUBLISH_FILENAMES from renderer.py into
+                                    #   <destination>/<profile>/. Surfaces --publish on
+                                    #   curate/static and the `curator publish` subcommand
+                                    #   (WSL-to-Windows upload bypass for Chromium's
+                                    #   blocked-paths refusal on \\wsl.localhost\... paths).
       eval/
         __init__.py                 # Public API: evaluate_tier1(), evaluate_tier2(),
                                     #   from_profile_dir(), from_pipeline_result(), EvalContext

@@ -108,10 +108,19 @@ Output lands in `profiles/<date>-<company-slug>/`:
 |------|---------|
 | `resume.pdf` | Final compiled resume |
 | `curated.yaml` | Curation decisions (summary, label, rankings) |
-| `job_description.txt` | Original JD for reference |
+| `job_description.txt` | Original JD for reference (API path); `mode.txt` on the static path |
 | `curation_log.json` | API metadata: model, tokens, cache stats, timestamp |
 | `layout.yaml` | Section ordering for Typst |
 | `data/*.yaml` | Per-section YAML files consumed by Typst |
+| `cover_letter.pdf` | Compiled cover letter (only with `--cover-letter`) |
+| `cover_letter.txt` | Paste-ready plain text sidecar (only with `--cover-letter`; lands even under `--no-pdf`) |
+| `data/cover_letter.yaml` | Cover letter content (only with `--cover-letter`) |
+
+When `--publish` is also set (or you run `curator publish` after the fact),
+`resume.pdf`, `cover_letter.pdf`, and `cover_letter.txt` are additionally
+copied into `<CURATOR_PUBLISH_DIR>/<date>-<company-slug>/`. See the
+[Troubleshooting](#troubleshooting) section for the WSL upload workflow
+this enables.
 
 > [!NOTE]
 > The `profiles/` directory is gitignored. Outputs are ephemeral and per-machine.
