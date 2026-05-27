@@ -7,8 +7,8 @@ trigger is the UNC path, not file attributes). Copying the PDFs onto
 the Windows drive sidesteps that.
 
 Single source of truth for "what counts as an upload-ready artifact" is
-:data:`curator.renderer.RENDER_PUBLISH_FILENAMES` -- co-located with
-the writer that produces them, so adding a new shipped file is a
+:data:`curator.renderer.RENDER_PUBLISH_FILENAMES`, co-located with
+the writer that produces them so adding a new shipped file is a
 one-diff change. This module is a leaf (nothing in ``src/curator/``
 imports it back), so importing from ``renderer`` is cycle-free.
 """
@@ -29,9 +29,10 @@ def publish_artifacts(profile_dir: Path, destination: Path) -> list[Path]:
 
     Files listed in :data:`RENDER_PUBLISH_FILENAMES` are copied into
     ``<destination>/<profile_dir.name>/`` using :func:`shutil.copy2`
-    (preserves mtime). Files that don't exist in the source are skipped
-    silently -- the cover letter is optional, so a curate run without
-    ``--cover-letter`` publishes only ``resume.pdf``.
+    with ``follow_symlinks=False`` (preserves mtime; does not chase
+    symlinks). Files that don't exist in the source are skipped
+    silently because the cover letter is optional, so a curate run
+    without ``--cover-letter`` publishes only ``resume.pdf``.
 
     Existing destination files are overwritten; each overwrite logs at
     INFO so an accidental clobber (e.g. publishing a hand-renamed profile
@@ -39,9 +40,9 @@ def publish_artifacts(profile_dir: Path, destination: Path) -> list[Path]:
 
     Args:
         profile_dir: Source profile directory (e.g.
-            ``profiles/2026-05-27-acme``). Need not exist as a renderer
-            output -- only the filenames in :data:`RENDER_PUBLISH_FILENAMES`
-            are looked up.
+            ``profiles/2026-05-27-acme``). Must be an existing directory;
+            only the filenames in :data:`RENDER_PUBLISH_FILENAMES` are
+            looked up.
         destination: Publish root. ``~`` is expanded. Files land under a
             per-profile subdirectory ``<destination>/<profile_dir.name>/``
             so multiple publishes coexist without collision.
@@ -51,9 +52,29 @@ def publish_artifacts(profile_dir: Path, destination: Path) -> list[Path]:
         :data:`RENDER_PUBLISH_FILENAMES`.
 
     Raises:
-        PublishError: If the destination root cannot be created.
+        PublishError: If ``profile_dir`` is not a directory, if
+            ``profile_dir.name`` would escape the destination root
+            (e.g. ``..`` or ``.``), or if the destination cannot be
+            created.
     """
-    dest_root = destination.expanduser() / profile_dir.name
+    if not profile_dir.is_dir():
+        msg = f"Source profile directory not found: {profile_dir.resolve()}"
+        raise PublishError(msg)
+
+    # Guard against profile names that would escape the publish root
+    # (e.g. ``Path("..").name == ".."``). Resolve the candidate and
+    # verify it lives under the destination root. Mirrors the
+    # is_relative_to guard pattern used in renderer.py.
+    dest_base = destination.expanduser().resolve()
+    candidate = (dest_base / profile_dir.name).resolve()
+    if not candidate.is_relative_to(dest_base):
+        msg = (
+            f"Refusing to publish: profile name {profile_dir.name!r} would "
+            f"write outside the destination {dest_base}"
+        )
+        raise PublishError(msg)
+    dest_root = candidate
+
     try:
         dest_root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -68,7 +89,11 @@ def publish_artifacts(profile_dir: Path, destination: Path) -> list[Path]:
         dst = dest_root / filename
         if dst.exists():
             logger.info("publish: overwriting existing {}", dst)
-        shutil.copy2(src, dst)
+        # follow_symlinks=False: defense in depth so a symlink in the
+        # source profile dir cannot redirect the copy to an off-target
+        # file. The renderer never writes symlinks; this guards against
+        # operator-error in hand-edited profiles.
+        shutil.copy2(src, dst, follow_symlinks=False)
         copied.append(dst)
 
     logger.info("publish: copied {} file(s) to {}", len(copied), dest_root)

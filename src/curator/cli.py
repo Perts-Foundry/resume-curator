@@ -370,23 +370,21 @@ def _read_jd_text(
 def _resolve_publish_destination(
     settings: CuratorSettings,
     *,
-    publish: bool,
     override: Path | None = None,
-) -> Path | None:
+) -> Path:
     """Resolve the publish destination for ``--publish`` / ``curator publish``.
 
-    Precedence: explicit ``override`` (subcommand ``-d``) > ``settings.publish_dir``
-    (env / settings). When ``publish`` is False and no override is given,
-    returns ``None`` (publish step is skipped). When publishing is requested
-    but no destination is configured, raises ``PublishError`` with a hint
-    pointing at the env var.
+    Precedence: explicit ``override`` (subcommand ``-d``) wins, otherwise
+    ``settings.publish_dir`` (env / settings). When neither is set, raises
+    :class:`PublishError` with a hint pointing at the env var.
+
+    Always returns a ``Path`` or raises; callers must only invoke this
+    when publishing is requested so the error message stays accurate.
     """
     from curator.exceptions import PublishError
 
     if override is not None:
         return override
-    if not publish:
-        return None
     if settings.publish_dir is None:
         msg = (
             "--publish requires a destination. Set CURATOR_PUBLISH_DIR "
@@ -520,7 +518,9 @@ def curate(
                 )
             return
 
-        publish_to = _resolve_publish_destination(settings, publish=publish)
+        publish_to: Path | None = (
+            _resolve_publish_destination(settings) if publish else None
+        )
 
         pipeline_start = time.perf_counter()
 
@@ -778,7 +778,9 @@ def static_cmd(
             sys.stdout.write("\n")
             return
 
-        publish_to = _resolve_publish_destination(settings, publish=publish)
+        publish_to: Path | None = (
+            _resolve_publish_destination(settings) if publish else None
+        )
 
         pipeline_start = time.perf_counter()
 
@@ -845,21 +847,22 @@ def publish_cmd(
         except ValidationError as e:
             raise ConfigError(str(e)) from e
 
+        # Surface the absolute path so an ambiguous "not found" error
+        # tells the user where curator actually looked. publish_artifacts
+        # raises the same way for defense in depth; the early check here
+        # keeps the message colocated with the subcommand UX.
         if not profile_dir.is_dir():
-            msg = f"Profile directory not found: {profile_dir}"
+            msg = f"Profile directory not found: {profile_dir.resolve()}"
             raise PublishError(msg)
 
-        dest = _resolve_publish_destination(
-            settings, publish=True, override=destination
-        )
-        # dest is non-None here because publish=True with a destination
-        # forces resolution to either override or settings.publish_dir.
-        assert dest is not None
+        dest = _resolve_publish_destination(settings, override=destination)
 
         paths = publish_artifacts(profile_dir, dest)
         publish_root = dest.expanduser() / profile_dir.name
         if not paths:
-            console.print(f"[yellow]No publishable files found in {profile_dir}[/]")
+            console.print(
+                f"[yellow]No publishable files found in {profile_dir.resolve()}[/]"
+            )
             raise typer.Exit(code=1)
         console.print(f"[green]Published to:[/] {publish_root}")
         for path in paths:
