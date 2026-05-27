@@ -710,14 +710,9 @@ class CuratorClient:
                     )
                     raise APIResponseError(msg) from exc
                 raise
-            # Wrap the post-extract validation pipeline (adapter Pydantic
-            # checks AND application-level ID validation) in a single
-            # try/except that persists the raw parsed payload before
-            # re-raising. Without this, a Pydantic constraint violation
-            # (e.g. summary length, cover-letter shape) or a hard ID
-            # mismatch would waste the entire paid call with no recovery
-            # path. The persisted JSON can be hand-edited and replayed
-            # via ``scripts/rerender.py --raw <path>``.
+            # Persist the parsed payload before re-raise so post-extract
+            # Pydantic / ID-validation failures don't waste the paid
+            # call. Recovery via ``scripts/rerender.py --raw``.
             try:
                 curation, cover_letter = _adapt_curation_dict(
                     parsed_dict,
@@ -727,11 +722,6 @@ class CuratorClient:
                     max_pages=self._settings.max_pages,
                     jd_text=job_description,
                 )
-                # Application-level ID validation (Layer 3) for the
-                # resume. Returns a sanitized curation with hallucinated
-                # keywords dropped; hard ID failures raise
-                # APIResponseError (wrapped from CurationValidationError
-                # by _validate_curation_ids).
                 curation = _validate_curation_ids(curation, portfolio)
             except APIResponseError as exc:
                 raw_path: Path | None = None
@@ -741,6 +731,9 @@ class CuratorClient:
                         output_dir=self._settings.output_dir,
                         request_id=message.id,
                     )
+                # Narrow catch list keeps Pydantic / SDK exceptions
+                # visible if a future refactor introduces them on
+                # this path.
                 except (OSError, ValueError) as persist_exc:
                     logger.error(
                         "Failed to persist raw API response after post-"
