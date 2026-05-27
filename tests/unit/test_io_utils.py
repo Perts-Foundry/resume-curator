@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 
 from curator.io_utils import (
     atomic_json_write,
+    atomic_text_write,
     atomic_yaml_write,
     priority_sort_key,
     slugify,
@@ -228,3 +230,34 @@ class TestAtomicYamlWrite:
         assert not path.exists()
         leftovers = [p for p in tmp_path.iterdir() if p.suffix == ".tmp"]
         assert leftovers == []
+
+
+class TestAtomicTextWritePerms:
+    """Atomic writes must yield 0o644, not tempfile's implicit 0o600.
+
+    Regression guard: NamedTemporaryFile defaults to 0o600 and os.replace
+    preserves the temp file's permissions. Before this fix, every YAML/
+    JSON/TXT artifact in a profile dir landed at 0o600 while the PDFs
+    Typst writes landed at 0o644, producing an inconsistent file tree
+    and surprising any tooling that walks the profile dir.
+    """
+
+    def test_atomic_text_write_yields_0644(self, tmp_path: Path) -> None:
+        target = tmp_path / "out.txt"
+        atomic_text_write(target, "hello\n")
+        mode = stat.S_IMODE(target.stat().st_mode)
+        assert mode == 0o644
+
+    def test_atomic_text_write_is_not_0600(self, tmp_path: Path) -> None:
+        target = tmp_path / "out.txt"
+        atomic_text_write(target, "hello\n")
+        mode = stat.S_IMODE(target.stat().st_mode)
+        assert mode != 0o600
+
+    def test_atomic_text_write_overwrite_keeps_0644(self, tmp_path: Path) -> None:
+        target = tmp_path / "out.txt"
+        atomic_text_write(target, "first")
+        atomic_text_write(target, "second")
+        mode = stat.S_IMODE(target.stat().st_mode)
+        assert mode == 0o644
+        assert target.read_text() == "second"
