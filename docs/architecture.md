@@ -98,13 +98,22 @@ src/curator/
   client.py           # Anthropic API wrapper, prompt caching, usage tracking.
                       #   CurationResult.source distinguishes "api" from "static";
                       #   CurationResult.cover_letter populated when bundled.
-                      #   On cover-letter HARD validator failure (under-min
+                      #   Two complementary persist-before-raise recovery
+                      #   helpers cover the post-extract failure surface so a
+                      #   paid call is never wasted: _persist_partial_resume
+                      #   writes <output_dir>/curation_partial-*.yaml on
+                      #   cover-letter HARD validator failure (under-min
                       #   total, per-paragraph band violation, forbidden
-                      #   content, placeholder tokens), persists the resume
-                      #   to <output_dir>/curation_partial-*.yaml for recovery
-                      #   via scripts/rerender.py --partial. Total word count
-                      #   above COVER_LETTER_WORD_MAX is a soft warning only;
-                      #   the letter still ships and no partial is written.
+                      #   content, placeholder tokens) for recovery via
+                      #   scripts/rerender.py --partial, and
+                      #   _persist_raw_response writes
+                      #   <output_dir>/curation_raw-*.json on post-extract
+                      #   Pydantic validation failure (e.g. summary over 750
+                      #   chars, cover-letter shape mismatch) OR hard ID
+                      #   mismatch for recovery via scripts/rerender.py --raw.
+                      #   Total word count above COVER_LETTER_WORD_MAX is a
+                      #   soft warning only; the letter still ships and no
+                      #   partial is written.
   output_schema.py    # Builds the per-call JSON schema from PortfolioData
                       #   and max_pages; grammar-enforces cross-parent
                       #   highlight ID scoping under work_highlights_by_id
@@ -197,7 +206,14 @@ scripts/
                       #   templates or the trim cascade without re-paying for
                       #   curation. With --partial, recovers a resume PDF from
                       #   a curation_partial-*.yaml side file written when a
-                      #   bundled cover-letter call failed validation. Picks up
+                      #   bundled cover-letter call failed validation. With
+                      #   --raw, recovers a resume from a curation_raw-*.json
+                      #   side file written when post-extract Pydantic
+                      #   validation or ID validation failed; re-feeds the
+                      #   JSON through _adapt_curation_dict so the original
+                      #   validation error names the offending field for
+                      #   hand-editing (--jd <path> optional; falls back to
+                      #   sibling job_description.txt). Picks up
                       #   data/cover_letter.yaml automatically when present.
                       #   See "never re-run a paid API call" rule in CLAUDE.md.
 ```
@@ -914,18 +930,43 @@ cache when `output_format` changes. Cache verification must be done within
 one flag state. `PROMPT_VERSION` stays a pure date; flag state is recorded
 separately via the `cover_letter` sub-object in `curation_log.json`.
 
-**Failure recovery:** when `validate_cover_letter` raises a **hard**
-failure on the API path (total word count below `COVER_LETTER_WORD_MIN`,
-per-paragraph band violation, forbidden word/phrase, unfilled
-`[UPPERCASE]` placeholder, salutation-scope forbidden phrase), the client
-persists the otherwise-valid resume curation to
+**Failure recovery:** two complementary persist-before-raise flows cover
+the post-extract failure surface on the API path so a paid call is never
+wasted. Both write to the configured `<output_dir>` and both are
+recoverable via `scripts/rerender.py`; their filename prefixes differ
+(`curation_partial-*.yaml` vs `curation_raw-*.json`) so a single profile
+directory can carry both.
+
+The first flow (the original) covers cover-letter policy failure. When
+`validate_cover_letter` raises a **hard** failure on the API path (total
+word count below `COVER_LETTER_WORD_MIN`, per-paragraph band violation,
+forbidden word/phrase, unfilled `[UPPERCASE]` placeholder, salutation-
+scope forbidden phrase), `_persist_partial_resume` writes the otherwise-
+valid resume curation to
 `<output_dir>/curation_partial-<timestamp>-<slug>-<request_id>.yaml`. Run
-`uv run python scripts/rerender.py --partial <path>` to rebuild the resume
-PDF without re-paying for the API call. Total word count **above**
+`uv run python scripts/rerender.py --partial <path>` to rebuild the
+resume PDF without re-paying for the API call. Total word count **above**
 `COVER_LETTER_WORD_MAX` is a soft warning logged via `loguru`; the letter
 still ships to disk, the overshoot delta is recorded in the log line, and
 `curation_log.json` captures the final `word_count` so downstream tooling
 can flag overshoots post-hoc without re-importing `rules.py`.
+
+The second flow (added 2026-05-26) covers post-extract validation
+failure. When `_adapt_curation_dict` raises a Pydantic validation error
+(e.g. `ResumeCuration.summary` over 750 chars, cover-letter shape
+mismatch) OR `_validate_curation_ids` raises a hard ID mismatch,
+`_persist_raw_response` writes the raw parsed wire dict to
+`<output_dir>/curation_raw-<timestamp>-<slug>-<request_id>.json`. Run
+`uv run python scripts/rerender.py --raw <path>` to re-feed the JSON
+through the adapter; the rerender prints the original validation error
+verbatim (which names the offending field), exits non-zero so the user
+knows which field to hand-edit, and re-runs the renderer once the JSON
+is patched. Pass `--jd <path>` for the original job description text
+(skill-keyword ranking depends on it) or let the script read a sibling
+`job_description.txt` from the input directory. Passing the wrong
+recovery flag for a given extension (`--partial` on `.json` or `--raw`
+on `.yaml`) prints an actionable hint instead of a parse-error stack
+trace.
 
 **`max_tokens` truncation behavior:** off-path (no cover letter), a
 `stop_reason == "max_tokens"` response raises `APIResponseError` and the

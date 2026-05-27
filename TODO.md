@@ -87,8 +87,10 @@ redistributed work between the AI and the code-side bookkeeping:
 ### Cover-letter word-count strategy (was Task 5 in the plan)
 
 The current word-count target band (now 250-360 total since
-2026-05-17, 40-90 per body paragraph) is enforced post-hoc by the
-validator but **the model does not respect numeric targets reliably**
+2026-05-17, 40-115 per body paragraph since 2026-05-26; see
+`COVER_LETTER_PARAGRAPH_WORD_MAX` recalibration in `rules.py`) is
+enforced post-hoc by the validator but **the model does not respect
+numeric targets reliably**
 (62.5% over-the-old-300-cap rate observed across the 10-profile review
 on 2026-05-16; the cap bump to 360 absorbs that band, but the deeper
 question — whether word-count enforcement is the right tool at all —
@@ -545,11 +547,17 @@ expanding scope. Each is independently shippable.
   cover-letter prompt edit warrants the cache-rotation cost.
 
 - [ ] **Aggressive cover-letter band tightening (escalation
-  trigger)**: if the conservative target+body-band change shipped
-  2026-05-10 still produces >20% drift over the 300-word soft cap
-  on the next 5+ paid `--cover-letter` runs, tighten body band
-  prose further from `80-87` to `80-85` (achievable upper bound
-  becomes `65 + 2*85 + 45 = 280`). Validator constants stay at 90.
+  trigger)**: superseded in part by the 2026-05-26 recalibration of
+  `COVER_LETTER_PARAGRAPH_WORD_MAX` from 90 to 115, which moved
+  drift observability from a `logger.warning` on every paid call
+  to an INFO log at the 87-115 band; the original premise (validator
+  constants stay at 90, tighten prompt steering to bring drift down)
+  no longer reflects the validator's behavior. Re-evaluate before
+  acting: if total-word drift over the 360 soft cap is still >20%
+  across the next 5+ paid `--cover-letter` runs, tighten the prompt
+  body-band prose further from `80-87` to `80-85` (achievable upper
+  bound becomes `65 + 2*85 + 45 = 280`). Validator paragraph constants
+  stay at the new 115 cap; only the prompt-steering target moves.
 
 ---
 
