@@ -754,10 +754,7 @@ class CuratorClient:
                     if raw_path is not None
                     else " Raw response not persisted (see logs)."
                 )
-                msg = (
-                    f"{exc}.{persist_hint} "
-                    f"(request_id={message.id})"
-                )
+                msg = f"{exc}.{persist_hint} (request_id={message.id})"
                 raise APIResponseError(msg) from exc
 
             # 8. Cover-letter policy validation. On failure, persist the

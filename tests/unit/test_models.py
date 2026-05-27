@@ -1217,8 +1217,8 @@ def loguru_capture_handler() -> Any:
 
     The naive in-test pattern is::
 
-        logger.remove()                          # drops the default
-        logger.add(sys.stderr, level="INFO")     # adds a capsys one
+        logger.remove()  # drops the default
+        logger.add(sys.stderr, level="INFO")  # adds a capsys one
 
     That mutes loguru for every subsequent test in the module because
     loguru's ``remove`` calls ``Handler.stop`` and a stopped handler

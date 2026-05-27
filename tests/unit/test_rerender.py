@@ -20,9 +20,7 @@ import pytest
 
 from curator.exceptions import APIResponseError
 
-_SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2] / "scripts" / "rerender.py"
-)
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "rerender.py"
 
 
 def _load_rerender() -> Any:
@@ -88,9 +86,7 @@ class TestExtensionSanityChecks:
     ) -> None:
         path = tmp_path / "x.json"
         path.write_text("{}", encoding="utf-8")
-        monkeypatch.setattr(
-            sys, "argv", ["rerender", "--partial", "--raw", str(path)]
-        )
+        monkeypatch.setattr(sys, "argv", ["rerender", "--partial", "--raw", str(path)])
 
         with pytest.raises(SystemExit) as exc:
             rerender_module._main()
@@ -218,9 +214,7 @@ class TestPartialRecovery:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         portfolio = MagicMock(name="portfolio")
-        mocker.patch.object(
-            rerender_module, "load_portfolio", return_value=portfolio
-        )
+        mocker.patch.object(rerender_module, "load_portfolio", return_value=portfolio)
         settings_stub = MagicMock(name="settings")
         settings_stub.portfolio_data_path = Path("/portfolio")
         mocker.patch.object(
@@ -244,9 +238,7 @@ class TestPartialRecovery:
 
         partial_path = tmp_path / "curation_partial-test.yaml"
         partial_path.write_text("summary: hello\n", encoding="utf-8")
-        monkeypatch.setattr(
-            sys, "argv", ["rerender", "--partial", str(partial_path)]
-        )
+        monkeypatch.setattr(sys, "argv", ["rerender", "--partial", str(partial_path)])
 
         rerender_module._main()
 

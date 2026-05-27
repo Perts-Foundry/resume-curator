@@ -230,9 +230,7 @@ def _main() -> None:
         # entries omitted from the curation get portfolio-order
         # highlights appended (matching original-call rendering).
         # render() handles cover-letter rendering when present.
-        output = render(
-            result, portfolio, jd_text or None, settings, safety_net=True
-        )
+        output = render(result, portfolio, jd_text or None, settings, safety_net=True)
         print(f"Re-rendered (raw recovery): {output.pdf_path}")
         print(f"Page count: {output.page_count}")
         print(f"Trim steps: {len(output.trim_log)}")
