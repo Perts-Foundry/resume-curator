@@ -521,6 +521,17 @@ def curate(
         publish_to: Path | None = (
             _resolve_publish_destination(settings) if publish else None
         )
+        if publish and no_pdf:
+            # The renderer still writes cover_letter.txt under --no-pdf
+            # when --cover-letter is set, so publish has something real
+            # to copy in that case. Without --cover-letter the publish
+            # set is empty; warn rather than hard-erroring so the
+            # combination remains useful when intentional.
+            logger.warning(
+                "--no-pdf and --publish combined: only files that exist on "
+                "disk will be copied (typically just cover_letter.txt when "
+                "--cover-letter is also set; nothing otherwise)."
+            )
 
         pipeline_start = time.perf_counter()
 
@@ -605,13 +616,21 @@ def _display_pipeline_result(
         )
 
     published = getattr(result, "published_paths", None)
-    if published:
-        # Files all share a parent (<publish_dir>/<profile>/) so showing the
-        # parent once + filenames keeps the output scannable.
-        publish_root = published[0].parent
-        console.print(f"[green]Published to:[/] {publish_root}")
-        for path in published:
-            console.print(f"  - {path.name}")
+    if published is not None:
+        # Tri-state: None means publish was not requested (skip display).
+        # Empty list means publish ran but found nothing to copy (surface
+        # it so a misconfigured --no-pdf --publish run is not invisible).
+        # Non-empty: show one parent + filename list for scannability.
+        if not published:
+            console.print(
+                "[yellow]Publish requested but no upload-ready files were "
+                "available to copy.[/]"
+            )
+        else:
+            publish_root = published[0].parent
+            console.print(f"[green]Published to:[/] {publish_root}")
+            for path in published:
+                console.print(f"  - {path.name}")
 
     if not result.converged and not result.skip_pdf:
         trims = len(result.trim_log)
@@ -781,6 +800,16 @@ def static_cmd(
         publish_to: Path | None = (
             _resolve_publish_destination(settings) if publish else None
         )
+        if publish and no_pdf:
+            # See the matching warning on the curate path; the renderer's
+            # cover_letter.txt sidecar lands even under --no-pdf, so the
+            # combination remains useful with --cover-letter. Without it,
+            # publish copies nothing.
+            logger.warning(
+                "--no-pdf and --publish combined: only files that exist on "
+                "disk will be copied (typically just cover_letter.txt when "
+                "--cover-letter is also set; nothing otherwise)."
+            )
 
         pipeline_start = time.perf_counter()
 

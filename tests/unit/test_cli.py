@@ -1142,3 +1142,58 @@ class TestPublishCli:
         )
         assert result.exit_code == 1
         assert "destination volume full" in result.output
+
+    def test_static_no_pdf_with_publish_warns(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Combination is allowed (cover_letter.txt still ships under
+        # --no-pdf), but the warning must fire so the user knows publish
+        # may have nothing to copy without --cover-letter.
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.published_paths = []
+        fake.render_output.pdf_path = None
+        fake.skip_pdf = True
+        mocker.patch("curator.pipeline.run_static_pipeline", return_value=fake)
+
+        result = runner.invoke(
+            app,
+            ["static", "--publish", "--no-pdf"],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 0, result.output
+        assert "--no-pdf and --publish combined" in result.output
+
+    def test_static_publish_empty_result_is_surfaced(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Tri-state on PipelineResult.published_paths: None means publish
+        # was not requested (suppress block); [] means publish ran but
+        # found nothing (surface so the no-op is visible).
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.published_paths = []
+        mocker.patch("curator.pipeline.run_static_pipeline", return_value=fake)
+
+        result = runner.invoke(
+            app,
+            ["static", "--publish"],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 0, result.output
+        assert "no upload-ready files were available" in result.output
+
+    def test_static_no_publish_does_not_surface_empty_block(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # When publish was not requested, published_paths stays None and
+        # the display must not print the "no upload-ready files" line.
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.published_paths = None
+        mocker.patch("curator.pipeline.run_static_pipeline", return_value=fake)
+
+        result = runner.invoke(app, ["static"])
+        assert result.exit_code == 0, result.output
+        assert "no upload-ready files" not in result.output
+        assert "Published to:" not in result.output
