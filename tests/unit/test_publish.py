@@ -77,39 +77,51 @@ class TestPublishArtifacts:
         assert (dest / "2026-05-27-acme").is_dir()
         assert paths[0] == dest / "2026-05-27-acme" / "resume.pdf"
 
-    def test_overwrites_existing_destination_files(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    def test_overwrites_existing_destination_files_and_logs(
+        self, tmp_path: Path
     ) -> None:
-        profile = tmp_path / "profile" / "2026-05-27-acme"
-        _make_profile(profile, filenames=["resume.pdf"])
-        dest = tmp_path / "publish"
-        # Pre-existing file at destination should be replaced.
-        (dest / "2026-05-27-acme").mkdir(parents=True)
-        prior = dest / "2026-05-27-acme" / "resume.pdf"
-        prior.write_text("old content")
+        # The overwrite-INFO log is the documented signal that a clobber
+        # happened (e.g. publishing a hand-renamed profile over a prior
+        # run's output). Loguru bypasses stdlib logging, so caplog does
+        # not see it; use an in-memory loguru sink instead.
+        from loguru import logger
 
-        publish_artifacts(profile, dest)
-
-        assert prior.read_text() == "content of resume.pdf\n"
-
-    def test_expands_user_in_destination(self, tmp_path: Path) -> None:
-        profile = tmp_path / "profile" / "2026-05-27-acme"
-        _make_profile(profile, filenames=["resume.pdf"])
-        # Use a real tmp_path but exercise expanduser by passing "~"-prefixed
-        # via a synthetic HOME so we don't pollute the real ~/.
-        import os
-
-        old_home = os.environ.get("HOME")
+        messages: list[str] = []
+        sink_id = logger.add(
+            lambda msg: messages.append(str(msg)),
+            level="INFO",
+            format="{message}",
+        )
         try:
-            os.environ["HOME"] = str(tmp_path / "fake_home")
-            paths = publish_artifacts(profile, Path("~/publish"))
-            assert (tmp_path / "fake_home" / "publish").is_dir()
-            assert paths[0].is_file()
+            profile = tmp_path / "profile" / "2026-05-27-acme"
+            _make_profile(profile, filenames=["resume.pdf"])
+            dest = tmp_path / "publish"
+            (dest / "2026-05-27-acme").mkdir(parents=True)
+            prior = dest / "2026-05-27-acme" / "resume.pdf"
+            prior.write_text("old content")
+
+            publish_artifacts(profile, dest)
+
+            assert prior.read_text() == "content of resume.pdf\n"
+            assert any("overwriting existing" in m for m in messages), (
+                f"expected an INFO overwrite log; saw {messages!r}"
+            )
         finally:
-            if old_home is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = old_home
+            logger.remove(sink_id)
+
+    def test_expands_user_in_destination(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Use monkeypatch.setenv (project convention) so HOME tears down
+        # automatically and a test failure cannot leak a stale value.
+        profile = tmp_path / "profile" / "2026-05-27-acme"
+        _make_profile(profile, filenames=["resume.pdf"])
+        monkeypatch.setenv("HOME", str(tmp_path / "fake_home"))
+
+        paths = publish_artifacts(profile, Path("~/publish"))
+
+        assert (tmp_path / "fake_home" / "publish").is_dir()
+        assert paths[0].is_file()
 
     def test_unwritable_destination_raises_publish_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

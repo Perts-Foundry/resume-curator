@@ -1107,3 +1107,38 @@ class TestPublishCli:
         result = runner.invoke(app, ["publish", str(profile)])
         assert result.exit_code == 1
         assert "CURATOR_PUBLISH_DIR" in result.output
+
+    def test_publish_subcommand_missing_profile_shows_absolute_path(
+        self, tmp_path: Path
+    ) -> None:
+        # The error must include the resolved (absolute) path so an
+        # operator running from a confusing CWD knows what curator looked at.
+        runner, app = self._runner()
+        result = runner.invoke(
+            app,
+            ["publish", str(tmp_path / "ghost-profile")],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 1
+        assert str((tmp_path / "ghost-profile").resolve()) in result.output
+
+    def test_static_publish_propagates_pipeline_error(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # When publish fails mid-pipeline (e.g. unwritable destination),
+        # the CLI must surface the PublishError cleanly as exit 1 with
+        # a useful message rather than crashing post-render.
+        from curator.exceptions import PublishError
+
+        mocker.patch(
+            "curator.pipeline.run_static_pipeline",
+            side_effect=PublishError("destination volume full"),
+        )
+        runner, app = self._runner()
+        result = runner.invoke(
+            app,
+            ["static", "--publish"],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 1
+        assert "destination volume full" in result.output
