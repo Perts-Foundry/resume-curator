@@ -1329,6 +1329,8 @@ class TestValidateCoverLetter:
         # Per-paragraph over-max is a soft warning (parallel to total
         # over-max). Letter still validates; warning logged.
         kwargs = _valid_letter_kwargs()
+        # 2026-05-26: cap raised 90 -> 115; bump trigger to 135 so the
+        # test still exercises the over-cap soft-warn branch.
         huge = "word " * 135
         kwargs["body_paragraphs"][0] = huge
         # Shrink paragraph 2 so total stays under the soft-warn ceiling.
@@ -1339,6 +1341,59 @@ class TestValidateCoverLetter:
         # Does NOT raise (soft warn).
         validate_cover_letter(letter, _minimal_portfolio())
 
+    def test_per_paragraph_drift_band_emits_info_log(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # 2026-05-26: paragraphs in the 87-115 drift band (between the
+        # prompt-steering target and the validator cap) emit an INFO log
+        # so drift remains observable after the cap recalibration.
+        import sys as _sys
+
+        from loguru import logger as _logger
+
+        from curator.rules import COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX
+
+        _logger.remove()
+        _logger.add(_sys.stderr, level="INFO", format="{message}")
+
+        kwargs = _valid_letter_kwargs()
+        kwargs["body_paragraphs"][0] = "word " * 100  # in 87-115 drift band
+        kwargs["body_paragraphs"][1] = "word " * 60
+        kwargs["opening"] = "word " * 55
+        kwargs["closing"] = "word " * 45
+        letter = CoverLetterCuration(**kwargs)
+        validate_cover_letter(letter, _minimal_portfolio())
+
+        captured = capsys.readouterr()
+        assert "above prompt-steering target" in captured.err
+        assert str(COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX) in captured.err
+        _logger.remove()
+
+    def test_per_paragraph_at_validator_cap_no_warn(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Boundary: a paragraph exactly at the validator cap (115) is
+        # inside the INFO-log drift band, not over-cap. No soft warn
+        # should fire.
+        import sys as _sys
+
+        from loguru import logger as _logger
+
+        _logger.remove()
+        _logger.add(_sys.stderr, level="WARNING", format="{message}")
+
+        kwargs = _valid_letter_kwargs()
+        kwargs["body_paragraphs"][0] = "word " * 115
+        kwargs["body_paragraphs"][1] = "word " * 55
+        kwargs["opening"] = "word " * 55
+        kwargs["closing"] = "word " * 45
+        letter = CoverLetterCuration(**kwargs)
+        validate_cover_letter(letter, _minimal_portfolio())
+
+        captured = capsys.readouterr()
+        assert "exceeds per-paragraph cap" not in captured.err
+        _logger.remove()
+
     def test_total_word_count_too_high_warns_not_rejects(self) -> None:
         # AR-7 / SA-6 (2026-04-26): the headline soft-warn behavior.
         # Total > COVER_LETTER_WORD_MAX must NOT raise on the API path
@@ -1346,10 +1401,11 @@ class TestValidateCoverLetter:
         # test pins the contract that paid API calls aren't reject-and-
         # discarded for a 5-10% overshoot.
         #
-        # 2026-05-17: cap moved from 300 to 360; body paragraphs are
-        # bounded at 90 hard, so the overshoot has to come from
-        # opening/closing where per-section bands are not enforced.
-        # Total here: 105 + 90 + 90 + 90 = 375 (15 over the new 360 cap).
+        # 2026-05-17: total cap moved from 300 to 360. 2026-05-26: per-
+        # paragraph cap moved from 90 to 115; the 90-word body paragraphs
+        # below remain inside that cap, so the overshoot still has to
+        # come from opening/closing where per-section bands are not
+        # enforced. Total here: 105 + 90 + 90 + 90 = 375 (15 over cap).
         kwargs = _valid_letter_kwargs()
         kwargs["opening"] = "word " * 105
         kwargs["body_paragraphs"][0] = "word " * 90

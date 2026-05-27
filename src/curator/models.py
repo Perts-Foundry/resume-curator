@@ -1303,6 +1303,13 @@ def validate_cover_letter(
             )
 
     # Per-paragraph body bands: under-min hard, over-max strict-aware.
+    # An INFO log fires when the paragraph lands in the drift band
+    # between the prompt-steering target (COVER_LETTER_PARAGRAPH_PROMPT_
+    # TARGET_MAX, currently 87) and the validator cap (COVER_LETTER_
+    # PARAGRAPH_WORD_MAX, currently 115). This preserves observability
+    # of model drift after the 2026-05-26 cap recalibration from 90 to
+    # 115; without it, the previous noisy WARN log at 90 was masking
+    # legitimate drift signal.
     for i, words in enumerate(body_words_per_paragraph):
         if words < COVER_LETTER_PARAGRAPH_WORD_MIN:
             errors.append(
@@ -1325,6 +1332,15 @@ def validate_cover_letter(
                     "Letter will still be written; trim manually if required "
                     "by submission rules."
                 )
+        elif words > COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX:
+            logger.info(
+                "Cover letter body paragraph {} word count {} above "
+                "prompt-steering target {}; within validator cap {}.",
+                i + 1,
+                words,
+                COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX,
+                COVER_LETTER_PARAGRAPH_WORD_MAX,
+            )
 
     # Per-section opening / closing bands (_OPENING_WORD_*, _CLOSING_WORD_*)
     # are intentionally NOT enforced here today. The prompt steers the

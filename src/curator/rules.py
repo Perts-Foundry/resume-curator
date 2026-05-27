@@ -554,7 +554,16 @@ COVER_LETTER_WORD_TARGET: int = 305
 COVER_LETTER_WORD_MIN: int = 250
 COVER_LETTER_WORD_MAX: int = 360
 COVER_LETTER_PARAGRAPH_WORD_MIN: int = 40
-COVER_LETTER_PARAGRAPH_WORD_MAX: int = 90
+# Hard cap recalibrated 2026-05-26 from 90 -> 115 to match observed
+# Sonnet output (89-111 words per body paragraph across the 2026-05-26
+# session's three successful and two failed runs). The previous 90-word
+# cap was a soft-warn-and-ship band on the API path, but the warnings
+# fired on every paid call, drowning out signal. The new cap stays
+# soft-warn (ship-anyway) on the API path; an INFO log at the 87-115
+# drift band (validate_cover_letter) preserves observability of model
+# drift between the prompt's steering target and the validator's
+# rejection threshold.
+COVER_LETTER_PARAGRAPH_WORD_MAX: int = 115
 # Prompt-side body upper bound, surfaced to the model in both the prompt
 # rulebook prose and the Pydantic field descriptions for body_paragraph_*.
 # Tighter than COVER_LETTER_PARAGRAPH_WORD_MAX so the model steers below
