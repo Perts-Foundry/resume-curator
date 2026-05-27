@@ -367,6 +367,34 @@ def _read_jd_text(
     return text
 
 
+def _resolve_publish_destination(
+    settings: CuratorSettings,
+    *,
+    override: Path | None = None,
+) -> Path:
+    """Resolve the publish destination for ``--publish`` / ``curator publish``.
+
+    Precedence: explicit ``override`` (subcommand ``-d``) wins, otherwise
+    ``settings.publish_dir`` (env / settings). When neither is set, raises
+    :class:`PublishError` with a hint pointing at the env var.
+
+    Always returns a ``Path`` or raises; callers must only invoke this
+    when publishing is requested so the error message stays accurate.
+    """
+    from curator.exceptions import PublishError
+
+    if override is not None:
+        return override
+    if settings.publish_dir is None:
+        msg = (
+            "--publish requires a destination. Set CURATOR_PUBLISH_DIR "
+            "(e.g. /mnt/c/Users/<you>/Downloads/resume-curator) or "
+            "pass a value via CuratorSettings.publish_dir."
+        )
+        raise PublishError(msg)
+    return settings.publish_dir
+
+
 @app.command()
 def curate(
     job_description: Path | None = _JD_ARGUMENT,
@@ -414,6 +442,16 @@ def curate(
             "matches Anthropic's default; '1h' uses the extended GA cache "
             "(2x write, same read; default for this tool). Overrides "
             "CURATOR_CACHE_TTL."
+        ),
+    ),
+    publish: bool = typer.Option(
+        False,
+        "--publish/--no-publish",
+        help=(
+            "After rendering, copy resume.pdf / cover_letter.pdf / "
+            "cover_letter.txt into CURATOR_PUBLISH_DIR/<profile>/. Useful for "
+            "moving artifacts out of WSL so Windows browsers can upload them; "
+            "see README troubleshooting."
         ),
     ),
 ) -> None:
@@ -480,6 +518,21 @@ def curate(
                 )
             return
 
+        publish_to: Path | None = (
+            _resolve_publish_destination(settings) if publish else None
+        )
+        if publish and no_pdf:
+            # The renderer still writes cover_letter.txt under --no-pdf
+            # when --cover-letter is set, so publish has something real
+            # to copy in that case. Without --cover-letter the publish
+            # set is empty; warn rather than hard-erroring so the
+            # combination remains useful when intentional.
+            logger.warning(
+                "--no-pdf and --publish combined: only files that exist on "
+                "disk will be copied (typically just cover_letter.txt when "
+                "--cover-letter is also set; nothing otherwise)."
+            )
+
         pipeline_start = time.perf_counter()
 
         with console.status("Starting...") as status:
@@ -488,6 +541,7 @@ def curate(
                 jd_text,
                 skip_pdf=no_pdf,
                 with_cover_letter=cover_letter,
+                publish_to=publish_to,
                 on_status=status.update,
             )
 
@@ -561,6 +615,23 @@ def _display_pipeline_result(
             "appended by safety net (AI omitted them from ranking)"
         )
 
+    published = getattr(result, "published_paths", None)
+    if published is not None:
+        # Tri-state: None means publish was not requested (skip display).
+        # Empty list means publish ran but found nothing to copy (surface
+        # it so a misconfigured --no-pdf --publish run is not invisible).
+        # Non-empty: show one parent + filename list for scannability.
+        if not published:
+            console.print(
+                "[yellow]Publish requested but no upload-ready files were "
+                "available to copy.[/]"
+            )
+        else:
+            publish_root = published[0].parent
+            console.print(f"[green]Published to:[/] {publish_root}")
+            for path in published:
+                console.print(f"  - {path.name}")
+
     if not result.converged and not result.skip_pdf:
         trims = len(result.trim_log)
         console.print(
@@ -629,6 +700,16 @@ def static_cmd(
             "naming). See COVER_LETTER_* constants in src/curator/rules.py "
             "for the machine-enforced authoring constraints. No API call "
             "is made."
+        ),
+    ),
+    publish: bool = typer.Option(
+        False,
+        "--publish/--no-publish",
+        help=(
+            "After rendering, copy resume.pdf / cover_letter.pdf / "
+            "cover_letter.txt into CURATOR_PUBLISH_DIR/<profile>/. Useful for "
+            "moving artifacts out of WSL so Windows browsers can upload them; "
+            "see README troubleshooting."
         ),
     ),
 ) -> None:
@@ -716,6 +797,20 @@ def static_cmd(
             sys.stdout.write("\n")
             return
 
+        publish_to: Path | None = (
+            _resolve_publish_destination(settings) if publish else None
+        )
+        if publish and no_pdf:
+            # See the matching warning on the curate path; the renderer's
+            # cover_letter.txt sidecar lands even under --no-pdf, so the
+            # combination remains useful with --cover-letter. Without it,
+            # publish copies nothing.
+            logger.warning(
+                "--no-pdf and --publish combined: only files that exist on "
+                "disk will be copied (typically just cover_letter.txt when "
+                "--cover-letter is also set; nothing otherwise)."
+            )
+
         pipeline_start = time.perf_counter()
 
         with console.status("Starting...") as status:
@@ -725,6 +820,7 @@ def static_cmd(
                 max_highlights=max_highlights,
                 skip_pdf=no_pdf,
                 with_cover_letter=cover_letter,
+                publish_to=publish_to,
                 on_status=status.update,
             )
 
@@ -736,6 +832,70 @@ def static_cmd(
             title_prefix="Static resume for",
             max_pages=settings.max_pages,
         )
+
+    except CuratorError as e:
+        console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(code=1) from None
+
+
+_PUBLISH_PROFILE_ARG = typer.Argument(
+    ...,
+    help="Profile directory to publish (e.g. profiles/2026-05-27-acme).",
+)
+_PUBLISH_DESTINATION_OPT = typer.Option(
+    None,
+    "--destination",
+    "-d",
+    help="Override CURATOR_PUBLISH_DIR for this invocation.",
+)
+
+
+@app.command(name="publish")
+def publish_cmd(
+    profile_dir: Path = _PUBLISH_PROFILE_ARG,
+    destination: Path | None = _PUBLISH_DESTINATION_OPT,
+) -> None:
+    """Copy a profile's upload-ready artifacts to the publish directory.
+
+    Useful for re-publishing past profiles, or republishing after a hand
+    edit. Does NOT publish to any registry or remote. The name reflects
+    "make these files available for upload from a Windows browser", not
+    package distribution.
+    """
+    from pydantic import ValidationError
+
+    from curator.config import CuratorSettings
+    from curator.exceptions import ConfigError, CuratorError, PublishError
+    from curator.publish import publish_artifacts
+
+    console = Console(stderr=True)
+
+    try:
+        try:
+            settings = CuratorSettings()
+        except ValidationError as e:
+            raise ConfigError(str(e)) from e
+
+        # Surface the absolute path so an ambiguous "not found" error
+        # tells the user where curator actually looked. publish_artifacts
+        # raises the same way for defense in depth; the early check here
+        # keeps the message colocated with the subcommand UX.
+        if not profile_dir.is_dir():
+            msg = f"Profile directory not found: {profile_dir.resolve()}"
+            raise PublishError(msg)
+
+        dest = _resolve_publish_destination(settings, override=destination)
+
+        paths = publish_artifacts(profile_dir, dest)
+        publish_root = dest.expanduser() / profile_dir.name
+        if not paths:
+            console.print(
+                f"[yellow]No publishable files found in {profile_dir.resolve()}[/]"
+            )
+            raise typer.Exit(code=1)
+        console.print(f"[green]Published to:[/] {publish_root}")
+        for path in paths:
+            console.print(f"  - {path.name}")
 
     except CuratorError as e:
         console.print(f"[red]Error:[/] {e}")

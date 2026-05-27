@@ -79,3 +79,7 @@ class CurationValidationError(CuratorError):
 
 class StaticModeError(CuratorError):
     """Static-mode synthesis failure (missing portfolio data, etc.)."""
+
+
+class PublishError(CuratorError):
+    """Publish step failure (no destination configured, unwritable, etc.)."""

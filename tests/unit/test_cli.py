@@ -935,3 +935,265 @@ class TestCoverLetterCLI:
         )
         assert result.exit_code == 0, result.output
         assert mock_run.call_args.kwargs["with_cover_letter"] is True
+
+
+class TestPublishCli:
+    """Tests for --publish on curate/static and the `curator publish` subcommand."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        for key in (
+            "CURATOR_ANTHROPIC_API_KEY",
+            "CURATOR_MAX_PAGES",
+            "CURATOR_OUTPUT_DIR",
+            "CURATOR_PUBLISH_DIR",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.chdir(tmp_path)
+
+    def _runner(self) -> tuple[Any, Any]:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        return CliRunner(), app
+
+    def _make_fake_result(self, tmp_path: Path) -> Any:
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        fake.curation.curation.company_slug = "acme"
+        fake.curation.curation.work_highlights = []
+        fake.curation.curation.skills = []
+        fake.curation.curation.projects = []
+        fake.curation.source = "static"
+        fake.render_output.profile_dir = tmp_path / "out"
+        fake.render_output.pdf_path = tmp_path / "out" / "resume.pdf"
+        fake.render_output.cover_letter_pdf_path = None
+        fake.render_output.cover_letter_yaml_path = None
+        fake.render_output.skipped_ids = 0
+        fake.render_output.safety_net_additions = 0
+        fake.trim_log = []
+        fake.page_count = 1
+        fake.converged = True
+        fake.skip_pdf = False
+        fake.published_paths = None
+        return fake
+
+    # --- --publish flag (static path) ---
+
+    def test_static_publish_passes_dest_to_pipeline(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.published_paths = [tmp_path / "out" / "resume.pdf"]
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake
+        )
+
+        result = runner.invoke(
+            app,
+            ["static", "--publish"],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["publish_to"] == tmp_path / "drop"
+
+    def test_static_publish_without_dir_errors(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        result = runner.invoke(app, ["static", "--publish"])
+        assert result.exit_code == 1
+        assert "--publish requires a destination" in result.output
+        assert "CURATOR_PUBLISH_DIR" in result.output
+
+    def test_static_no_publish_by_default(self, tmp_path: Path, mocker: Any) -> None:
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        mock_run = mocker.patch(
+            "curator.pipeline.run_static_pipeline", return_value=fake
+        )
+        result = runner.invoke(app, ["static"])
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["publish_to"] is None
+
+    # --- --publish flag (curate path) ---
+
+    def test_curate_publish_passes_dest_to_pipeline(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        jd_file = tmp_path / "jd.txt"
+        jd_file.write_text("Senior Engineer role at Acme.")
+        fake = self._make_fake_result(tmp_path)
+        fake.curation.source = "api"
+        fake.published_paths = [tmp_path / "out" / "resume.pdf"]
+        mock_run = mocker.patch("curator.pipeline.run_pipeline", return_value=fake)
+
+        env = {
+            "CURATOR_ANTHROPIC_API_KEY": "sk-ant-test",  # pragma: allowlist secret
+            "CURATOR_ALLOW_API_SPEND": "true",
+            "CURATOR_PUBLISH_DIR": str(tmp_path / "drop"),
+        }
+        result = runner.invoke(app, ["curate", str(jd_file), "--publish"], env=env)
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_args.kwargs["publish_to"] == tmp_path / "drop"
+
+    # --- `curator publish` subcommand ---
+
+    def _make_profile(self, profile: Path, filenames: list[str]) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+        for name in filenames:
+            (profile / name).write_text(f"content of {name}\n", encoding="utf-8")
+
+    def test_publish_subcommand_copies_present_files(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profiles" / "2026-05-27-acme"
+        self._make_profile(profile, ["resume.pdf", "cover_letter.pdf"])
+        dest = tmp_path / "drop"
+
+        result = runner.invoke(
+            app,
+            ["publish", str(profile)],
+            env={"CURATOR_PUBLISH_DIR": str(dest)},
+        )
+        assert result.exit_code == 0, result.output
+        assert (dest / "2026-05-27-acme" / "resume.pdf").is_file()
+        assert (dest / "2026-05-27-acme" / "cover_letter.pdf").is_file()
+
+    def test_publish_subcommand_destination_override(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profiles" / "2026-05-27-acme"
+        self._make_profile(profile, ["resume.pdf"])
+        env_dest = tmp_path / "from-env"
+        cli_dest = tmp_path / "from-cli"
+
+        result = runner.invoke(
+            app,
+            ["publish", str(profile), "-d", str(cli_dest)],
+            env={"CURATOR_PUBLISH_DIR": str(env_dest)},
+        )
+        assert result.exit_code == 0, result.output
+        assert (cli_dest / "2026-05-27-acme" / "resume.pdf").is_file()
+        assert not env_dest.exists()
+
+    def test_publish_subcommand_missing_profile_errors(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        result = runner.invoke(
+            app,
+            ["publish", str(tmp_path / "nonexistent")],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 1
+        assert "Profile directory not found" in result.output
+
+    def test_publish_subcommand_no_files_exits_nonzero(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        empty_profile = tmp_path / "profiles" / "empty"
+        empty_profile.mkdir(parents=True)
+
+        result = runner.invoke(
+            app,
+            ["publish", str(empty_profile)],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 1
+        assert "No publishable files" in result.output
+
+    def test_publish_subcommand_without_dest_errors(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profiles" / "2026-05-27-acme"
+        self._make_profile(profile, ["resume.pdf"])
+        result = runner.invoke(app, ["publish", str(profile)])
+        assert result.exit_code == 1
+        assert "CURATOR_PUBLISH_DIR" in result.output
+
+    def test_publish_subcommand_missing_profile_shows_absolute_path(
+        self, tmp_path: Path
+    ) -> None:
+        # The error must include the resolved (absolute) path so an
+        # operator running from a confusing CWD knows what curator looked at.
+        runner, app = self._runner()
+        result = runner.invoke(
+            app,
+            ["publish", str(tmp_path / "ghost-profile")],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 1
+        assert str((tmp_path / "ghost-profile").resolve()) in result.output
+
+    def test_static_publish_propagates_pipeline_error(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # When publish fails mid-pipeline (e.g. unwritable destination),
+        # the CLI must surface the PublishError cleanly as exit 1 with
+        # a useful message rather than crashing post-render.
+        from curator.exceptions import PublishError
+
+        mocker.patch(
+            "curator.pipeline.run_static_pipeline",
+            side_effect=PublishError("destination volume full"),
+        )
+        runner, app = self._runner()
+        result = runner.invoke(
+            app,
+            ["static", "--publish"],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 1
+        assert "destination volume full" in result.output
+
+    def test_static_no_pdf_with_publish_warns(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Combination is allowed (cover_letter.txt still ships under
+        # --no-pdf), but the warning must fire so the user knows publish
+        # may have nothing to copy without --cover-letter.
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.published_paths = []
+        fake.render_output.pdf_path = None
+        fake.skip_pdf = True
+        mocker.patch("curator.pipeline.run_static_pipeline", return_value=fake)
+
+        result = runner.invoke(
+            app,
+            ["static", "--publish", "--no-pdf"],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 0, result.output
+        assert "--no-pdf and --publish combined" in result.output
+
+    def test_static_publish_empty_result_is_surfaced(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Tri-state on PipelineResult.published_paths: None means publish
+        # was not requested (suppress block); [] means publish ran but
+        # found nothing (surface so the no-op is visible).
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.published_paths = []
+        mocker.patch("curator.pipeline.run_static_pipeline", return_value=fake)
+
+        result = runner.invoke(
+            app,
+            ["static", "--publish"],
+            env={"CURATOR_PUBLISH_DIR": str(tmp_path / "drop")},
+        )
+        assert result.exit_code == 0, result.output
+        assert "no upload-ready files were available" in result.output
+
+    def test_static_no_publish_does_not_surface_empty_block(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # When publish was not requested, published_paths stays None and
+        # the display must not print the "no upload-ready files" line.
+        runner, app = self._runner()
+        fake = self._make_fake_result(tmp_path)
+        fake.published_paths = None
+        mocker.patch("curator.pipeline.run_static_pipeline", return_value=fake)
+
+        result = runner.invoke(app, ["static"])
+        assert result.exit_code == 0, result.output
+        assert "no upload-ready files" not in result.output
+        assert "Published to:" not in result.output

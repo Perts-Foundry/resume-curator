@@ -157,6 +157,25 @@ class RenderOutput:
 
 
 # ---------------------------------------------------------------------------
+# Publish payload manifest
+# ---------------------------------------------------------------------------
+
+RENDER_PUBLISH_FILENAMES: tuple[str, ...] = (
+    "resume.pdf",
+    "cover_letter.pdf",
+    "cover_letter.txt",
+)
+"""Files in a rendered profile dir that ``curator publish`` will copy.
+
+Co-located with ``RenderOutput`` (the renderer is the writer that
+produces them) so that adding a new shipped artifact is a single-diff
+change: declare the writer here and append its filename to this tuple.
+Consumed by ``curator.publish.publish_artifacts``; order-stable for
+reproducible publish output.
+"""
+
+
+# ---------------------------------------------------------------------------
 # Selection logic
 # ---------------------------------------------------------------------------
 
