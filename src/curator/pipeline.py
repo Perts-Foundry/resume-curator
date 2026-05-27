@@ -24,6 +24,7 @@ from curator.static_mode import build_static_result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from curator.client import CurationResult
     from curator.config import CuratorSettings
@@ -49,6 +50,33 @@ class PipelineResult:
     total_input_tokens: int
     total_output_tokens: int
     trim_log: list[str] = field(default_factory=list)
+    published_paths: list[Path] | None = None
+    """Destinations written by the publish step when ``publish_to`` is set on
+    the pipeline call; ``None`` when ``--publish`` was not used. Ordered as
+    in :data:`curator.renderer.RENDER_PUBLISH_FILENAMES`."""
+
+
+def _maybe_publish(
+    render_output: RenderOutput,
+    publish_to: Path | None,
+    on_status: Callable[[str], None],
+) -> list[Path] | None:
+    """Copy upload-ready artifacts to ``publish_to`` if set.
+
+    Imported lazily so the common (non-publish) pipeline path doesn't pay
+    the import cost of :mod:`curator.publish` (which imports
+    :mod:`shutil`). Returns ``None`` when publishing is disabled so the
+    pipeline result can distinguish "didn't publish" from "published
+    zero files".
+    """
+    if publish_to is None:
+        return None
+    from curator.publish import publish_artifacts
+
+    on_status(f"Publishing to {publish_to.expanduser()}...")
+    paths = publish_artifacts(render_output.profile_dir, publish_to)
+    on_status(f"Published {len(paths)} file(s)")
+    return paths
 
 
 def _summarize_pipeline_result(
@@ -59,6 +87,7 @@ def _summarize_pipeline_result(
     skip_pdf: bool,
     settings: CuratorSettings,
     on_status: Callable[[str], None],
+    published_paths: list[Path] | None = None,
 ) -> PipelineResult:
     """Assemble a ``PipelineResult`` and emit convergence logs.
 
@@ -119,6 +148,7 @@ def _summarize_pipeline_result(
         total_input_tokens=curation.input_tokens,
         total_output_tokens=curation.output_tokens,
         trim_log=render_output.trim_log,
+        published_paths=published_paths,
     )
 
 
@@ -128,6 +158,7 @@ def run_pipeline(
     *,
     skip_pdf: bool = False,
     with_cover_letter: bool = False,
+    publish_to: Path | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> PipelineResult:
     """Execute the full curation pipeline with renderer-side page fitting.
@@ -146,6 +177,11 @@ def run_pipeline(
         skip_pdf: Skip PDF compilation when True. Still calls the API.
         with_cover_letter: Bundle a tailored cover letter into the same API
             call when True. No additional billable call is made.
+        publish_to: When set, copy upload-ready artifacts (resume.pdf,
+            cover_letter.pdf, cover_letter.txt) to
+            ``<publish_to>/<profile_name>/`` after rendering. The CLI
+            ``--publish`` flag resolves to this kwarg from
+            ``settings.publish_dir``.
         on_status: Optional callback for progress updates (e.g., Rich status).
 
     Returns:
@@ -198,6 +234,8 @@ def run_pipeline(
     )
     logger.info("Rendering completed in {:.1f}s", time.perf_counter() - t0)
 
+    published = _maybe_publish(render_output, publish_to, update)
+
     return _summarize_pipeline_result(
         curation=result,
         render_output=render_output,
@@ -205,6 +243,7 @@ def run_pipeline(
         skip_pdf=skip_pdf,
         settings=settings,
         on_status=update,
+        published_paths=published,
     )
 
 
@@ -215,6 +254,7 @@ def run_static_pipeline(
     max_highlights: int | None = None,
     skip_pdf: bool = False,
     with_cover_letter: bool = False,
+    publish_to: Path | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> PipelineResult:
     """Execute the static (zero-API) curation pipeline.
@@ -234,6 +274,11 @@ def run_static_pipeline(
             (loaded verbatim from ``data/cover-letter.yaml``) when True.
             No synthesis, no placeholders, no TEMPLATE banner; the letter
             must pass ``validate_cover_letter``.
+        publish_to: When set, copy upload-ready artifacts (resume.pdf,
+            cover_letter.pdf, cover_letter.txt) to
+            ``<publish_to>/<profile_name>/`` after rendering. The CLI
+            ``--publish`` flag resolves to this kwarg from
+            ``settings.publish_dir``.
         on_status: Optional callback for progress updates.
 
     Returns:
@@ -289,6 +334,8 @@ def run_static_pipeline(
     )
     logger.info("Rendering completed in {:.1f}s", time.perf_counter() - t0)
 
+    published = _maybe_publish(render_output, publish_to, update)
+
     return _summarize_pipeline_result(
         curation=result,
         render_output=render_output,
@@ -296,4 +343,5 @@ def run_static_pipeline(
         skip_pdf=skip_pdf,
         settings=settings,
         on_status=update,
+        published_paths=published,
     )

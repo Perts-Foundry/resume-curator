@@ -161,6 +161,13 @@ src/curator/
   page_caps.py        # _PageCaps + _caps_for_pages (work_position_floors,
                       #   certificate_floor, skill_group_floor); leaf module shared by renderer.py and
                       #   eval/report.py to keep cascade and eval bands aligned
+  publish.py          # publish_artifacts(profile_dir, destination): copies
+                      #   upload-ready files (RENDER_PUBLISH_FILENAMES from
+                      #   renderer.py) into <destination>/<profile_name>/.
+                      #   Leaf module; surfaces the --publish flag on curate/
+                      #   static and the `curator publish` subcommand. Exists
+                      #   to sidestep Chromium's blocked-paths refusal on
+                      #   \\wsl.localhost\... UNC paths in Windows browsers.
   templates/
     curated.typ       # Typst resume template (packaged as resource;
                       #   located via curator.default_template_path()).
@@ -546,6 +553,43 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
    cover_letter sub-object: {"enabled": True, "word_count": N} when the flag
    is on, else {"enabled": False}. The key is always present.
 ```
+
+### Phase 1c: Publish step (optional, both pipelines)
+
+The publish step exists because Windows browser file pickers refuse to
+upload from `\\wsl.localhost\...` UNC paths under Chromium's
+blocked-paths policy. Copying the PDFs onto the Windows drive lets the
+upload proceed.
+
+Surface area:
+
+- `--publish/--no-publish` flag on both `curator curate` and
+  `curator static` (default off).
+- Standalone `curator publish <profile_dir> [-d <destination>]`
+  subcommand for republishing past profiles after the fact.
+
+Behavior:
+
+1. CLI resolves the destination via `_resolve_publish_destination`:
+   explicit `-d` (subcommand only) > `settings.publish_dir` (from
+   `CURATOR_PUBLISH_DIR`) > `PublishError` with hint.
+2. `pipeline.py:_maybe_publish` (lazy import of `curator.publish`)
+   calls `publish.publish_artifacts(profile_dir, destination)`.
+3. For each filename in `renderer.RENDER_PUBLISH_FILENAMES`
+   (`resume.pdf`, `cover_letter.pdf`, `cover_letter.txt`), if the
+   source file exists, `shutil.copy2` copies it into
+   `<destination>/<profile_name>/`. Missing files are skipped silently
+   (the cover letter is optional). Existing destination files are
+   overwritten; each overwrite logs at INFO to surface accidental
+   clobbers (e.g. publishing a hand-renamed profile over a previous
+   run).
+4. `PipelineResult.published_paths` carries the list of paths actually
+   written; the CLI displays them under "Published to:".
+
+The publish payload manifest (`RENDER_PUBLISH_FILENAMES`) is
+co-located with `RenderOutput` in `renderer.py` so a future writer
+that produces a new shipped artifact adds itself to publishing in the
+same diff.
 
 ### Output Structure
 
@@ -1267,6 +1311,9 @@ to authorize Anthropic API calls; prevents surprise charges),
 `cache_ttl` (Anthropic prompt-cache TTL, `Literal["5m", "1h"]`, default `"1h"`;
 also configurable via `--cache-ttl` on `curator curate`; see "Prompt Caching"
 above for the break-even math),
+`publish_dir` (optional destination directory for `--publish` / `curator publish`;
+default `None`, must be explicitly set or `--publish` errors with a hint;
+artifacts land at `<publish_dir>/<profile_name>/`; see "Publish step" below),
 `judge_model` (Tier 2 judge model, default `claude-sonnet-4-6`),
 `judge_effort` (judge quality tuning).
 

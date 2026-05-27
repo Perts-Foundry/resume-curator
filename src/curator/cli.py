@@ -367,6 +367,36 @@ def _read_jd_text(
     return text
 
 
+def _resolve_publish_destination(
+    settings: CuratorSettings,
+    *,
+    publish: bool,
+    override: Path | None = None,
+) -> Path | None:
+    """Resolve the publish destination for ``--publish`` / ``curator publish``.
+
+    Precedence: explicit ``override`` (subcommand ``-d``) > ``settings.publish_dir``
+    (env / settings). When ``publish`` is False and no override is given,
+    returns ``None`` (publish step is skipped). When publishing is requested
+    but no destination is configured, raises ``PublishError`` with a hint
+    pointing at the env var.
+    """
+    from curator.exceptions import PublishError
+
+    if override is not None:
+        return override
+    if not publish:
+        return None
+    if settings.publish_dir is None:
+        msg = (
+            "--publish requires a destination. Set CURATOR_PUBLISH_DIR "
+            "(e.g. /mnt/c/Users/<you>/Downloads/resume-curator) or "
+            "pass a value via CuratorSettings.publish_dir."
+        )
+        raise PublishError(msg)
+    return settings.publish_dir
+
+
 @app.command()
 def curate(
     job_description: Path | None = _JD_ARGUMENT,
@@ -414,6 +444,16 @@ def curate(
             "matches Anthropic's default; '1h' uses the extended GA cache "
             "(2x write, same read; default for this tool). Overrides "
             "CURATOR_CACHE_TTL."
+        ),
+    ),
+    publish: bool = typer.Option(
+        False,
+        "--publish/--no-publish",
+        help=(
+            "After rendering, copy resume.pdf / cover_letter.pdf / "
+            "cover_letter.txt into CURATOR_PUBLISH_DIR/<profile>/. Useful for "
+            "moving artifacts out of WSL so Windows browsers can upload them; "
+            "see README troubleshooting."
         ),
     ),
 ) -> None:
@@ -480,6 +520,8 @@ def curate(
                 )
             return
 
+        publish_to = _resolve_publish_destination(settings, publish=publish)
+
         pipeline_start = time.perf_counter()
 
         with console.status("Starting...") as status:
@@ -488,6 +530,7 @@ def curate(
                 jd_text,
                 skip_pdf=no_pdf,
                 with_cover_letter=cover_letter,
+                publish_to=publish_to,
                 on_status=status.update,
             )
 
@@ -561,6 +604,15 @@ def _display_pipeline_result(
             "appended by safety net (AI omitted them from ranking)"
         )
 
+    published = getattr(result, "published_paths", None)
+    if published:
+        # Files all share a parent (<publish_dir>/<profile>/) so showing the
+        # parent once + filenames keeps the output scannable.
+        publish_root = published[0].parent
+        console.print(f"[green]Published to:[/] {publish_root}")
+        for path in published:
+            console.print(f"  - {path.name}")
+
     if not result.converged and not result.skip_pdf:
         trims = len(result.trim_log)
         console.print(
@@ -629,6 +681,16 @@ def static_cmd(
             "naming). See COVER_LETTER_* constants in src/curator/rules.py "
             "for the machine-enforced authoring constraints. No API call "
             "is made."
+        ),
+    ),
+    publish: bool = typer.Option(
+        False,
+        "--publish/--no-publish",
+        help=(
+            "After rendering, copy resume.pdf / cover_letter.pdf / "
+            "cover_letter.txt into CURATOR_PUBLISH_DIR/<profile>/. Useful for "
+            "moving artifacts out of WSL so Windows browsers can upload them; "
+            "see README troubleshooting."
         ),
     ),
 ) -> None:
@@ -716,6 +778,8 @@ def static_cmd(
             sys.stdout.write("\n")
             return
 
+        publish_to = _resolve_publish_destination(settings, publish=publish)
+
         pipeline_start = time.perf_counter()
 
         with console.status("Starting...") as status:
@@ -725,6 +789,7 @@ def static_cmd(
                 max_highlights=max_highlights,
                 skip_pdf=no_pdf,
                 with_cover_letter=cover_letter,
+                publish_to=publish_to,
                 on_status=status.update,
             )
 
@@ -736,6 +801,69 @@ def static_cmd(
             title_prefix="Static resume for",
             max_pages=settings.max_pages,
         )
+
+    except CuratorError as e:
+        console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(code=1) from None
+
+
+_PUBLISH_PROFILE_ARG = typer.Argument(
+    ...,
+    help="Profile directory to publish (e.g. profiles/2026-05-27-acme).",
+)
+_PUBLISH_DESTINATION_OPT = typer.Option(
+    None,
+    "--destination",
+    "-d",
+    help="Override CURATOR_PUBLISH_DIR for this invocation.",
+)
+
+
+@app.command(name="publish")
+def publish_cmd(
+    profile_dir: Path = _PUBLISH_PROFILE_ARG,
+    destination: Path | None = _PUBLISH_DESTINATION_OPT,
+) -> None:
+    """Copy a profile's upload-ready artifacts to the publish directory.
+
+    Useful for re-publishing past profiles, or republishing after a hand
+    edit. Does NOT publish to any registry or remote -- the name reflects
+    "make these files available for upload from a Windows browser", not
+    package distribution.
+    """
+    from pydantic import ValidationError
+
+    from curator.config import CuratorSettings
+    from curator.exceptions import ConfigError, CuratorError, PublishError
+    from curator.publish import publish_artifacts
+
+    console = Console(stderr=True)
+
+    try:
+        try:
+            settings = CuratorSettings()
+        except ValidationError as e:
+            raise ConfigError(str(e)) from e
+
+        if not profile_dir.is_dir():
+            msg = f"Profile directory not found: {profile_dir}"
+            raise PublishError(msg)
+
+        dest = _resolve_publish_destination(
+            settings, publish=True, override=destination
+        )
+        # dest is non-None here because publish=True with a destination
+        # forces resolution to either override or settings.publish_dir.
+        assert dest is not None
+
+        paths = publish_artifacts(profile_dir, dest)
+        publish_root = dest.expanduser() / profile_dir.name
+        if not paths:
+            console.print(f"[yellow]No publishable files found in {profile_dir}[/]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]Published to:[/] {publish_root}")
+        for path in paths:
+            console.print(f"  - {path.name}")
 
     except CuratorError as e:
         console.print(f"[red]Error:[/] {e}")
