@@ -858,7 +858,7 @@ def publish_cmd(
     """Copy a profile's upload-ready artifacts to the publish directory.
 
     Useful for re-publishing past profiles, or republishing after a hand
-    edit. Does NOT publish to any registry or remote -- the name reflects
+    edit. Does NOT publish to any registry or remote. The name reflects
     "make these files available for upload from a Windows browser", not
     package distribution.
     """

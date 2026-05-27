@@ -91,8 +91,8 @@ def atomic_text_write(path: Path, content: str) -> None:
 
     Resulting permissions: 0o644. ``tempfile.NamedTemporaryFile`` defaults
     to 0o600, which would silently mark every YAML/JSON/TXT artifact as
-    owner-only-readable -- inconsistent with the 0o644 PDFs Typst writes
-    and surprising for tooling that walks the profile dir. We use
+    owner-only-readable. That is inconsistent with the 0o644 PDFs Typst
+    writes and surprising for tooling that walks the profile dir. We use
     ``os.fchmod`` on the open fd (not a umask read/restore dance) so
     there is no process-wide side effect. The brief existence of the
     ``.tmp`` file at 0o644 is acceptable: parent directory permissions

@@ -294,7 +294,7 @@ Coding standards are encoded in `pyproject.toml` (ruff, mypy, pytest configs); C
 
 ### Uploading from WSL: "this folder contains system files"
 
-Windows browser file pickers (Edge/Chrome) refuse to upload files from `\\wsl.localhost\...` (or `\\wsl$\...`) paths under Chromium's blocked-paths policy. The error reads "this folder contains system files", but the trigger is the UNC path itself, not any file attribute -- PowerShell will confirm every file in your profile directory reports `Attributes=Normal`.
+Windows browser file pickers (Edge/Chrome) refuse to upload files from `\\wsl.localhost\...` (or `\\wsl$\...`) paths under Chromium's blocked-paths policy. The error reads "this folder contains system files", but the trigger is the UNC path itself, not any file attribute; PowerShell will confirm every file in your profile directory reports `Attributes=Normal`.
 
 **Workarounds:**
 

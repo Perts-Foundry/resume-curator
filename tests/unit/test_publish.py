@@ -140,7 +140,7 @@ class TestPublishArtifacts:
             publish_artifacts(profile, tmp_path / "publish")
 
     def test_returns_empty_list_when_no_files_present(self, tmp_path: Path) -> None:
-        # Empty profile dir -- no listed filenames present.
+        # Empty profile dir; no listed filenames present.
         profile = tmp_path / "profile" / "empty"
         profile.mkdir(parents=True)
         dest = tmp_path / "publish"
