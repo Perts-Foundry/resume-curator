@@ -28,6 +28,11 @@ the rerender produces resume-only output.
 When the curated.yaml directory also contains ``data/cover_letter.yaml``,
 the cover letter is loaded and re-rendered alongside the resume. Useful
 for iterating on the cover-letter Typst template.
+
+Both ``--raw`` and ``--partial`` write rendered output into
+``<output_dir>/<slug>/`` (default ``profiles/<slug>/``) per the
+``CuratorSettings.output_dir`` resolution, NOT next to the input side
+file; the renderer always controls its own profile-directory layout.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ import yaml
 from curator.client import CurationResult, _adapt_curation_dict
 from curator.config import CuratorSettings
 from curator.exceptions import APIResponseError
+from curator.io_utils import MAX_TEXT_SIZE
 from curator.loader import load_portfolio
 from curator.models import CoverLetterCuration, ResumeCuration
 from curator.renderer import render
@@ -152,6 +158,16 @@ def _main() -> None:
         return
 
     if raw:
+        # Match the io_utils size cap so an outsized JSON side file
+        # (typically corruption or accidental dump of a transcript)
+        # fails fast with a clear error instead of OOMing the process.
+        raw_size = curated_path.stat().st_size
+        if raw_size > MAX_TEXT_SIZE:
+            sys.stderr.write(
+                f"rerender: --raw input exceeds size limit "
+                f"({raw_size} > {MAX_TEXT_SIZE} bytes): {curated_path.name}\n"
+            )
+            sys.exit(1)
         raw_data = json.loads(curated_path.read_text(encoding="utf-8"))
         if not isinstance(raw_data, dict):
             sys.stderr.write(
@@ -210,9 +226,10 @@ def _main() -> None:
             cache_read_input_tokens=0,
             cover_letter=cover_letter,
         )
-        # Reuse the resume's safety-net rendering path (skip JD scoring
-        # of an already-adapted curation; render() handles cover-letter
-        # rendering when present).
+        # Reuse the API path's default safety_net=True so any work
+        # entries omitted from the curation get portfolio-order
+        # highlights appended (matching original-call rendering).
+        # render() handles cover-letter rendering when present.
         output = render(
             result, portfolio, jd_text or None, settings, safety_net=True
         )
@@ -244,11 +261,11 @@ def _main() -> None:
     settings = CuratorSettings(max_pages=pages)
     portfolio = load_portfolio(settings.portfolio_data_path)
     jd_path = profile_dir / "job_description.txt"
-    jd_text2: str | None = None
+    jd_text: str | None = None
     if jd_path.is_file():
-        jd_text2 = jd_path.read_text(encoding="utf-8")
+        jd_text = jd_path.read_text(encoding="utf-8")
 
-    output = render(result, portfolio, jd_text2, settings)
+    output = render(result, portfolio, jd_text, settings)
     print(f"Re-rendered: {output.pdf_path}")
     print(f"Page count: {output.page_count}")
     print(f"Trim steps: {len(output.trim_log)}")
