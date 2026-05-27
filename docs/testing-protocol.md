@@ -238,9 +238,12 @@ run implies PASS. Confirm by checking the artifacts exist and the log records th
 
 - Word count 250-360 total (hard min, soft max — over-cap warns and ships;
   see `COVER_LETTER_WORD_MIN` / `COVER_LETTER_WORD_MAX` in `rules.py`)
-- 40-90 per body paragraph (hard band, see `COVER_LETTER_PARAGRAPH_WORD_MIN` /
-  `COVER_LETTER_PARAGRAPH_WORD_MAX`; per-paragraph over-max is a soft warn
-  like the total-word cap)
+- 40-115 per body paragraph (see `COVER_LETTER_PARAGRAPH_WORD_MIN` /
+  `COVER_LETTER_PARAGRAPH_WORD_MAX`; under-min is a hard reject, over-max
+  is a soft warn on the API path and a hard reject on the static path
+  via `strict=True`, mirroring the total-word band; an INFO log at the
+  87-115 drift band keeps per-call drift observable after the cap was
+  raised from 90 to 115 on 2026-05-26)
 - Exactly 2 body paragraphs (`COVER_LETTER_BODY_MIN_COUNT == MAX_COUNT == 2`
   since 2026-04-24)
 - Sign-off in `COVER_LETTER_VALID_SIGN_OFFS` enum

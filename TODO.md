@@ -87,8 +87,10 @@ redistributed work between the AI and the code-side bookkeeping:
 ### Cover-letter word-count strategy (was Task 5 in the plan)
 
 The current word-count target band (now 250-360 total since
-2026-05-17, 40-90 per body paragraph) is enforced post-hoc by the
-validator but **the model does not respect numeric targets reliably**
+2026-05-17, 40-115 per body paragraph since 2026-05-26; see
+`COVER_LETTER_PARAGRAPH_WORD_MAX` recalibration in `rules.py`) is
+enforced post-hoc by the validator but **the model does not respect
+numeric targets reliably**
 (62.5% over-the-old-300-cap rate observed across the 10-profile review
 on 2026-05-16; the cap bump to 360 absorbs that band, but the deeper
 question — whether word-count enforcement is the right tool at all —
@@ -220,6 +222,12 @@ on `summary` length, etc.) plus observability gaps.
   `curation_max_semantic_retries` setting (default 0; opt-in via
   `CURATOR_CURATION_MAX_SEMANTIC_RETRIES=1`). Must preserve prompt
   cache hit on retry (system prompt byte-identical across attempts).
+  **2026-05-26 update**: post-extract failures (Pydantic + hard ID
+  mismatch) now persist the raw wire dict to
+  `curation_raw-*.json` so users can hand-edit-and-replay via
+  `scripts/rerender.py --raw` without re-paying. Auto-retry-on-feedback
+  remains the next-step structural fix; raw persistence is the manual-
+  recovery interim covering both classes.
 - [ ] Add `CurationSemanticError(APIResponseError)` and a
   `ValidationFeedback` frozen dataclass carrying `invalid_work_ids`,
   `invalid_highlight_ids`, `invalid_skill_ids`,
@@ -516,14 +524,18 @@ expanding scope. Each is independently shippable.
 
 - [ ] **Validator hard-vs-soft on per-paragraph cover-letter
   over-max**: today's API path soft-warns on per-paragraph word
-  count over `COVER_LETTER_PARAGRAPH_WORD_MAX=90`; the static path
-  hard-rejects. Original rationale ("paid calls are expensive") was
-  sound but the cost asymmetry has shifted now that the
-  partial-recovery flow is built out (per CLAUDE.md "Failure
-  recovery (API path only)"). Reconsider promoting per-paragraph
-  over-max to a hard reject on the API path. Would have caught the
-  311-word output observed on the 2026-05-10 reference run before
-  it shipped. (prompt-reviewer CRIT-1 follow-up.)
+  count over `COVER_LETTER_PARAGRAPH_WORD_MAX` (recalibrated
+  90 -> 115 on 2026-05-26 to match observed Sonnet output 89-111
+  words); the static path hard-rejects. Original rationale ("paid
+  calls are expensive") was sound but the cost asymmetry has
+  shifted now that the partial-recovery flow is built out (per
+  CLAUDE.md "Failure recovery (API path only)") AND the recalibrated
+  cap now reflects reality. Promotion to hard reject on the API
+  path remains the structural fix; the recalibrated cap is the
+  prerequisite. Drift band 87-115 is observable via INFO log in
+  `validate_cover_letter`. Would have caught the 311-word output
+  observed on the 2026-05-10 reference run before it shipped (still
+  out-of-band on the new cap). (prompt-reviewer CRIT-1 follow-up.)
 
 - [ ] **Cover-letter prompt block hash pin**: today's
   `EXPECTED_SHA256` test pin in `tests/unit/test_prompt.py:655`
@@ -535,11 +547,17 @@ expanding scope. Each is independently shippable.
   cover-letter prompt edit warrants the cache-rotation cost.
 
 - [ ] **Aggressive cover-letter band tightening (escalation
-  trigger)**: if the conservative target+body-band change shipped
-  2026-05-10 still produces >20% drift over the 300-word soft cap
-  on the next 5+ paid `--cover-letter` runs, tighten body band
-  prose further from `80-87` to `80-85` (achievable upper bound
-  becomes `65 + 2*85 + 45 = 280`). Validator constants stay at 90.
+  trigger)**: superseded in part by the 2026-05-26 recalibration of
+  `COVER_LETTER_PARAGRAPH_WORD_MAX` from 90 to 115, which moved
+  drift observability from a `logger.warning` on every paid call
+  to an INFO log at the 87-115 band; the original premise (validator
+  constants stay at 90, tighten prompt steering to bring drift down)
+  no longer reflects the validator's behavior. Re-evaluate before
+  acting: if total-word drift over the 360 soft cap is still >20%
+  across the next 5+ paid `--cover-letter` runs, tighten the prompt
+  body-band prose further from `80-87` to `80-85` (achievable upper
+  bound becomes `65 + 2*85 + 45 = 280`). Validator paragraph constants
+  stay at the new 115 cap; only the prompt-steering target moves.
 
 ---
 

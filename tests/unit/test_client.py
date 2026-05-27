@@ -2404,6 +2404,143 @@ class TestCurateWithCoverLetter:
             client.curate(portfolio_data, "JD text.", with_cover_letter=False)
 
 
+class TestRawResponsePersistence:
+    """Post-extract validation failures persist the raw API response.
+
+    Three classes of failure all land in the same recovery file
+    ``curation_raw-*.json`` so a paid call is never wasted regardless
+    of which post-extract layer rejects the response:
+
+    - ResumeCuration Pydantic constraint violation (e.g. summary too long)
+    - CoverLetterCuration Pydantic constraint violation
+    - Hard resume ID mismatch (CurationValidationError wrapped to
+      APIResponseError by _validate_curation_ids)
+
+    Recovery is via ``scripts/rerender.py --raw <path>``.
+    """
+
+    def _scoped_settings(
+        self, mock_settings: CuratorSettings, tmp_path: Any
+    ) -> CuratorSettings:
+        return CuratorSettings(
+            anthropic_api_key=mock_settings.anthropic_api_key,
+            allow_api_spend=True,
+            portfolio_path=mock_settings.portfolio_path,
+            output_dir=tmp_path / "profiles",
+        )
+
+    def test_summary_too_long_persists_raw_json(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+        tmp_path: Any,
+    ) -> None:
+        """Summary exceeding the post-parse cap writes raw JSON for recovery."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["summary"] = "x" * 760  # exceeds the 750-char post-parse cap
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+
+        scoped = self._scoped_settings(mock_settings, tmp_path)
+        client = CuratorClient(scoped)
+        with pytest.raises(APIResponseError) as exc_info:
+            client.curate(portfolio_data, "JD text.")
+
+        written = list((tmp_path / "profiles").glob("curation_raw-*.json"))
+        assert len(written) == 1
+        path = written[0]
+        assert "msg_test_123" in path.name
+        assert str(path) in str(exc_info.value)
+        # The raw JSON round-trips so the user can hand-edit and replay.
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert isinstance(data, dict)
+        assert data["summary"] == "x" * 760
+
+    def test_cover_letter_pydantic_failure_persists_raw_json(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+        tmp_path: Any,
+    ) -> None:
+        """Cover-letter Pydantic violation persists the raw wire payload."""
+        wire = {
+            "resume": _curation_to_wire_dict(valid_curation),
+            "cover_letter": {"not_a_real_field": "garbage"},
+        }
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+
+        scoped = self._scoped_settings(mock_settings, tmp_path)
+        client = CuratorClient(scoped)
+        with pytest.raises(APIResponseError):
+            client.curate(portfolio_data, "JD text.", with_cover_letter=True)
+
+        written = list((tmp_path / "profiles").glob("curation_raw-*.json"))
+        assert len(written) == 1
+        # The persisted payload preserves the wire shape (resume + cover_letter)
+        # so a hand-edit of cover_letter is enough to replay.
+        data = json.loads(written[0].read_text(encoding="utf-8"))
+        assert "resume" in data
+        assert "cover_letter" in data
+
+    def test_hard_id_mismatch_persists_raw_json(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+        tmp_path: Any,
+    ) -> None:
+        """A hard ID mismatch in _validate_curation_ids also persists raw JSON."""
+        from curator.exceptions import CurationValidationError
+
+        wire = _curation_to_wire_dict(valid_curation)
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        _wire_mock_stream(mocker, message)
+        # Force the post-adapter ID validation to fail. Patching the
+        # client-level name catches both the adapter-time and direct
+        # call paths.
+        mocker.patch(
+            "curator.client.validate_curation_ids",
+            side_effect=CurationValidationError("unknown work_id"),
+        )
+
+        scoped = self._scoped_settings(mock_settings, tmp_path)
+        client = CuratorClient(scoped)
+        with pytest.raises(APIResponseError, match="unknown work_id"):
+            client.curate(portfolio_data, "JD text.")
+
+        written = list((tmp_path / "profiles").glob("curation_raw-*.json"))
+        assert len(written) == 1
+
+    def test_raw_persistence_single_call_invariant(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+        tmp_path: Any,
+    ) -> None:
+        """Recovery never retries the API call (no double pay)."""
+        wire = _curation_to_wire_dict(valid_curation)
+        wire["summary"] = "x" * 760
+        message = _make_mock_message(raw_text=json.dumps(wire))
+        mock_anthropic = _wire_mock_stream(mocker, message)
+
+        scoped = self._scoped_settings(mock_settings, tmp_path)
+        client = CuratorClient(scoped)
+        with pytest.raises(APIResponseError):
+            client.curate(portfolio_data, "JD text.")
+
+        mock_instance = mock_anthropic.return_value
+        assert mock_instance.messages.stream.call_count == 1
+        assert mock_instance.messages.create.call_count == 0
+
+
 class TestPerEntryEmitCapUsesChronologicalPosition:
     """Adapter trim-to-emit-cap uses chronological work position.
 

@@ -479,9 +479,20 @@ class ResumeCuration(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # The 750-char ceiling is a post-parse safety net only. Word-level
+    # steering for what the model actually generates lives in
+    # ``rules.SUMMARY_WORD_HARD_MAX`` (70 words) and is published through
+    # the prompt. The wire schema does not emit ``maxLength`` (see
+    # ``output_schema._build_summary_schema``), so this cap never reaches
+    # the model; it exists to absorb the upper tail of observed Sonnet
+    # output (65-85+ words / ~700 chars) without wasting a paid call.
+    # Arithmetic: 70 words at ~10 chars/word (technical vocabulary) is
+    # roughly 700 chars; 750 leaves a 50-char buffer for punctuation-
+    # heavy variants (em-dash-free prose still carries commas, semicolons,
+    # and parentheticals that nudge the per-word average up).
     summary: str = Field(
         min_length=1,
-        max_length=600,
+        max_length=750,
         description=(
             f"2-3 sentence tailored professional summary, "
             f"{SUMMARY_WORD_TARGET_MIN}-{SUMMARY_WORD_TARGET_MAX} words soft "
@@ -1296,6 +1307,13 @@ def validate_cover_letter(
             )
 
     # Per-paragraph body bands: under-min hard, over-max strict-aware.
+    # An INFO log fires when the paragraph lands in the drift band
+    # between the prompt-steering target (COVER_LETTER_PARAGRAPH_PROMPT_
+    # TARGET_MAX, currently 87) and the validator cap (COVER_LETTER_
+    # PARAGRAPH_WORD_MAX, currently 115). This preserves observability
+    # of model drift after the 2026-05-26 cap recalibration from 90 to
+    # 115; without it, the previous noisy WARN log at 90 was masking
+    # legitimate drift signal.
     for i, words in enumerate(body_words_per_paragraph):
         if words < COVER_LETTER_PARAGRAPH_WORD_MIN:
             errors.append(
@@ -1318,6 +1336,19 @@ def validate_cover_letter(
                     "Letter will still be written; trim manually if required "
                     "by submission rules."
                 )
+        elif words > COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX and not strict:
+            # Drift observability only fires on the API path. Static-path
+            # letters are portfolio-authored, not prompt-steered, so the
+            # "above prompt-steering target" framing makes no sense there;
+            # mirrors the strict-gated soft-warn branch above.
+            logger.info(
+                "Cover letter body paragraph {} word count {} above "
+                "prompt-steering target {}; within validator cap {}.",
+                i + 1,
+                words,
+                COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX,
+                COVER_LETTER_PARAGRAPH_WORD_MAX,
+            )
 
     # Per-section opening / closing bands (_OPENING_WORD_*, _CLOSING_WORD_*)
     # are intentionally NOT enforced here today. The prompt steers the

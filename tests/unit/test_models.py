@@ -1206,6 +1206,53 @@ class TestResumeCurationWithCoverLetter:
         assert reloaded.cover_letter.sign_off == "Sincerely"
 
 
+@pytest.fixture
+def loguru_capture_handler() -> Any:
+    """Yield a temporary stderr handler for capsys-observable loguru output.
+
+    Tests that assert on loguru log routing have to install a handler
+    whose sink is the CURRENT ``sys.stderr`` (which ``capsys`` swaps
+    in per-test), because loguru's default handler captured the
+    original stderr at import time and bypasses ``capsys``.
+
+    The naive in-test pattern is::
+
+        logger.remove()  # drops the default
+        logger.add(sys.stderr, level="INFO")  # adds a capsys one
+
+    That mutes loguru for every subsequent test in the module because
+    loguru's ``remove`` calls ``Handler.stop`` and a stopped handler
+    cannot be revived. Loguru v0.7.3 exposes no public snapshot/restore
+    API and ships no pytest plugin (checked at the project's pinned
+    version), so the workable fix is:
+
+    * the test calls a helper that adds a fresh handler at the desired
+      level and records its ID;
+    * on teardown the fixture removes only the IDs the test added,
+      leaving the (already-installed default) handler alone.
+
+    Yields a callable ``add(level)`` that installs the handler and
+    returns its ID. ID is tracked for teardown; the test never has
+    to remember to remove it.
+    """
+    import sys as _sys
+
+    from loguru import logger as _logger
+
+    added_ids: list[int] = []
+
+    def _add(level: str) -> int:
+        handler_id = _logger.add(_sys.stderr, level=level, format="{message}")
+        added_ids.append(handler_id)
+        return handler_id
+
+    try:
+        yield _add
+    finally:
+        for handler_id in added_ids:
+            _logger.remove(handler_id)
+
+
 class TestValidateCoverLetter:
     def test_valid_letter_passes(self) -> None:
         letter = CoverLetterCuration(**_valid_letter_kwargs())
@@ -1329,6 +1376,8 @@ class TestValidateCoverLetter:
         # Per-paragraph over-max is a soft warning (parallel to total
         # over-max). Letter still validates; warning logged.
         kwargs = _valid_letter_kwargs()
+        # 2026-05-26: cap raised 90 -> 115; bump trigger to 135 so the
+        # test still exercises the over-cap soft-warn branch.
         huge = "word " * 135
         kwargs["body_paragraphs"][0] = huge
         # Shrink paragraph 2 so total stays under the soft-warn ceiling.
@@ -1339,6 +1388,76 @@ class TestValidateCoverLetter:
         # Does NOT raise (soft warn).
         validate_cover_letter(letter, _minimal_portfolio())
 
+    def test_per_paragraph_drift_band_emits_info_log_api_path(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        loguru_capture_handler: Any,
+    ) -> None:
+        # 2026-05-26: paragraphs in the 87-115 drift band (between the
+        # prompt-steering target and the validator cap) emit an INFO log
+        # so drift remains observable after the cap recalibration.
+        # API path only (strict=False): the static path has no
+        # prompt-steering target to drift against.
+        from curator.rules import COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX
+
+        loguru_capture_handler("INFO")
+
+        kwargs = _valid_letter_kwargs()
+        kwargs["body_paragraphs"][0] = "word " * 100  # in 87-115 drift band
+        kwargs["body_paragraphs"][1] = "word " * 60
+        kwargs["opening"] = "word " * 55
+        kwargs["closing"] = "word " * 45
+        letter = CoverLetterCuration(**kwargs)
+        validate_cover_letter(letter, _minimal_portfolio())
+
+        captured = capsys.readouterr()
+        assert "above prompt-steering target" in captured.err
+        assert str(COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX) in captured.err
+
+    def test_per_paragraph_drift_band_silent_on_static_path(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        loguru_capture_handler: Any,
+    ) -> None:
+        # Static path (strict=True) does not emit the drift INFO log:
+        # the message frames the overshoot as drift from a prompt-
+        # steering target, which the static path has no concept of.
+        # Pins the strict-gating on the elif branch in
+        # validate_cover_letter.
+        loguru_capture_handler("INFO")
+
+        kwargs = _valid_letter_kwargs()
+        kwargs["body_paragraphs"][0] = "word " * 100  # in 87-115 drift band
+        kwargs["body_paragraphs"][1] = "word " * 60
+        kwargs["opening"] = "word " * 55
+        kwargs["closing"] = "word " * 45
+        letter = CoverLetterCuration(**kwargs)
+        validate_cover_letter(letter, _minimal_portfolio(), strict=True)
+
+        captured = capsys.readouterr()
+        assert "above prompt-steering target" not in captured.err
+
+    def test_per_paragraph_at_validator_cap_no_warn(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        loguru_capture_handler: Any,
+    ) -> None:
+        # Boundary: a paragraph exactly at the validator cap (115) is
+        # inside the INFO-log drift band, not over-cap. No soft warn
+        # should fire.
+        loguru_capture_handler("WARNING")
+
+        kwargs = _valid_letter_kwargs()
+        kwargs["body_paragraphs"][0] = "word " * 115
+        kwargs["body_paragraphs"][1] = "word " * 55
+        kwargs["opening"] = "word " * 55
+        kwargs["closing"] = "word " * 45
+        letter = CoverLetterCuration(**kwargs)
+        validate_cover_letter(letter, _minimal_portfolio())
+
+        captured = capsys.readouterr()
+        assert "exceeds per-paragraph cap" not in captured.err
+
     def test_total_word_count_too_high_warns_not_rejects(self) -> None:
         # AR-7 / SA-6 (2026-04-26): the headline soft-warn behavior.
         # Total > COVER_LETTER_WORD_MAX must NOT raise on the API path
@@ -1346,10 +1465,11 @@ class TestValidateCoverLetter:
         # test pins the contract that paid API calls aren't reject-and-
         # discarded for a 5-10% overshoot.
         #
-        # 2026-05-17: cap moved from 300 to 360; body paragraphs are
-        # bounded at 90 hard, so the overshoot has to come from
-        # opening/closing where per-section bands are not enforced.
-        # Total here: 105 + 90 + 90 + 90 = 375 (15 over the new 360 cap).
+        # 2026-05-17: total cap moved from 300 to 360. 2026-05-26: per-
+        # paragraph cap moved from 90 to 115; the 90-word body paragraphs
+        # below remain inside that cap, so the overshoot still has to
+        # come from opening/closing where per-section bands are not
+        # enforced. Total here: 105 + 90 + 90 + 90 = 375 (15 over cap).
         kwargs = _valid_letter_kwargs()
         kwargs["opening"] = "word " * 105
         kwargs["body_paragraphs"][0] = "word " * 90

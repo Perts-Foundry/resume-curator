@@ -79,7 +79,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-23"
+PROMPT_VERSION: str = "2026-05-26"
 
 # ---------------------------------------------------------------------------
 # Section constants
@@ -567,6 +567,12 @@ closing ~40).
 - Every metric, project, incident, and technology in the body \
 paragraphs traces to portfolio data; nothing fabricated.
 - No literal placeholders ([UPPERCASE], {{...}}, etc.) anywhere.
+- Scan body_paragraph_1 and body_paragraph_2 for these words and \
+rewrite any sentence that contains one: "leverage", "leverages", \
+"leveraging", "robust", "seamless", "innovative", "pivotal". These \
+are the validator-rejected words that ship the most often despite \
+appearing in the forbidden_words list above; the validator rejects \
+the run on a single match.
 - No em or en dashes; no marketing adjectives or generic enthusiasm.
 </cover_letter_rules>\
 """

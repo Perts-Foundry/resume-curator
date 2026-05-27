@@ -46,27 +46,32 @@ class TestCoverLetterWordConstants:
         assert COVER_LETTER_WORD_MIN < COVER_LETTER_WORD_TARGET < COVER_LETTER_WORD_MAX
 
     def test_paragraph_word_max_unchanged(self) -> None:
-        """Per-paragraph hard cap stays at 90.
+        """Per-paragraph validator cap pinned at 115.
 
-        The prompt prose was tightened from 80-90 to 80-87 to give the
-        model a tighter steering target, but the validator cap stays at
-        90 so legitimate cases in the 86-90 range still ship. Mirrors
-        the summary's ``SUMMARY_WORD_TARGET_MAX < SUMMARY_WORD_HARD_MAX``
-        slack pattern.
+        The prompt prose steers to 80-87 while the validator cap was
+        raised to 115 on 2026-05-26 to match observed Sonnet output
+        (89-111 words across the session). Mirrors the summary's
+        ``SUMMARY_WORD_TARGET_MAX < SUMMARY_WORD_HARD_MAX`` slack
+        pattern; the gap is preserved by the INFO-log drift band in
+        ``validate_cover_letter`` (paragraphs in 87-115 emit INFO so
+        drift remains observable).
         """
-        assert COVER_LETTER_PARAGRAPH_WORD_MAX == 90
+        assert COVER_LETTER_PARAGRAPH_WORD_MAX == 115
         assert COVER_LETTER_PARAGRAPH_WORD_MIN == 40
 
     def test_paragraph_prompt_target_max_pinned(self) -> None:
-        """Prompt-side body upper bound (87) is below validator cap (90).
+        """Prompt-side body upper bound (87) stays below validator cap.
 
         Surfaced to the model in both the prompt rulebook prose AND the
         Pydantic field descriptions for ``body_paragraph_*`` so the
         schema-level constraint and the prose agree. Prevents the
-        prompt-vs-schema inconsistency that the prompt-reviewer CRIT-1
+        prompt-vs-schema inconsistency the prompt-reviewer CRIT-1
         finding flagged: schema-level constraints are weighted heavily
         by the model, so the prose alone (saying 80-87) was undermined
-        when the schema said 80-90.
+        when the schema previously said 80-90. After the 2026-05-26
+        recalibration the validator cap moved to 115; the drift band
+        between 87 and 115 emits an INFO log in
+        ``validate_cover_letter``.
         """
         assert COVER_LETTER_PARAGRAPH_PROMPT_TARGET_MAX == 87
         assert (

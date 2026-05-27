@@ -135,26 +135,54 @@ submittable prose with no placeholders and no TEMPLATE banner.
   full mechanism.
 - **Validator (one for both paths)**: `validate_cover_letter` enforces
   word counts (total **soft cap** 250-360: under-min is a hard reject;
-  over-max is a `logger.warning` and ships anyway), 40-90 per body
-  paragraph (hard), exactly 2 body paragraphs (hard; was 2-3 before
-  2026-04-24 to bound the total via section arithmetic), sign-off
-  enum, em-dash rejection, forbidden-word/phrase matching, and a
-  strict reject for any `[UPPERCASE]` bracketed placeholder. On the
+  over-max is a `logger.warning` and ships anyway on the API path,
+  hard reject on the static path via `strict=True`), 40-115 per body
+  paragraph (under-min hard reject on both paths; over-max soft warn
+  on the API path and hard reject on the static path, mirroring the
+  total-word band; cap raised from 90 to 115 on 2026-05-26 to absorb
+  observed Sonnet output without forcing recovery flows on every paid
+  call, with an INFO log at the 87-115 drift band so per-call drift
+  is still observable), exactly 2 body paragraphs (hard; was 2-3
+  before 2026-04-24 to bound the total via section arithmetic),
+  sign-off enum, em-dash rejection, forbidden-word/phrase matching,
+  and a strict reject for any `[UPPERCASE]` bracketed placeholder. On the
   static path, a validator failure is wrapped as `StaticModeError` with
   a pointer to `cover-letter.yaml` and the authoring guide. All lists
   and bands live in `rules.py` (`COVER_LETTER_*`).
 - **Cache partitioning**: on-path and off-path `curate` runs do NOT
   share prompt cache hits. Toggling the flag drops the cache. Verifying
   cache reuse must be done within a single flag state.
-- **Failure recovery (API path only)**: when the cover-letter validator
-  raises a HARD failure (under-min total, per-paragraph band violation,
-  forbidden content, placeholder token), the client persists the
-  otherwise-valid resume curation to
-  `<output_dir>/curation_partial-*.yaml`. Recover via
-  `uv run python scripts/rerender.py --partial <path>` to rebuild the
-  resume PDF without re-paying for the API call. Over-max total word
-  count is a soft warning, not a hard reject: the letter ships and
-  `cover_letter.over_cap=true` in the audit log flags it.
+- **Failure recovery (API path only)**: two complementary recovery
+  flows cover the post-extract failure surface so a paid call is
+  never wasted. Both write to the configured `output_dir` and both
+  are recoverable via `scripts/rerender.py`.
+  - **Cover-letter policy failure** (the original flow): when
+    `validate_cover_letter` raises a HARD failure (under-min total,
+    per-paragraph band violation, forbidden content, placeholder
+    token), the client persists the otherwise-valid resume curation
+    to `<output_dir>/curation_partial-<ts>-<slug>-<safe_id>.yaml`.
+    Recover via `uv run python scripts/rerender.py --partial <path>`
+    to rebuild the resume PDF without re-paying. Over-max total word
+    count is a soft warning, not a hard reject: the letter ships and
+    `cover_letter.over_cap=true` in the audit log flags it.
+  - **Post-extract validation failure** (added 2026-05-26): when
+    `_adapt_curation_dict` raises a Pydantic validation error (e.g.
+    `summary` over 750 chars, cover-letter shape mismatch) OR
+    `_validate_curation_ids` raises a hard ID mismatch, the client
+    persists the raw parsed wire dict to
+    `<output_dir>/curation_raw-<ts>-<slug>-<safe_id>.json`. Recover
+    via `uv run python scripts/rerender.py --raw <path>`. The
+    rerender script re-feeds the JSON through the adapter, prints
+    the original validation error verbatim (which names the
+    offending field), and exits non-zero so the user knows which
+    field to hand-edit. Pass `--jd <path>` for the original job
+    description text (skill-keyword ranking depends on it) or let
+    the script read a sibling `job_description.txt`.
+  - The two recovery files use distinct filename prefixes
+    (`curation_partial-*.yaml` vs `curation_raw-*.json`) so a single
+    profile dir can carry both. Passing the wrong flag for a given
+    extension prints an actionable hint instead of a parse-error
+    stack trace.
 - **Audit log**: `curation_log.json` carries a nested `cover_letter`
   sub-object (`enabled`, `word_count`, `over_cap`) when present, else
   `{"enabled": false}`. `over_cap` is `true` when

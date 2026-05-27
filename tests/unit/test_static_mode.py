@@ -264,7 +264,7 @@ class TestSynthesizeCuration:
         rich_portfolio_dict["basics"] = basics
         portfolio = _build_portfolio(rich_portfolio_dict)
         curation = synthesize_curation(portfolio)
-        assert len(curation.summary) == 600
+        assert len(curation.summary) == 750
         assert curation.summary.endswith("...")
 
     def test_summary_fallback_when_missing(
