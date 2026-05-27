@@ -28,7 +28,7 @@ from curator.exceptions import (
     APISpendGuardError,
     CurationValidationError,
 )
-from curator.io_utils import slugify, sort_work_chronologically
+from curator.io_utils import atomic_json_write, slugify, sort_work_chronologically
 from curator.jd_scorer import score_keywords_for_jd
 from curator.models import (
     CoverLetterCuration,
@@ -445,6 +445,47 @@ def _persist_partial_resume(
     return path
 
 
+def _persist_raw_response(
+    parsed: dict[str, Any],
+    *,
+    output_dir: Path,
+    request_id: str | None,
+) -> Path:
+    """Write the raw parsed API response to a side file for recovery.
+
+    Used when post-extract validation (Pydantic constraints in
+    ``_adapt_curation_dict`` OR hard ID-mismatch in
+    ``_validate_curation_ids``) fails for a curate call whose API
+    response was otherwise structurally well-formed. The raw JSON lets
+    :mod:`scripts.rerender` rebuild the resume PDF (after a hand-edit
+    to fix the offending field) without making a second paid API call.
+
+    The company slug is derived best-effort from the parsed payload.
+    For the ``with_cover_letter`` path the resume sub-dict lives under
+    ``parsed["resume"]``; otherwise the top-level dict carries it
+    directly. ``slugify`` returns its ``"general"`` fallback on missing
+    or unparseable input.
+
+    Returns the absolute path written. Uses ``atomic_json_write`` so a
+    crash mid-write cannot leave a truncated file.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
+    safe_id = _sanitize_request_id(request_id)
+    nested = parsed.get("resume")
+    resume_dict = nested if isinstance(nested, dict) else parsed
+    company_name = ""
+    if isinstance(resume_dict, dict):
+        raw_name = resume_dict.get("company_name")
+        if isinstance(raw_name, str):
+            company_name = raw_name
+    slug = slugify(company_name)
+    filename = f"curation_raw-{timestamp}-{slug}-{safe_id}.json"
+    path = output_dir / filename
+    atomic_json_write(path, parsed)
+    return path
+
+
 def _sanitize_request_id(request_id: str | None) -> str:
     """Return a filesystem-safe slice of the Anthropic request id.
 
@@ -669,26 +710,62 @@ class CuratorClient:
                     )
                     raise APIResponseError(msg) from exc
                 raise
-            curation, cover_letter = _adapt_curation_dict(
-                parsed_dict,
-                portfolio,
-                with_cover_letter=with_cover_letter,
-                request_id=message.id,
-                max_pages=self._settings.max_pages,
-                jd_text=job_description,
-            )
-
-            # 7. Application-level ID validation (Layer 3) for the resume.
-            # Returns a sanitized curation with hallucinated keywords
-            # dropped; hard ID failures still raise.
+            # Wrap the post-extract validation pipeline (adapter Pydantic
+            # checks AND application-level ID validation) in a single
+            # try/except that persists the raw parsed payload before
+            # re-raising. Without this, a Pydantic constraint violation
+            # (e.g. summary length, cover-letter shape) or a hard ID
+            # mismatch would waste the entire paid call with no recovery
+            # path. The persisted JSON can be hand-edited and replayed
+            # via ``scripts/rerender.py --raw <path>``.
             try:
-                curation = _validate_curation_ids(curation, portfolio)
-            except APIResponseError:
-                logger.error(
-                    "Curation ID validation failed (request_id={})",
-                    message.id,
+                curation, cover_letter = _adapt_curation_dict(
+                    parsed_dict,
+                    portfolio,
+                    with_cover_letter=with_cover_letter,
+                    request_id=message.id,
+                    max_pages=self._settings.max_pages,
+                    jd_text=job_description,
                 )
-                raise
+                # Application-level ID validation (Layer 3) for the
+                # resume. Returns a sanitized curation with hallucinated
+                # keywords dropped; hard ID failures raise
+                # APIResponseError (wrapped from CurationValidationError
+                # by _validate_curation_ids).
+                curation = _validate_curation_ids(curation, portfolio)
+            except APIResponseError as exc:
+                raw_path: Path | None = None
+                try:
+                    raw_path = _persist_raw_response(
+                        parsed_dict,
+                        output_dir=self._settings.output_dir,
+                        request_id=message.id,
+                    )
+                except (OSError, ValueError) as persist_exc:
+                    logger.error(
+                        "Failed to persist raw API response after post-"
+                        "extract validation failure: {}",
+                        persist_exc,
+                    )
+                logger.error(
+                    "Post-extract validation failed (request_id={}). "
+                    "Raw response saved to {} for recovery via "
+                    "'uv run python scripts/rerender.py --raw <path>'. "
+                    "Original error: {}",
+                    message.id,
+                    raw_path,
+                    exc,
+                )
+                persist_hint = (
+                    f" Raw response persisted to {raw_path}."
+                    if raw_path is not None
+                    else " Raw response not persisted (see logs)."
+                )
+                msg = (
+                    f"{exc}.{persist_hint} "
+                    f"(request_id={message.id})"
+                )
+                raise APIResponseError(msg) from exc
 
             # 8. Cover-letter policy validation. On failure, persist the
             # successful resume curation to a side file so the user can

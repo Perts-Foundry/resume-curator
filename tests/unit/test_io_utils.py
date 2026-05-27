@@ -1,10 +1,22 @@
-"""Tests for slugify and priority_sort_key helpers in io_utils."""
+"""Tests for slugify, priority_sort_key, and atomic write helpers in io_utils."""
 
 from __future__ import annotations
 
+import json
+from typing import TYPE_CHECKING
+from unittest.mock import patch
+
 import pytest
 
-from curator.io_utils import priority_sort_key, slugify
+if TYPE_CHECKING:
+    from pathlib import Path
+
+from curator.io_utils import (
+    atomic_json_write,
+    atomic_yaml_write,
+    priority_sort_key,
+    slugify,
+)
 
 
 class TestSlugify:
@@ -141,3 +153,78 @@ class TestPrioritySortKey:
         items = [Obj("a", 2), Obj("b", None), Obj("c", 1)]
         sorted_items = sorted(items, key=priority_sort_key)
         assert [o.name for o in sorted_items] == ["c", "a", "b"]
+
+
+class TestAtomicJsonWrite:
+    """Parallel to atomic_yaml_write; raw recovery files depend on it."""
+
+    def test_round_trips_dict(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.json"
+        atomic_json_write(path, {"a": 1, "b": [2, 3], "c": "hi"})
+        assert json.loads(path.read_text(encoding="utf-8")) == {
+            "a": 1,
+            "b": [2, 3],
+            "c": "hi",
+        }
+
+    def test_trailing_newline(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.json"
+        atomic_json_write(path, {"a": 1})
+        assert path.read_text(encoding="utf-8").endswith("\n")
+
+    def test_creates_parent_directories(self, tmp_path: Path) -> None:
+        path = tmp_path / "nested" / "deeper" / "out.json"
+        atomic_json_write(path, {"x": 1})
+        assert path.is_file()
+
+    def test_preserves_non_ascii(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.json"
+        atomic_json_write(path, {"name": "Café"})
+        # ensure_ascii=False keeps the literal character on disk so the
+        # raw-recovery file is human-editable without escape soup.
+        assert "Café" in path.read_text(encoding="utf-8")
+
+    def test_crash_cleans_temp_file(self, tmp_path: Path) -> None:
+        """Failure mid-write removes the temp file and surfaces the error."""
+        path = tmp_path / "out.json"
+        with (
+            patch("curator.io_utils.os.replace", side_effect=OSError("boom")),
+            pytest.raises(OSError, match="boom"),
+        ):
+            atomic_json_write(path, {"a": 1})
+        # No final file, no leftover temp file.
+        assert not path.exists()
+        leftovers = [p for p in tmp_path.iterdir() if p.suffix == ".tmp"]
+        assert leftovers == []
+
+    def test_idempotent_overwrite(self, tmp_path: Path) -> None:
+        """A second write replaces the first cleanly (no append)."""
+        path = tmp_path / "out.json"
+        atomic_json_write(path, {"a": 1})
+        atomic_json_write(path, {"b": 2})
+        assert json.loads(path.read_text(encoding="utf-8")) == {"b": 2}
+
+
+class TestAtomicYamlWrite:
+    """Sister coverage for the YAML helper to document the contract."""
+
+    def test_round_trips_dict(self, tmp_path: Path) -> None:
+        import yaml
+
+        path = tmp_path / "out.yaml"
+        atomic_yaml_write(path, {"a": 1, "b": [2, 3]})
+        assert yaml.safe_load(path.read_text(encoding="utf-8")) == {
+            "a": 1,
+            "b": [2, 3],
+        }
+
+    def test_crash_cleans_temp_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.yaml"
+        with (
+            patch("curator.io_utils.os.replace", side_effect=OSError("boom")),
+            pytest.raises(OSError, match="boom"),
+        ):
+            atomic_yaml_write(path, {"a": 1})
+        assert not path.exists()
+        leftovers = [p for p in tmp_path.iterdir() if p.suffix == ".tmp"]
+        assert leftovers == []
