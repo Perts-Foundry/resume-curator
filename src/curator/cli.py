@@ -298,6 +298,9 @@ _CURATE_PUBLISH_OPT = typer.Option(
         "`curator curate JD --publish DIR`."
     ),
 )
+# Help intentionally omits the curate path's "job description first" ordering
+# note: static takes no positional argument, so there is no swallow footgun
+# here. Do not consolidate with _CURATE_PUBLISH_OPT for that reason.
 _STATIC_PUBLISH_OPT = typer.Option(
     None,
     "--publish",
@@ -405,10 +408,12 @@ def _guard_publish_destination(publish: Path | None) -> None:
     """
     from curator.exceptions import PublishError
 
-    if publish is not None and publish.is_file():
+    # Match the path the copy will actually use (publish_artifacts expands ~).
+    if publish is not None and publish.expanduser().is_file():
         msg = (
-            f"--publish expects a destination directory, got a file: {publish}. "
-            f"Did you mean `--publish <dir> {publish}`?"
+            f"--publish expects a destination directory, got an existing "
+            f"file: {publish}. Pass a directory (artifacts land at "
+            f"DIR/<profile>/)."
         )
         raise PublishError(msg)
 
@@ -505,6 +510,12 @@ def curate(
         logger.info("Portfolio: {}", settings.portfolio_data_path)
         logger.info("Output dir: {}", settings.output_dir)
 
+        # Guard the publish destination BEFORE reading the JD. A value-taking
+        # --publish can swallow the optional job-description positional
+        # (`curate --publish jd.txt`, dir forgotten); checking first means the
+        # targeted error wins over the generic "no JD" / stdin read.
+        _guard_publish_destination(publish)
+
         # Read job description from file, stdin, or clipboard, then
         # validate content before doing any expensive work. Validation is
         # delegated to prompt.validate_job_description so CLI and library
@@ -527,7 +538,6 @@ def curate(
                 )
             return
 
-        _guard_publish_destination(publish)
         publish_to: Path | None = publish
         if publish is not None and no_pdf:
             # The renderer still writes cover_letter.txt under --no-pdf
@@ -748,6 +758,11 @@ def static_cmd(
         )
         logger.info("Portfolio: {}", settings.portfolio_data_path)
 
+        # Guard the publish destination early (mirrors the curate path). Static
+        # has no JD positional to swallow, but a file passed as the destination
+        # dir is still a mistake worth catching before any rendering work.
+        _guard_publish_destination(publish)
+
         from curator.static_mode import DEFAULT_NAME as _DEFAULT_NAME
 
         if cover_letter and name != _DEFAULT_NAME:
@@ -796,7 +811,6 @@ def static_cmd(
             sys.stdout.write("\n")
             return
 
-        _guard_publish_destination(publish)
         publish_to: Path | None = publish
         if publish is not None and no_pdf:
             # See the matching warning on the curate path; the renderer's

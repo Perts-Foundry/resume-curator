@@ -997,6 +997,11 @@ class TestPublishCli:
         )
         assert result.exit_code == 0, result.output
         assert mock_run.call_args.kwargs["publish_to"] == tmp_path / "drop"
+        # The non-empty tri-state arm must positively render the destination
+        # and the per-file list (normalize Rich soft-wrapping first).
+        normalized = result.output.replace("\n", "")
+        assert "Published to:" in normalized
+        assert "resume.pdf" in normalized
 
     def test_static_publish_without_dir_errors(self, tmp_path: Path) -> None:
         # --publish now requires an inline directory; a bare flag is a Typer
@@ -1040,6 +1045,9 @@ class TestPublishCli:
         )
         assert result.exit_code == 0, result.output
         assert mock_run.call_args.kwargs["publish_to"] == tmp_path / "drop"
+        # JD-first ordering must keep the JD bound to the positional, not
+        # swallowed into --publish.
+        assert "Senior Engineer" in mock_run.call_args.args[1]
 
     def _curate_env(self) -> dict[str, str]:
         return {
@@ -1072,8 +1080,10 @@ class TestPublishCli:
     def test_curate_publish_file_as_dest_guard(
         self, tmp_path: Path, mocker: Any
     ) -> None:
-        # If --publish receives an existing FILE (e.g. the user forgot the dir
-        # and the JD path was swallowed), fail loudly before the pipeline runs.
+        # If --publish receives an existing FILE, fail loudly before the
+        # pipeline runs. Deliberately omit CURATOR_ALLOW_API_SPEND: the guard
+        # must fire independently of (and before) the spend gate, so a missing
+        # directory never reaches a paid path.
         runner, app = self._runner()
         jd_file = tmp_path / "jd.txt"
         jd_file.write_text("Senior Engineer role at Acme.")
@@ -1084,8 +1094,48 @@ class TestPublishCli:
         result = runner.invoke(
             app,
             ["curate", str(jd_file), "--publish", str(stray)],
-            env=self._curate_env(),
+            env={
+                "CURATOR_ANTHROPIC_API_KEY": "sk-ant-test",  # pragma: allowlist secret
+            },
         )
+        assert result.exit_code == 1
+        assert "expects a destination directory" in result.output
+        mock_run.assert_not_called()
+
+    def test_curate_publish_swallowed_jd_guard(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # The headline footgun: `curate --publish jd.txt` (dir forgotten) binds
+        # jd.txt to --publish and leaves no JD positional. The guard runs BEFORE
+        # the JD read, so the targeted error wins over a generic "no JD" / stdin
+        # read and no pipeline (or JD validation) is reached.
+        runner, app = self._runner()
+        jd_file = tmp_path / "jd.txt"
+        jd_file.write_text("Senior Engineer role at Acme.")
+        mock_run = mocker.patch("curator.pipeline.run_pipeline")
+
+        result = runner.invoke(
+            app,
+            ["curate", "--publish", str(jd_file)],
+            env={
+                "CURATOR_ANTHROPIC_API_KEY": "sk-ant-test",  # pragma: allowlist secret
+            },
+        )
+        assert result.exit_code == 1
+        assert "expects a destination directory" in result.output
+        mock_run.assert_not_called()
+
+    def test_static_publish_file_as_dest_guard(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # The guard is wired into the static path too; a file passed as the
+        # destination must fail before any rendering work.
+        runner, app = self._runner()
+        stray = tmp_path / "stray.txt"
+        stray.write_text("not a directory")
+        mock_run = mocker.patch("curator.pipeline.run_static_pipeline")
+
+        result = runner.invoke(app, ["static", "--publish", str(stray)])
         assert result.exit_code == 1
         assert "expects a destination directory" in result.output
         mock_run.assert_not_called()
@@ -1195,6 +1245,29 @@ class TestPublishCli:
         result = runner.invoke(
             app,
             ["static", "--publish", str(tmp_path / "drop"), "--no-pdf"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "--no-pdf and --publish combined" in result.output
+
+    def test_curate_no_pdf_with_publish_warns(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Mirror of the static warn: the curate path emits the same warning so
+        # a no-op publish without --cover-letter is visible rather than silent.
+        runner, app = self._runner()
+        jd_file = tmp_path / "jd.txt"
+        jd_file.write_text("Senior Engineer role at Acme.")
+        fake = self._make_fake_result(tmp_path)
+        fake.curation.source = "api"
+        fake.published_paths = []
+        fake.render_output.pdf_path = None
+        fake.skip_pdf = True
+        mocker.patch("curator.pipeline.run_pipeline", return_value=fake)
+
+        result = runner.invoke(
+            app,
+            ["curate", str(jd_file), "--publish", str(tmp_path / "drop"), "--no-pdf"],
+            env=self._curate_env(),
         )
         assert result.exit_code == 0, result.output
         assert "--no-pdf and --publish combined" in result.output
