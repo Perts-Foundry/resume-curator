@@ -16,8 +16,10 @@ resume-curator does the tailoring without the invention. You keep all of your
 career history in one place (a "portfolio"). For a given job posting, the tool
 asks Claude to **select, prioritize, and reorder your existing entries** so the
 most relevant experience rises to the top, then compiles a finished PDF. It never
-writes new accomplishments, never fabricates metrics, and never adds skills you
-did not list. Every word on the page came from you.
+invents accomplishments, never fabricates metrics, and never adds skills you did
+not list. Your bullet points, skills, and projects stay in your own words. The one
+thing it writes is the short professional summary at the top, which it tailors to
+the role from the experience you already have.
 
 Concretely: you give it a job description and it gives you back
 `resume.pdf`, already trimmed to fit and tailored to that role. The same
@@ -279,7 +281,7 @@ replaces `job_description.txt` as the per-source descriptor.
 
 ## `curator eval`
 
-Score a curated profile on quality metrics. **Tier 1** runs 60 deterministic
+Score a curated profile on quality metrics. **Tier 1** runs 59 deterministic
 checks locally at zero API cost; **Tier 2** adds an LLM judge (paid).
 
 | Category | Metrics | Weight | Examples |
@@ -331,7 +333,7 @@ uv run curator eval --golden --judge --calibrate
 > [!NOTE]
 > `--judge` requires `CURATOR_ALLOW_API_SPEND=true` and an API key.
 
-**Golden dataset:** 24 synthetic cases across 4 fit tiers, for regression
+**Golden dataset:** 28 synthetic cases across 4 fit tiers, for regression
 testing.
 
 ```bash
@@ -480,7 +482,7 @@ CI runs `ruff check`, `ruff format --check`, `mypy src/`, `pytest`, golden eval,
 |-------|--------|-------------|
 | Phase 1, MVP | Complete | Full pipeline: JD in, PDF out. |
 | Static Resume Mode | Complete | Zero-API path: `curator static`. |
-| Eval Phases 0 to C | Complete | 60 metrics, 24 golden cases, LLM judge. |
+| Eval Phases 0 to C | Complete | 59 metrics, 28 golden cases, LLM judge. |
 | Eval Phase D, CI integration | Planned | Automated eval gating in CI. |
 | Phase 2, Job Discovery | Planning | Source, score, and surface job postings. |
 | Phase 3, Application Submission | Planning | Browser automation with human-in-the-loop. |
