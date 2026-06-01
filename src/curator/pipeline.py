@@ -180,8 +180,7 @@ def run_pipeline(
         publish_to: When set, copy upload-ready artifacts (resume.pdf,
             cover_letter.pdf, cover_letter.txt) to
             ``<publish_to>/<profile_name>/`` after rendering. The CLI
-            ``--publish`` flag resolves to this kwarg from
-            ``settings.publish_dir``.
+            ``--publish DIR`` option supplies this kwarg inline.
         on_status: Optional callback for progress updates (e.g., Rich status).
 
     Returns:
@@ -277,8 +276,7 @@ def run_static_pipeline(
         publish_to: When set, copy upload-ready artifacts (resume.pdf,
             cover_letter.pdf, cover_letter.txt) to
             ``<publish_to>/<profile_name>/`` after rendering. The CLI
-            ``--publish`` flag resolves to this kwarg from
-            ``settings.publish_dir``.
+            ``--publish DIR`` option supplies this kwarg inline.
         on_status: Optional callback for progress updates.
 
     Returns:

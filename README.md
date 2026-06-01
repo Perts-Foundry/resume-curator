@@ -116,9 +116,9 @@ Output lands in `profiles/<date>-<company-slug>/`:
 | `cover_letter.txt` | Paste-ready plain text sidecar (only with `--cover-letter`; lands even under `--no-pdf`) |
 | `data/cover_letter.yaml` | Cover letter content (only with `--cover-letter`) |
 
-When `--publish` is also set (or you run `curator publish` after the fact),
+When `--publish DIR` is set (or you run `curator publish` after the fact),
 `resume.pdf`, `cover_letter.pdf`, and `cover_letter.txt` are additionally
-copied into `<CURATOR_PUBLISH_DIR>/<date>-<company-slug>/`. See the
+copied into `<DIR>/<date>-<company-slug>/`. See the
 [Troubleshooting](#troubleshooting) section for the WSL upload workflow
 this enables.
 
@@ -313,23 +313,18 @@ Windows browser file pickers (Edge/Chrome) refuse to upload files from `\\wsl.lo
    cp profiles/<profile>/resume.pdf /mnt/c/Users/<you>/Downloads/
    ```
 
-2. **Recurring**: configure `CURATOR_PUBLISH_DIR` once, then pass `--publish` on each run (or re-publish a past profile via `curator publish`):
+2. **Recurring**: pass `--publish DIR` on each run, or re-publish a past profile via `curator publish`. The destination is always given inline (there is no configured default):
 
    ```bash
-   export CURATOR_PUBLISH_DIR=/mnt/c/Users/<you>/Downloads/resume-curator
-
-   # Fresh run:
-   curator curate jd.txt --publish --cover-letter
-   curator static --name general --publish
+   # Fresh run (job description first, then --publish DIR):
+   curator curate jd.txt --publish /mnt/c/Users/<you>/Downloads/resume-curator --cover-letter
+   curator static --name general --publish /mnt/c/Users/<you>/Downloads/resume-curator
 
    # Re-publish a past profile (overwrites the previous publish):
-   curator publish profiles/2026-05-27-acme
-
-   # Override the configured directory for one invocation:
-   curator publish profiles/2026-05-27-acme -d /mnt/c/Users/<you>/Desktop
+   curator publish profiles/2026-05-27-acme /mnt/c/Users/<you>/Downloads/resume-curator
    ```
 
-`curator publish` copies `resume.pdf`, `cover_letter.pdf`, and `cover_letter.txt` (the upload-ready files) into `<CURATOR_PUBLISH_DIR>/<profile-name>/`. It does **not** publish to any registry or remote; the name reflects the upload-ready use case, not package distribution.
+`curator publish` copies `resume.pdf`, `cover_letter.pdf`, and `cover_letter.txt` (the upload-ready files) into `<DIR>/<profile-name>/`. It does **not** publish to any registry or remote; the name reflects the upload-ready use case, not package distribution.
 
 ## Project Status
 
