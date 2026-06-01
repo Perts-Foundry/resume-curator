@@ -99,16 +99,6 @@ class CuratorSettings(BaseSettings):
         default_factory=lambda: default_cover_letter_template_path(),
         description="Path to the Typst cover letter template",
     )
-    publish_dir: Path | None = Field(
-        default=None,
-        description=(
-            "Destination directory for `--publish` and `curator publish` "
-            "(e.g. /mnt/c/Users/<name>/Downloads/resume-curator). Files are "
-            "copied into a per-profile subdirectory at <publish_dir>/<profile>/. "
-            "When unset, `--publish` errors with a hint."
-        ),
-    )
-
     # Page count enforcement
     max_pages: int = Field(
         default=2,

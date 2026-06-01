@@ -283,6 +283,33 @@ _JD_ARGUMENT = typer.Argument(
     help="Path to a job description text file, or '-' for stdin.",
 )
 
+# Module-level singletons: a `Path`-typed option in an argument default trips
+# ruff B008 (Path is not a known-immutable annotation), unlike the inline
+# bool/int/str options. Defining them here keeps the call out of the default.
+_CURATE_PUBLISH_OPT = typer.Option(
+    None,
+    "--publish",
+    metavar="DIR",
+    help=(
+        "After rendering, copy resume.pdf / cover_letter.pdf / "
+        "cover_letter.txt into DIR/<profile>/. Useful for moving artifacts "
+        "out of WSL so Windows browsers can upload them; see README "
+        "troubleshooting. Canonical form puts the job description first: "
+        "`curator curate JD --publish DIR`."
+    ),
+)
+_STATIC_PUBLISH_OPT = typer.Option(
+    None,
+    "--publish",
+    metavar="DIR",
+    help=(
+        "After rendering, copy resume.pdf / cover_letter.pdf / "
+        "cover_letter.txt into DIR/<profile>/. Useful for moving artifacts "
+        "out of WSL so Windows browsers can upload them; see README "
+        "troubleshooting."
+    ),
+)
+
 
 def _read_jd_text(
     job_description: Path | None,
@@ -367,32 +394,23 @@ def _read_jd_text(
     return text
 
 
-def _resolve_publish_destination(
-    settings: CuratorSettings,
-    *,
-    override: Path | None = None,
-) -> Path:
-    """Resolve the publish destination for ``--publish`` / ``curator publish``.
+def _guard_publish_destination(publish: Path | None) -> None:
+    """Reject a ``--publish`` value that is an existing file, not a directory.
 
-    Precedence: explicit ``override`` (subcommand ``-d``) wins, otherwise
-    ``settings.publish_dir`` (env / settings). When neither is set, raises
-    :class:`PublishError` with a hint pointing at the env var.
-
-    Always returns a ``Path`` or raises; callers must only invoke this
-    when publishing is requested so the error message stays accurate.
+    ``job_description`` is an optional positional, so a value-taking
+    ``--publish`` can silently swallow the JD path when the user forgets the
+    destination dir (``curator curate --publish jd.txt``). Catch that slip
+    loudly. A not-yet-created destination dir is fine (``is_file()`` is False),
+    so this only fires on an existing regular file.
     """
     from curator.exceptions import PublishError
 
-    if override is not None:
-        return override
-    if settings.publish_dir is None:
+    if publish is not None and publish.is_file():
         msg = (
-            "--publish requires a destination. Set CURATOR_PUBLISH_DIR "
-            "(e.g. /mnt/c/Users/<you>/Downloads/resume-curator) or "
-            "pass a value via CuratorSettings.publish_dir."
+            f"--publish expects a destination directory, got a file: {publish}. "
+            f"Did you mean `--publish <dir> {publish}`?"
         )
         raise PublishError(msg)
-    return settings.publish_dir
 
 
 @app.command()
@@ -444,16 +462,7 @@ def curate(
             "CURATOR_CACHE_TTL."
         ),
     ),
-    publish: bool = typer.Option(
-        False,
-        "--publish/--no-publish",
-        help=(
-            "After rendering, copy resume.pdf / cover_letter.pdf / "
-            "cover_letter.txt into CURATOR_PUBLISH_DIR/<profile>/. Useful for "
-            "moving artifacts out of WSL so Windows browsers can upload them; "
-            "see README troubleshooting."
-        ),
-    ),
+    publish: Path | None = _CURATE_PUBLISH_OPT,
 ) -> None:
     """Curate a resume tailored to a job description."""
     from pydantic import ValidationError
@@ -518,10 +527,9 @@ def curate(
                 )
             return
 
-        publish_to: Path | None = (
-            _resolve_publish_destination(settings) if publish else None
-        )
-        if publish and no_pdf:
+        _guard_publish_destination(publish)
+        publish_to: Path | None = publish
+        if publish is not None and no_pdf:
             # The renderer still writes cover_letter.txt under --no-pdf
             # when --cover-letter is set, so publish has something real
             # to copy in that case. Without --cover-letter the publish
@@ -702,16 +710,7 @@ def static_cmd(
             "is made."
         ),
     ),
-    publish: bool = typer.Option(
-        False,
-        "--publish/--no-publish",
-        help=(
-            "After rendering, copy resume.pdf / cover_letter.pdf / "
-            "cover_letter.txt into CURATOR_PUBLISH_DIR/<profile>/. Useful for "
-            "moving artifacts out of WSL so Windows browsers can upload them; "
-            "see README troubleshooting."
-        ),
-    ),
+    publish: Path | None = _STATIC_PUBLISH_OPT,
 ) -> None:
     """Generate a polished, general-purpose resume with zero API cost.
 
@@ -797,10 +796,9 @@ def static_cmd(
             sys.stdout.write("\n")
             return
 
-        publish_to: Path | None = (
-            _resolve_publish_destination(settings) if publish else None
-        )
-        if publish and no_pdf:
+        _guard_publish_destination(publish)
+        publish_to: Path | None = publish
+        if publish is not None and no_pdf:
             # See the matching warning on the curate path; the renderer's
             # cover_letter.txt sidecar lands even under --no-pdf, so the
             # combination remains useful with --cover-letter. Without it,
@@ -842,40 +840,34 @@ _PUBLISH_PROFILE_ARG = typer.Argument(
     ...,
     help="Profile directory to publish (e.g. profiles/2026-05-27-acme).",
 )
-_PUBLISH_DESTINATION_OPT = typer.Option(
-    None,
-    "--destination",
-    "-d",
-    help="Override CURATOR_PUBLISH_DIR for this invocation.",
+_PUBLISH_DESTINATION_ARG = typer.Argument(
+    ...,
+    metavar="DESTINATION",
+    help=(
+        "Destination directory; files land at DESTINATION/<profile>/ "
+        "(e.g. /mnt/c/Users/<name>/Downloads/resume-curator)."
+    ),
 )
 
 
 @app.command(name="publish")
 def publish_cmd(
     profile_dir: Path = _PUBLISH_PROFILE_ARG,
-    destination: Path | None = _PUBLISH_DESTINATION_OPT,
+    destination: Path = _PUBLISH_DESTINATION_ARG,
 ) -> None:
-    """Copy a profile's upload-ready artifacts to the publish directory.
+    """Copy a profile's upload-ready artifacts to the destination directory.
 
     Useful for re-publishing past profiles, or republishing after a hand
     edit. Does NOT publish to any registry or remote. The name reflects
     "make these files available for upload from a Windows browser", not
     package distribution.
     """
-    from pydantic import ValidationError
-
-    from curator.config import CuratorSettings
-    from curator.exceptions import ConfigError, CuratorError, PublishError
+    from curator.exceptions import CuratorError, PublishError
     from curator.publish import publish_artifacts
 
     console = Console(stderr=True)
 
     try:
-        try:
-            settings = CuratorSettings()
-        except ValidationError as e:
-            raise ConfigError(str(e)) from e
-
         # Surface the absolute path so an ambiguous "not found" error
         # tells the user where curator actually looked. publish_artifacts
         # raises the same way for defense in depth; the early check here
@@ -884,10 +876,8 @@ def publish_cmd(
             msg = f"Profile directory not found: {profile_dir.resolve()}"
             raise PublishError(msg)
 
-        dest = _resolve_publish_destination(settings, override=destination)
-
-        paths = publish_artifacts(profile_dir, dest)
-        publish_root = dest.expanduser() / profile_dir.name
+        paths = publish_artifacts(profile_dir, destination)
+        publish_root = destination.expanduser() / profile_dir.name
         if not paths:
             console.print(
                 f"[yellow]No publishable files found in {profile_dir.resolve()}[/]"
