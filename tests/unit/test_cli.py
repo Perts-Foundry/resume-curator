@@ -1304,3 +1304,352 @@ class TestPublishCli:
         assert result.exit_code == 0, result.output
         assert "no upload-ready files" not in result.output
         assert "Published to:" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Per-run model / effort flags
+# ---------------------------------------------------------------------------
+
+
+class TestEffortHaikuGuard:
+    """Unit tests for the _warn_if_effort_on_haiku guard."""
+
+    def setup_method(self) -> None:
+        logger.remove()
+
+    def teardown_method(self) -> None:
+        logger.remove()
+
+    def _capture(self) -> list[str]:
+        msgs: list[str] = []
+        logger.add(lambda m: msgs.append(str(m)), level="WARNING")
+        return msgs
+
+    def test_warns_on_haiku_with_effort(self) -> None:
+        from curator.cli import _warn_if_effort_on_haiku
+
+        msgs = self._capture()
+        _warn_if_effort_on_haiku("claude-haiku-4-5", "high", kind="curate")
+        combined = " ".join(msgs)
+        assert "HTTP 400" in combined
+        assert "--effort off" in combined
+
+    def test_judge_kind_names_the_judge_flag(self) -> None:
+        from curator.cli import _warn_if_effort_on_haiku
+
+        msgs = self._capture()
+        _warn_if_effort_on_haiku("claude-haiku-4-5", "max", kind="judge")
+        assert "--judge-effort off" in " ".join(msgs)
+
+    def test_no_warn_when_effort_none(self) -> None:
+        from curator.cli import _warn_if_effort_on_haiku
+
+        msgs = self._capture()
+        _warn_if_effort_on_haiku("claude-haiku-4-5", None, kind="curate")
+        assert msgs == []
+
+    def test_no_warn_on_non_haiku_model(self) -> None:
+        from curator.cli import _warn_if_effort_on_haiku
+
+        msgs = self._capture()
+        _warn_if_effort_on_haiku("claude-sonnet-4-6", "high", kind="curate")
+        assert msgs == []
+
+
+class TestCurateModelEffortFlags:
+    """`curate --model` / `--effort` override CuratorSettings for one run."""
+
+    @staticmethod
+    def _fake_portfolio() -> Any:
+        from unittest.mock import MagicMock
+
+        p = MagicMock()
+        p.work = []
+        p.skills = []
+        p.education = []
+        p.certificates = []
+        p.projects = []
+        return p
+
+    def _invoke_dry_run(
+        self,
+        tmp_path: Path,
+        extra_args: list[str],
+        env: dict[str, str] | None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Any, dict[str, Any], Any]:
+        """Run `curate --dry-run` with a CuratorSettings spy.
+
+        The spy records the override kwargs and returns a *real* settings
+        object built with ``_env_file=None`` (so a developer's local ``.env``
+        cannot make the test non-deterministic), letting us assert both the
+        override mapping and the resolved value (flag-beats-env).
+        """
+        from typer.testing import CliRunner
+
+        from curator import config as _config
+        from curator.cli import app
+
+        for key, value in (env or {}).items():
+            monkeypatch.setenv(key, value)
+
+        real_cls = _config.CuratorSettings
+        captured: dict[str, Any] = {}
+
+        def _spy(**kwargs: Any) -> Any:
+            captured["kwargs"] = kwargs
+            inst = real_cls(_env_file=None, **kwargs)
+            captured["settings"] = inst
+            return inst
+
+        jd = tmp_path / "jd.txt"
+        jd.write_text(
+            "Senior DevOps Engineer at Acme Corp building AWS infrastructure.",
+            encoding="utf-8",
+        )
+        runner = CliRunner()
+        with (
+            patch("curator.config.CuratorSettings", side_effect=_spy),
+            patch(
+                "curator.loader.load_portfolio",
+                return_value=self._fake_portfolio(),
+            ),
+        ):
+            result = runner.invoke(app, ["curate", str(jd), "--dry-run", *extra_args])
+        return result, captured.get("kwargs", {}), captured.get("settings")
+
+    def test_model_flag_sets_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, kwargs, settings = self._invoke_dry_run(
+            tmp_path, ["--model", "claude-haiku-4-5"], None, monkeypatch
+        )
+        assert result.exit_code == 0, result.output
+        assert kwargs.get("model") == "claude-haiku-4-5"
+        assert settings.model == "claude-haiku-4-5"
+
+    def test_no_flags_leave_model_and_effort_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, kwargs, _ = self._invoke_dry_run(tmp_path, [], None, monkeypatch)
+        assert result.exit_code == 0, result.output
+        assert "model" not in kwargs
+        assert "effort" not in kwargs
+
+    def test_effort_value_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, kwargs, settings = self._invoke_dry_run(
+            tmp_path, ["--effort", "high"], None, monkeypatch
+        )
+        assert result.exit_code == 0, result.output
+        assert kwargs.get("effort") == "high"
+        assert settings.effort == "high"
+
+    def test_effort_off_forces_none_over_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Load-bearing case: env says high, --effort off wins -> None.
+        result, kwargs, settings = self._invoke_dry_run(
+            tmp_path, ["--effort", "off"], {"CURATOR_EFFORT": "high"}, monkeypatch
+        )
+        assert result.exit_code == 0, result.output
+        assert "effort" in kwargs
+        assert kwargs["effort"] is None
+        assert settings.effort is None
+
+    def test_model_flag_beats_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, _, settings = self._invoke_dry_run(
+            tmp_path,
+            ["--model", "claude-haiku-4-5"],
+            {"CURATOR_MODEL": "claude-sonnet-4-6"},
+            monkeypatch,
+        )
+        assert result.exit_code == 0, result.output
+        assert settings.model == "claude-haiku-4-5"
+
+    def test_warn_fires_on_haiku_with_effort(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: Any
+    ) -> None:
+        # Guards the curate-path call site: the guard must be invoked with the
+        # resolved model/effort. Spying on the helper (not capturing loguru,
+        # which configure_logging resets mid-run) is the reliable check.
+        mock_warn = mocker.patch("curator.cli._warn_if_effort_on_haiku")
+        result, _, _ = self._invoke_dry_run(
+            tmp_path,
+            ["--model", "claude-haiku-4-5", "--effort", "high"],
+            None,
+            monkeypatch,
+        )
+        assert result.exit_code == 0, result.output
+        mock_warn.assert_called_once_with("claude-haiku-4-5", "high", kind="curate")
+
+    def test_invalid_effort_choice_rejected(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        jd = tmp_path / "jd.txt"
+        jd.write_text("Senior DevOps Engineer at Acme Corp.", encoding="utf-8")
+        result = CliRunner().invoke(
+            app, ["curate", str(jd), "--dry-run", "--effort", "bogus"]
+        )
+        # click.Choice rejection is a usage error (exit 2), not an app guard.
+        assert result.exit_code == 2
+
+
+class TestEvalJudgeModelEffortFlags:
+    """`eval --judge-model` / `--judge-effort` threading and guards."""
+
+    @staticmethod
+    def _runner() -> tuple[Any, Any]:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        return CliRunner(), app
+
+    def test_threads_judge_overrides_into_profile_eval(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        mock_prof = mocker.patch("curator.cli._run_profile_eval")
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                str(profile),
+                "--judge",
+                "--judge-model",
+                "claude-sonnet-4-6",
+                "--judge-effort",
+                "off",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert mock_prof.call_args.kwargs["judge_overrides"] == {
+            "judge_model": "claude-sonnet-4-6",
+            "judge_effort": None,
+        }
+
+    def test_no_judge_flags_means_empty_overrides(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        mock_prof = mocker.patch("curator.cli._run_profile_eval")
+        result = runner.invoke(app, ["eval", str(profile), "--judge"])
+        assert result.exit_code == 0, result.output
+        assert mock_prof.call_args.kwargs["judge_overrides"] == {}
+
+    @pytest.mark.parametrize(
+        "flag",
+        [["--judge-model", "claude-sonnet-4-6"], ["--judge-effort", "high"]],
+    )
+    def test_judge_flags_require_judge(self, tmp_path: Path, flag: list[str]) -> None:
+        # Both flags flip the same `judge_flags_set` guard; cover each disjunct.
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        result = runner.invoke(app, ["eval", str(profile), *flag])
+        assert result.exit_code == 1
+        assert "require --judge" in result.output
+
+    def test_judge_flags_rejected_with_golden(self) -> None:
+        runner, app = self._runner()
+        result = runner.invoke(
+            app, ["eval", "--golden", "--judge", "--judge-effort", "high"]
+        )
+        assert result.exit_code == 1
+        assert "not allowed with --golden" in result.output
+
+    def _spy_settings(self, mocker: Any) -> Any:
+        """Patch CuratorSettings to record the resolved settings object.
+
+        Returns a real settings instance built with ``_env_file=None`` so the
+        judge overrides resolve faithfully without a developer's local ``.env``.
+        """
+        from curator import config as _config
+
+        real_cls = _config.CuratorSettings
+        captured: dict[str, Any] = {}
+
+        def _spy(**kwargs: Any) -> Any:
+            inst = real_cls(_env_file=None, **kwargs)
+            captured["settings"] = inst
+            return inst
+
+        mocker.patch("curator.config.CuratorSettings", side_effect=_spy)
+        mocker.patch("curator.eval.from_profile_dir", return_value=mocker.MagicMock())
+        mocker.patch(
+            "curator.eval.evaluate_tier1",
+            return_value=mocker.MagicMock(to_dict=lambda: {}),
+        )
+        return captured
+
+    def test_judge_overrides_resolve_into_settings(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Consumer half: the override dict must actually resolve into the
+        # settings _run_profile_eval builds AND reach _run_judge.
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        captured = self._spy_settings(mocker)
+        mock_judge = mocker.patch(
+            "curator.cli._run_judge",
+            return_value=mocker.MagicMock(to_dict=lambda: {}),
+        )
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                str(profile),
+                "--judge",
+                "--json",
+                "--judge-model",
+                "claude-sonnet-4-6",
+                "--judge-effort",
+                "off",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["settings"].judge_model == "claude-sonnet-4-6"
+        assert captured["settings"].judge_effort is None
+        # _run_judge(ctx, settings) — settings is the 2nd positional arg.
+        assert mock_judge.call_args.args[1].judge_model == "claude-sonnet-4-6"
+        assert mock_judge.call_args.args[1].judge_effort is None
+
+    def test_judge_warn_fires_through_eval_path(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Guards the judge-path call site (the more likely Haiku trip).
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        self._spy_settings(mocker)
+        mocker.patch(
+            "curator.cli._run_judge",
+            return_value=mocker.MagicMock(to_dict=lambda: {}),
+        )
+        mock_warn = mocker.patch("curator.cli._warn_if_effort_on_haiku")
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                str(profile),
+                "--judge",
+                "--json",
+                "--judge-model",
+                "claude-haiku-4-5",
+                "--judge-effort",
+                "high",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        mock_warn.assert_called_once_with("claude-haiku-4-5", "high", kind="judge")

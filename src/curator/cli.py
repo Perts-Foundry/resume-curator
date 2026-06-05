@@ -283,6 +283,12 @@ _JD_ARGUMENT = typer.Argument(
     help="Path to a job description text file, or '-' for stdin.",
 )
 
+# Effort levels accepted by --effort / --judge-effort. "off" is the explicit
+# force-disable sentinel (maps to an effort=None override); the other four
+# mirror CuratorSettings.effort's Literal. Shared so the curate and judge
+# surfaces cannot drift apart.
+_EFFORT_CHOICES = ["low", "medium", "high", "max", "off"]
+
 # Module-level singletons: a `Path`-typed option in an argument default trips
 # ruff B008 (Path is not a known-immutable annotation), unlike the inline
 # bool/int/str options. Defining them here keeps the call out of the default.
@@ -418,6 +424,34 @@ def _guard_publish_destination(publish: Path | None) -> None:
         raise PublishError(msg)
 
 
+def _warn_if_effort_on_haiku(model: str, effort: str | None, *, kind: str) -> None:
+    """WARN when an effort level is set on a Haiku model.
+
+    Haiku 4.5 rejects the ``effort`` parameter with HTTP 400, so a non-None
+    effort against a Haiku model is a guaranteed request failure. This is the
+    most common trip on the judge path (the default judge model is Haiku).
+    Read the *resolved* settings, not the raw CLI flags, so an effort coming
+    from ``CURATOR_EFFORT`` / ``.env`` against a ``--model``-supplied Haiku
+    still warns. Heuristic substring match is acceptable for a non-enforcing
+    log line given model IDs are free-form snapshot strings.
+
+    Args:
+        model: The resolved model id (curate ``model`` or judge ``judge_model``).
+        effort: The resolved effort level, or None when unset.
+        kind: ``"curate"`` or ``"judge"`` — selects the flag named in the hint.
+    """
+    if effort is not None and "haiku" in model.lower():
+        disable_flag = "--judge-effort off" if kind == "judge" else "--effort off"
+        logger.warning(
+            "effort={} is set on Haiku {} model '{}'; Haiku 4.5 rejects the "
+            "effort parameter (HTTP 400). Pass {} to disable it for this run.",
+            effort,
+            kind,
+            model,
+            disable_flag,
+        )
+
+
 @app.command()
 def curate(
     job_description: Path | None = _JD_ARGUMENT,
@@ -467,6 +501,24 @@ def curate(
             "CURATOR_CACHE_TTL."
         ),
     ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help=(
+            "Override the curate model for this run (e.g. claude-haiku-4-5). "
+            "Takes precedence over CURATOR_MODEL and .env."
+        ),
+    ),
+    effort: str | None = typer.Option(
+        None,
+        "--effort",
+        click_type=click.Choice(_EFFORT_CHOICES),
+        help=(
+            "Override the effort level for this run. 'off' force-disables "
+            "effort (required for Haiku, which rejects the effort parameter). "
+            "Takes precedence over CURATOR_EFFORT and .env."
+        ),
+    ),
     publish: Path | None = _CURATE_PUBLISH_OPT,
 ) -> None:
     """Curate a resume tailored to a job description."""
@@ -491,9 +543,17 @@ def curate(
                 overrides["max_pages"] = pages
             if cache_ttl is not None:
                 overrides["cache_ttl"] = cache_ttl
+            if model is not None:
+                overrides["model"] = model
+            if effort is not None:
+                # "off" is an explicit force-disable (effort=None override),
+                # distinct from the flag being absent (fall through to env/.env).
+                overrides["effort"] = None if effort == "off" else effort
             settings = CuratorSettings(**overrides)
         except ValidationError as e:
             raise ConfigError(str(e)) from e
+
+        _warn_if_effort_on_haiku(settings.model, settings.effort, kind="curate")
 
         # Log resolved config for troubleshooting.
         logger.info(
@@ -962,6 +1022,27 @@ _EVAL_PAGES_OPT = typer.Option(
         "--golden is set: each golden case owns its own meta.max_pages."
     ),
 )
+_EVAL_JUDGE_MODEL_OPT = typer.Option(
+    None,
+    "--judge-model",
+    help=(
+        "Override the Tier 2 judge model for this run (e.g. "
+        "claude-sonnet-4-6). Requires --judge; rejected with --golden "
+        "(golden baselines are calibrated against the default judge). "
+        "Takes precedence over CURATOR_JUDGE_MODEL and .env."
+    ),
+)
+_EVAL_JUDGE_EFFORT_OPT = typer.Option(
+    None,
+    "--judge-effort",
+    click_type=click.Choice(["low", "medium", "high", "max", "off"]),
+    help=(
+        "Override the judge effort level. 'off' force-disables effort "
+        "(the default judge is Haiku, which rejects the effort parameter). "
+        "Requires --judge; rejected with --golden. Takes precedence over "
+        "CURATOR_JUDGE_EFFORT and .env."
+    ),
+)
 
 
 @app.command(name="eval")
@@ -976,11 +1057,15 @@ def eval_cmd(
     judge: bool = _EVAL_JUDGE_OPT,
     json_output: bool = _EVAL_JSON_OPT,
     pages: int | None = _EVAL_PAGES_OPT,
+    judge_model: str | None = _EVAL_JUDGE_MODEL_OPT,
+    judge_effort: str | None = _EVAL_JUDGE_EFFORT_OPT,
 ) -> None:
     """Evaluate a curated resume profile with quality metrics."""
     from curator.exceptions import CuratorError
 
     console = Console(stderr=True)
+
+    judge_flags_set = judge_model is not None or judge_effort is not None
 
     # Validate flag dependencies.
     if calibrate and not golden:
@@ -988,6 +1073,18 @@ def eval_cmd(
         raise typer.Exit(code=1)
     if apply and not calibrate:
         console.print("[red]Error:[/] --apply requires --calibrate.")
+        raise typer.Exit(code=1)
+    if judge_flags_set and not judge:
+        console.print("[red]Error:[/] --judge-model/--judge-effort require --judge.")
+        raise typer.Exit(code=1)
+    if judge_flags_set and golden:
+        # Golden human_scores and judge tolerances are calibrated against the
+        # default judge model; overriding it here would silently re-score
+        # against the wrong baseline (mirrors the --pages/--golden guard).
+        console.print(
+            "[red]Error:[/] --judge-model/--judge-effort are not allowed with "
+            "--golden; golden cases are scored against the default judge."
+        )
         raise typer.Exit(code=1)
     if golden and pages is not None:
         # Golden cases own their own meta.max_pages and must not be
@@ -998,6 +1095,16 @@ def eval_cmd(
             "golden case carries its own meta.max_pages."
         )
         raise typer.Exit(code=1)
+
+    # Build judge-settings overrides (single application point: the profile
+    # path only — golden rejects these flags above). "off" force-disables.
+    judge_overrides: dict[str, Any] = {}
+    if judge_model is not None:
+        judge_overrides["judge_model"] = judge_model
+    if judge_effort is not None:
+        judge_overrides["judge_effort"] = (
+            None if judge_effort == "off" else judge_effort
+        )
 
     try:
         if golden:
@@ -1019,6 +1126,7 @@ def eval_cmd(
                 judge=judge,
                 json_output=json_output,
                 pages_override=pages,
+                judge_overrides=judge_overrides,
             )
         else:
             console.print("[red]Error:[/] Provide a profile directory or use --golden.")
@@ -1037,6 +1145,7 @@ def _run_profile_eval(
     judge: bool = False,
     json_output: bool = False,
     pages_override: int | None = None,
+    judge_overrides: dict[str, Any] | None = None,
 ) -> None:
     """Run eval against a single profile directory."""
     import json
@@ -1078,7 +1187,10 @@ def _run_profile_eval(
     if judge:
         from curator.config import CuratorSettings
 
-        settings = CuratorSettings()
+        settings = CuratorSettings(**(judge_overrides or {}))
+        _warn_if_effort_on_haiku(
+            settings.judge_model, settings.judge_effort, kind="judge"
+        )
         tier2 = _run_judge(ctx, settings)
 
     if json_output:
