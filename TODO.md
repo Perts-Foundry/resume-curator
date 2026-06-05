@@ -696,6 +696,15 @@ expanding scope. Each is independently shippable.
 - [ ] Token pre-counting via `client.messages.count_tokens()` to
   reject oversized inputs before batch requests.
 
+### CLI / UX
+
+- [ ] Dry-run cost label is hardcoded `~$0.07 first / ~$0.02 cached
+  (Sonnet)` in `cli.py` `_display_dry_run_preview`. Now that
+  `curate --model` is a first-class flag, the parenthetical can mislead
+  for non-Sonnet models (Haiku is ~$0.07 cold / ~$0.01 warm). Make the
+  estimate model-aware or drop the model name. (Deferred from the
+  2026-06-04 per-run model/effort flags PR.)
+
 ### Prompt iteration
 
 - [ ] Few-shot curation examples (1-2 high-quality decisions) in the

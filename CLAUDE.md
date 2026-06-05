@@ -420,7 +420,10 @@ These rules apply to all code interacting with the Claude API. Consult
   out-of-the-box invocations always work against a current model release.
   Forks that need reproducibility against a frozen release should override
   via env var with a published snapshot ID. Document the trade-off in the
-  design log when changing this convention.
+  design log when changing this convention. Per-run overrides exist as
+  first-class flags: `curate --model/--effort` and `eval --judge-model/
+  --judge-effort` (with `--effort off` / `--judge-effort off` to force the
+  effort param disabled, required for Haiku models which reject it).
 - **Use streaming** (`stream()` + `get_final_message()`) as the default API
   call pattern. Prevents timeouts and future-proofs for higher `max_tokens`.
 - **Post-response validation** is three layers: grammar (structure) →

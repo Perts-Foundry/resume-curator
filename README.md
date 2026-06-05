@@ -175,6 +175,8 @@ argument and `--clipboard` are mutually exclusive.
 | `--pages N` | Target page count, 1 to 5 (default 2). Pass `--pages 1` for short-form. |
 | `--cover-letter` / `--no-cover-letter` | Also generate a tailored cover letter **in the same API call** (a few extra output tokens, no second call). Off by default. Produces `cover_letter.pdf`, `cover_letter.txt`, and `data/cover_letter.yaml`. |
 | `--cache-ttl {5m,1h}` | Prompt-cache TTL on the portfolio block (overrides `CURATOR_CACHE_TTL`). `1h` (default) favors multi-run sessions; pass `5m` for one-off runs to avoid the 2x write penalty. |
+| `--model ID` | Curate model for this run, e.g. `claude-haiku-4-5` (overrides `CURATOR_MODEL`). |
+| `--effort {low,medium,high,max,off}` | Effort level for this run (overrides `CURATOR_EFFORT`). Use `off` to force effort disabled, which is required for Haiku models (Haiku 4.5 rejects the effort parameter). |
 | `--publish DIR` | After rendering, copy the upload-ready files into `DIR/<profile>/`. See [`publish`](#curator-publish). Canonical form puts the JD first: `curator curate jd.txt --publish DIR`. |
 
 `--dry-run` and `--no-pdf` are mutually exclusive. Every option works with any
@@ -305,6 +307,8 @@ checks locally at zero API cost; **Tier 2** adds an LLM judge (paid).
 | `--calibrate` | Show proposed baselines for golden cases (use with `--golden`). |
 | `--apply` | Write baselines into golden YAML files (use with `--calibrate`). |
 | `--judge` | Run Tier 2 LLM judge evaluation (requires an API key; ~$0.05 per eval). |
+| `--judge-model ID` | Judge model for this run, e.g. `claude-sonnet-4-6` (overrides `CURATOR_JUDGE_MODEL`). Requires `--judge`; rejected with `--golden` (golden baselines are calibrated against the default judge). |
+| `--judge-effort {low,medium,high,max,off}` | Judge effort for this run (overrides `CURATOR_JUDGE_EFFORT`). Use `off` to force it disabled; the default judge is Haiku, which rejects the effort parameter. Requires `--judge`; rejected with `--golden`. |
 | `--json` | Output results as JSON to stdout (machine-readable). |
 | `--pages N` | Override the inferred `max_pages` used for band selection (1 to 5). Rejected with `--golden` (each golden case owns its own page budget). |
 
@@ -397,15 +401,15 @@ Settings resolve in priority order: **CLI arguments > environment variables >
 | `CURATOR_ALLOW_API_SPEND` | `false` | Must be `true` to authorize any API call. |
 | `CURATOR_PORTFOLIO_PATH` | `../professional-portfolio-source` | Portfolio source repo root. Required for `curate` and `static`. |
 | `CURATOR_OUTPUT_DIR` | `profiles` | Directory for per-job output. |
-| `CURATOR_MODEL` | `claude-sonnet-4-6` | Claude model for curation (alias by default; override with a snapshot ID for reproducibility). |
+| `CURATOR_MODEL` | `claude-sonnet-4-6` | Claude model for curation (alias by default; override with a snapshot ID for reproducibility). Per-run override: `curate --model`. |
 | `CURATOR_MAX_TOKENS` | `4096` | Maximum output tokens (256 to 8192). |
-| `CURATOR_EFFORT` | *(none)* | Response quality: low / medium / high / max. |
+| `CURATOR_EFFORT` | *(none)* | Response quality: low / medium / high / max. Per-run override: `curate --effort` (use `--effort off` to force-disable for Haiku). |
 | `CURATOR_CACHE_TTL` | `1h` | Prompt-cache TTL on the portfolio block: `5m` or `1h`. See [Architecture: Prompt Caching](docs/architecture.md). |
 | `CURATOR_MAX_PAGES` | `2` | Target page count; renderer trims if exceeded (1 to 5). Pass `--pages 1` for short-form, 3 to 5 for executive/academic CVs. |
 | `CURATOR_MAX_TRIM_ITERATIONS` | `150` | Maximum renderer trim iterations (1 to 200); a WARNING logs at 15 as a convergence signal. |
 | `CURATOR_API_MAX_RETRIES` | `5` | Max retry attempts for Anthropic API calls (1 to 10; SDK built-in retries). |
-| `CURATOR_JUDGE_MODEL` | `claude-haiku-4-5` | Model for Tier 2 judge evaluation. |
-| `CURATOR_JUDGE_EFFORT` | *(none)* | Effort level for judge quality tuning. Leave unset for Haiku 4.5. |
+| `CURATOR_JUDGE_MODEL` | `claude-haiku-4-5` | Model for Tier 2 judge evaluation. Per-run override: `eval --judge-model` (requires `--judge`). |
+| `CURATOR_JUDGE_EFFORT` | *(none)* | Effort level for judge quality tuning. Leave unset for Haiku 4.5. Per-run override: `eval --judge-effort` (use `off` to force-disable). |
 | `CURATOR_SUMMARY_MANDATORY_MENTION` | *(author's identity by default)* | Phrase the AI must include verbatim in every generated summary. Forks should set their own, or an empty string to disable. |
 
 > [!WARNING]
