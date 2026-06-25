@@ -227,9 +227,15 @@ worksheet) back into it. Key invariants:
   **background** (work/project entry `summary`/`description` + `basics.summary`,
   real but not rendered as page bullets). It also reads `curation_log.json`
   `trim_log` to tell "cut for space" apart from "never existed" and to avoid
-  under-selling strong off-page experience. This reads the `ResumeCuration`/
-  portfolio shapes owned by `src/curator/models.py`, so a field rename there must
-  update this command in the same PR.
+  under-selling strong off-page experience. The B.1 tools/acronym glossary adds a
+  **third, non-candidate category**: a general-knowledge gloss of what a tool or
+  acronym *is* (firewalled so it can never source a STAR or gap claim, mirroring
+  the company-research firewall), with terms tied to on-page entries pulled from
+  `technologies`/`keywords` metadata as well as the rendered `text`/`keywords`.
+  This reads the `ResumeCuration`/portfolio shapes owned by `src/curator/models.py`
+  (B.1/B.2 specifically depend on `TaggedHighlight.text`/`technologies`,
+  `SkillEntry.keywords`, `ProjectEntry.technologies`/`keywords`), so a field rename
+  there must update this command in the same PR.
 - **Output is candidate-private**: it lands in gitignored `profiles/**` and is
   intentionally NOT in `RENDER_PUBLISH_FILENAMES`. The committed command file
   holds only synthetic (`Acme Corp` / `Jane Doe`) examples. `.gitignore`
