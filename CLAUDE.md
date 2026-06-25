@@ -211,11 +211,16 @@ questions/comp worksheet) back into it. Key invariants:
   `Read, Write, Glob` and `disallowed-tools` denies `Bash`/`Edit`/web tools
   (`allowed-tools` alone does not remove a tool from the pool), with the prose
   also instructing no command execution.
-- **No fabrication**: every claim cites a real highlight/skill id with a verbatim
+- **No fabrication**: every claim cites a real id with a tiered, verbatim
   provenance line; a self-verify pass drops anything unprovable; no-fabrication
-  outranks completeness. This reads the `ResumeCuration`/portfolio shapes owned
-  by `src/curator/models.py`, so a field rename there must update this command in
-  the same PR.
+  outranks completeness. Evidence has two tiers: **on-resume** (highlight `text`
+  + skill `keywords` in `data/*.yaml`, which is the post-trim final render) and
+  **background** (work/project entry `summary`/`description` + `basics.summary`,
+  real but not rendered as page bullets). It also reads `curation_log.json`
+  `trim_log` to tell "cut for space" apart from "never existed" and to avoid
+  under-selling strong off-page experience. This reads the `ResumeCuration`/
+  portfolio shapes owned by `src/curator/models.py`, so a field rename there must
+  update this command in the same PR.
 - **Output is candidate-private**: it lands in gitignored `profiles/**` and is
   intentionally NOT in `RENDER_PUBLISH_FILENAMES`. The committed command file
   holds only synthetic (`Acme Corp` / `Jane Doe`) examples. `.gitignore`
