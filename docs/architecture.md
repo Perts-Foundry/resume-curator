@@ -670,6 +670,11 @@ profiles/
                               #   ASCII hyphens preserved; see CoverLetterCuration
                               #   .to_plaintext for the canonical serialization)
     data/cover_letter.yaml    # Cover letter content (only when --cover-letter)
+    interview-prep.md         # Optional, written by the /interview-prep slash
+                              #   command (.claude/commands/), NOT the pipeline.
+                              #   Candidate-private; excluded from
+                              #   RENDER_PUBLISH_FILENAMES. See "Interview Prep
+                              #   Command" in CLAUDE.md.
 ```
 
 When `--publish DIR` is set (or the `curator publish` subcommand is invoked),
@@ -1275,6 +1280,18 @@ The injection-hardening attack scenarios considered, layered defense
 rationale, and reserved-tag invariant are documented inline in
 `src/curator/prompt.py` (`_RESERVED_TAGS` / `_validate_reserved_tags`)
 and exercised by `tests/unit/test_prompt.py`.
+
+The `/interview-prep` slash command (`.claude/commands/interview-prep.md`) is a
+third consumer of profile-dir `job_description.txt`, alongside the curate and
+judge paths. Because it runs as a conversational command with no Python
+validator behind it, it cannot reuse `_RESERVED_DELIMITER_RE`; instead its
+prompt body re-states the same trust posture (JD is untrusted data, internal
+`<job_description>` delimiting, refuse on injected directives, restate the
+`MAX_JD_LENGTH` size bound, write only the single `interview-prep.md` output).
+Its frontmatter pre-approves `Read, Write, Glob` and uses `disallowed-tools` to
+deny `Bash`/`Edit`/web tools (since `allowed-tools` alone does not remove a tool
+from the pool). It is a deliberately untested, non-deterministic reading aid;
+see "Interview Prep Command" in `CLAUDE.md`.
 
 ### Prompt Caching
 
