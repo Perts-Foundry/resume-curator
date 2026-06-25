@@ -1286,9 +1286,11 @@ third consumer of profile-dir `job_description.txt`, alongside the curate and
 judge paths. Because it runs as a conversational command with no Python
 validator behind it, it cannot reuse `_RESERVED_DELIMITER_RE`; instead its
 prompt body re-states the same trust posture (JD is untrusted data, internal
-`<job_description>` delimiting, refuse on tag-breakout, write only the single
-`interview-prep.md` output) and scopes its `allowed-tools` to `Read, Write,
-Glob` (no `Bash`). It is a deliberately untested, non-deterministic reading aid;
+`<job_description>` delimiting, refuse on injected directives, restate the
+`MAX_JD_LENGTH` size bound, write only the single `interview-prep.md` output).
+Its frontmatter pre-approves `Read, Write, Glob` and uses `disallowed-tools` to
+deny `Bash`/`Edit`/web tools (since `allowed-tools` alone does not remove a tool
+from the pool). It is a deliberately untested, non-deterministic reading aid;
 see "Interview Prep Command" in `CLAUDE.md`.
 
 ### Prompt Caching

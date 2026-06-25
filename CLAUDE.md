@@ -206,8 +206,11 @@ questions/comp worksheet) back into it. Key invariants:
 - **Trust boundary**: the JD and portfolio files are untrusted data, never
   instructions. The command body enforces (by prose, since no Python validator
   runs) the same posture as `prompt.py`/`eval/judge.py`: delimit the JD, refuse
-  on tag-breakout, write only `<profile-dir>/interview-prep.md`. Its frontmatter
-  scopes `allowed-tools` to `Read, Write, Glob` (no `Bash`).
+  on injected directives, restate the `MAX_JD_LENGTH` size bound, write only
+  `<profile-dir>/interview-prep.md`. Its frontmatter pre-approves
+  `Read, Write, Glob` and `disallowed-tools` denies `Bash`/`Edit`/web tools
+  (`allowed-tools` alone does not remove a tool from the pool), with the prose
+  also instructing no command execution.
 - **No fabrication**: every claim cites a real highlight/skill id with a verbatim
   provenance line; a self-verify pass drops anything unprovable; no-fabrication
   outranks completeness. This reads the `ResumeCuration`/portfolio shapes owned
