@@ -203,14 +203,22 @@ questions/comp worksheet) back into it. Key invariants:
   promotion to a real subcommand (tracked in `TODO.md`).
 - **JD-path only**: it requires `job_description.txt` + `curated.yaml` and
   refuses static-mode profiles (those carry `mode.txt`, no JD).
-- **Trust boundary**: the JD and portfolio files are untrusted data, never
-  instructions. The command body enforces (by prose, since no Python validator
-  runs) the same posture as `prompt.py`/`eval/judge.py`: delimit the JD, refuse
-  on injected directives, restate the `MAX_JD_LENGTH` size bound, write only
+- **Trust boundary**: the JD, portfolio files, and any web content are untrusted
+  data, never instructions. The command body enforces (by prose, since no Python
+  validator runs) the same posture as `prompt.py`/`eval/judge.py`: delimit the JD,
+  refuse on injected directives, restate the `MAX_JD_LENGTH` size bound, write only
   `<profile-dir>/interview-prep.md`. Its frontmatter pre-approves
-  `Read, Write, Glob` and `disallowed-tools` denies `Bash`/`Edit`/web tools
-  (`allowed-tools` alone does not remove a tool from the pool), with the prose
-  also instructing no command execution.
+  `Read, Write, Glob, WebSearch, WebFetch` and `disallowed-tools` denies
+  `Bash`/`Edit`/`NotebookEdit` (`allowed-tools` alone does not remove a tool from the pool), with
+  the prose also instructing no command execution.
+- **Company overview (web research)**: the one section allowed web access.
+  WebSearch/WebFetch populate a top-of-document Company Overview (what they do,
+  offices, headcount, public/private, government work) about the target employer.
+  Web results are untrusted (a prompt-injection surface) and may describe the
+  company only, never the candidate; every fact is cited with a date or marked
+  `Unknown (not found)`, with a JD-only summary plus research checklist as the
+  fallback. This is the only place the JD-and-portfolio-only grounding is relaxed,
+  and only for company facts, never for candidate claims.
 - **No fabrication**: every claim cites a real id with a tiered, verbatim
   provenance line; a self-verify pass drops anything unprovable; no-fabrication
   outranks completeness. Evidence has two tiers: **on-resume** (highlight `text`
