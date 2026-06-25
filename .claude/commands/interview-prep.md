@@ -84,8 +84,9 @@ You must enforce, by yourself, what those modules enforce in code:
   tool or acronym*, never a statement about the candidate. This is the same firewall the company
   research uses ("describes the company only, never the candidate"): a gloss may explain what a
   technology *is*, but it may never assert that the candidate used it, how deeply, at what scale,
-  or to what outcome. **A gloss is never a source for any STAR S/T/A/R or any gap-analysis
-  evidence cell.** STAR and gap grounding remain the closed evidence map (the two tiers above)
+  or to what outcome. **A gloss is never a source for any STAR S/T/A/R, any gap-analysis
+  evidence cell, or any other candidate-claim section (Snapshot, questions, pitch).** STAR, gap,
+  and every candidate claim remain grounded in the closed evidence map (the two tiers above)
   only. Do not let a gloss's framing bleed into a Situation/Task or a verdict.
 - **Verbatim provenance line.** Every gap-analysis evidence cell and every STAR story carries a
   provenance line tagged with its tier:
@@ -105,7 +106,7 @@ You must enforce, by yourself, what those modules enforce in code:
   that is not present in any highlight or entry summary, **drop the story** rather than invent
   the fact.
 - **No-fabrication outranks completeness.** A short gap analysis built on real evidence beats a
-  full one padded with invented bridges. A thin story bank is fine.
+  full one padded with invented bridges. A thin STAR is fine.
 - **Style discipline** (from `src/curator/rules.py`): no em dashes anywhere in the output (use
   commas, semicolons, parentheses, or periods); avoid empty resume-speak. Scan for `--`-style
   em dashes in the final pass.
@@ -323,38 +324,47 @@ This section has two parts: a glossary to refresh your memory of the resume's vo
 (B.1), then one STAR for every work bullet actually on the resume (B.2). Write B.1 first.
 
 #### B.1 Tools and acronyms glossary
-A scannable reference listing every tool, technology, and acronym that appears **on the
-rendered (post-trim) resume**, each with a short plain-language gloss so the candidate can
-re-familiarize themselves with their own resume's vocabulary before the interview.
+A scannable reference listing every tool, technology, and acronym **tied to the on-page resume
+entries** (the highlights, skills, and projects that survived to the final post-trim render),
+each with a short plain-language gloss so the candidate can re-familiarize themselves with their
+own resume's vocabulary before the interview. Note: some of these terms come from structured
+`technologies` metadata on a surviving entry, which is real and associated with what is on the
+page even though the metadata itself is not printed as a line; that is fine for a memory aid, so
+the framing is "vocabulary behind the on-page entries," not "literally printed words."
 
-- **Source set.** Pull terms only from the post-trim on-page content: on-resume work-highlight
-  `technologies` and `text` tokens, on-resume skill `keywords`, and on-resume project
+- **Source set.** Pull terms from the post-trim on-page entries only: on-resume work-highlight
+  `technologies` and `text`, on-resume skill `keywords`, and on-resume project
   `technologies`/`keywords` (projects listed in `curated.yaml.projects`). Read from the
-  post-trim `data/*.yaml`, and cross-check against the `trim_log`: a tool or keyword the
-  curation selected but the page-fit cascade then cut is **not** on the page, so do not list it
-  (the same caveat the load step applies to skills). Do not pad with tools that are not on the
-  resume.
-- **Bounded inclusion rule (for run-to-run stability).** Include *every* named tool, product,
-  or technology and *every* initialism that appears in those on-resume sources. Do not
-  selectively drop terms because they seem "well known"; consistent membership matters more
-  than brevity here.
+  post-trim `data/*.yaml`, and cross-check against the `trim_log`: a tool or keyword whose
+  entry the curation selected but the page-fit cascade then cut is **not** on the page, so do
+  not list it (the same caveat the load step applies to skills). Do not pad with tools whose
+  entry is not on the resume.
+- **Bounded inclusion rule (for run-to-run stability).** Treat the structured `technologies`/
+  `keywords` fields as the authoritative term set, and include *every* term in them; do not drop
+  any because it seems "well known" (consistent membership matters more than brevity). From the
+  free-prose highlight `text`, add a term only when it is a named tool/product/technology or a
+  capitalized initialism (e.g. EKS, IAM, VPC); do **not** sweep in generic business acronyms
+  (e.g. ROI, SLA, KPI) that are not tools or standards.
 - **Format.** A table: `| Term | Type | Gloss (general knowledge) | Appears in (id) |`.
   - `Type` is drawn from `{tool, acronym, standard}`. A term may carry a **compound type**
-    (e.g. EKS is both a `tool` and an `acronym`); do not force a single label.
+    written as a comma-joined list (e.g. `tool, acronym` for EKS); do not force a single label.
   - `Gloss (general knowledge)` is a one-line plain-language expansion of what the term *is*
-    (e.g. "AWS Elastic Kubernetes Service; managed Kubernetes"). Per the Grounding firewall,
-    this is general knowledge about the technology, **never** a claim about the candidate's
-    depth, scale, or outcome with it, and it is never a source for any STAR or gap claim.
-  - `Appears in (id)` lists the on-resume source id(s) where the term occurs. This means only
-    "this term is on the page"; it is deliberately **not** a tiered provenance line (it does not
-    follow the `Source (on-resume): ...` template) and does not substantiate any candidate claim.
+    (e.g. "AWS Elastic Kubernetes Service; managed Kubernetes"), drawn from your own general
+    knowledge; do **not** WebSearch/WebFetch term definitions (web access stays scoped to the
+    Company Overview). Per the Grounding firewall, this is general knowledge about the
+    technology, **never** a claim about the candidate's depth, scale, or outcome with it, and it
+    is never a source for any STAR or gap claim.
+  - `Appears in (id)` lists the on-page entry id(s) the term is tied to. This means only "this
+    term is associated with an on-page entry"; it is deliberately **not** a tiered provenance
+    line (it does not follow the `Source (on-resume): ...` template) and does not substantiate
+    any candidate claim.
 - De-duplicate terms; sort sensibly (alphabetical, or grouped by category).
 
 #### B.2 Per-bullet STAR
 One STAR for **every work-experience bullet that is actually on the resume**, so no resume line
 leaves you without a ready talking point.
 
-- **Coverage set (defined once).** The covered bullets are exactly the `highlight_id`s in
+- **Coverage set (defined once).** The covered bullets are exactly the `highlight_ids` in
   `curated.yaml.work_highlights[]` **that still exist in `data/work.yaml`** (the post-trim
   on-page set). If a curated bullet was trimmed for space (present in `work_highlights` but
   absent from `data/work.yaml`, per the `trim_log`), do **not** write a per-bullet STAR for it;
@@ -362,9 +372,10 @@ leaves you without a ready talking point.
   it yourself"), so off-page content is never presented as on-page. Project highlights are out
   of scope for B.2. Cover the on-page set completely; this is exact coverage, not a soft count.
 - **Group by work entry; state Situation/Task once per entry.** Under each work entry, give the
-  shared **Situation / Task** a single time, then list the entry's bullets, each with its own
-  **Action / Result**. Do not repeat near-identical S/T for every bullet in the same job; this
-  keeps full coverage without turning B.2 into a wall of text.
+  shared **Situation / Task** a single time, carrying its own `background`-tier provenance line
+  (the entry `summary`/`description` it is drawn from), then list the entry's bullets, each with
+  its own **Action / Result**. Do not repeat near-identical S/T for every bullet in the same job;
+  this keeps full coverage without turning B.2 into a wall of text.
 - **Per bullet, include:** one or more **competency tags** from the closed set
   `{ownership, conflict, failure/learning, ambiguity, scale, cross-team}`, the **Action /
   Result**, and a tiered verbatim provenance line citing the highlight id.
@@ -376,7 +387,8 @@ leaves you without a ready talking point.
   a fabrication vector). The JD informs only which bullets are most relevant and their ordering.
   When a bullet has no distinct setup on record, write a one-line "Situation/Task: same context
   as this entry; no distinct setup on record" rather than invent one. A thin bullet yields a
-  thin STAR; no-fabrication outranks completeness.
+  thin STAR; no-fabrication outranks completeness. For B.2 specifically, never *drop* an on-page
+  bullet (its Action/Result always exist in its own `text`); thin the STAR instead.
 - **Behavioral-round note (end of B.2).** Because there is no separate curated story bank, point
   the candidate to assemble behavioral answers (conflict, failure/learning, ambiguity) by
   combining these per-bullet STARs with their competency tags and the behavioral questions in
@@ -411,11 +423,11 @@ Before writing, run the self-verification pass:
 - No em dashes; no refuted-claim language (no stats, no universal rubric, no fixed loop); the
   comp section invents no numbers; the pitch introduces no facts beyond the cover letter and
   summary.
-- **B.1 glossary:** every listed term traces to a post-trim on-resume source id (cross-checked
-  against `trim_log`, so nothing trimmed off the page is listed); every gloss is general
-  knowledge about the technology and asserts no candidate depth, scale, or outcome; no gloss is
-  used as a source for any STAR or gap-analysis claim (the Grounding firewall); no term is listed
-  that is not on the page.
+- **B.1 glossary:** every listed term is tied to a post-trim on-page entry id (cross-checked
+  against `trim_log`, so nothing whose entry was trimmed off the page is listed); every gloss is
+  general knowledge from your own knowledge (not web-fetched), asserts no candidate depth, scale,
+  or outcome, and is not used as a source for any STAR or gap-analysis claim (the Grounding
+  firewall); no generic business acronym (ROI, SLA, KPI) is listed as if it were a tool/standard.
 - **B.2 per-bullet STAR:** every id in the post-trim on-page set (the `curated.yaml.work_highlights`
   ids that survive in `data/work.yaml`) is covered exactly once, and no trimmed-off-page bullet is
   given a STAR; every Action/Result metric, number, date, and technology token appears verbatim in
