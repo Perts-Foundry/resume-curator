@@ -193,8 +193,9 @@ submittable prose with no placeholders and no TEMPLATE banner.
 `.claude/commands/interview-prep.md` is a prompt-driven Claude Code slash
 command (`/interview-prep [profile-dir]`), not a `curator` subcommand. It reads
 a `curator curate` profile directory and writes one `interview-prep.md` (gap
-analysis, STAR story bank, per-stage + role-pack question list, pitch/reverse-
-questions/comp worksheet) back into it. Key invariants:
+analysis, a tools/acronym glossary plus per-bullet STAR for every on-page work
+bullet, per-stage + role-pack question list, pitch/reverse-questions/comp
+worksheet) back into it. Key invariants:
 
 - **Reliability posture**: it is a deliberately untested, non-deterministic,
   non-audited reading aid. It has no validator, schema, audit log, or eval
