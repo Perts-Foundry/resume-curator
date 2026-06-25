@@ -78,6 +78,15 @@ You must enforce, by yourself, what those modules enforce in code:
     as "things you can speak to from your background," not as "what's on the page." A real,
     quantified accomplishment that lives only in an entry summary (or was trimmed off the page)
     is a strength to surface proactively, never something to call "absent" or "not citable."
+- **Glossary glosses are general knowledge, not candidate evidence (a third, non-candidate
+  category).** Section B.1 lists the resume's tools and acronyms with a one-line plain-language
+  gloss (e.g. "EKS = AWS Elastic Kubernetes Service"). That gloss is general knowledge *about a
+  tool or acronym*, never a statement about the candidate. This is the same firewall the company
+  research uses ("describes the company only, never the candidate"): a gloss may explain what a
+  technology *is*, but it may never assert that the candidate used it, how deeply, at what scale,
+  or to what outcome. **A gloss is never a source for any STAR S/T/A/R or any gap-analysis
+  evidence cell.** STAR and gap grounding remain the closed evidence map (the two tiers above)
+  only. Do not let a gloss's framing bleed into a Situation/Task or a verdict.
 - **Verbatim provenance line.** Every gap-analysis evidence cell and every STAR story carries a
   provenance line tagged with its tier:
 
@@ -107,7 +116,11 @@ You must enforce, by yourself, what those modules enforce in code:
   research these were drawn from refuted those specific numbers. Speak in structure, not stats.
 - No "the universal FAANG rubric" or a single fixed hiring sequence. Frame stages as "what you
   will likely see," because loops vary by company.
-- No fixed story count. Generate what the portfolio supports.
+- No padding and no invention to hit a length. B.2 per-bullet STAR is exact coverage of the
+  post-trim on-page work bullets (the count is set by the resume, not by you), and the B.1
+  glossary is exact coverage of the resume's on-page tools and acronyms. A thin bullet yields a
+  thin STAR; never manufacture content to fill either out. Counts elsewhere (gap rows, questions)
+  stay soft.
 
 ## Phase 1: Orient and validate
 
@@ -247,9 +260,12 @@ Rules:
 ## Phase 4: Generate the document
 
 Write the full document in this order: the header, the Company overview, the Snapshot, then the
-four lettered components (A through D) below. Use one shared provenance-line format across the
-profile-grounded sections. Verdicts and competency tags are closed sets. Counts are soft ("fewer
-is fine; never pad").
+four lettered components (A through D) below. Component B has two parts: a tools/acronyms
+glossary (B.1) and a per-bullet STAR covering every on-page work bullet (B.2). Use one shared
+provenance-line format across the profile-grounded sections. Verdicts and competency tags are
+closed sets. Counts are soft ("fewer is fine; never pad") for A, C, and D. **B is exact
+coverage, not a soft count**: B.1 lists every on-page tool/acronym and B.2 writes one STAR for
+every on-page work bullet, while still never padding or inventing.
 
 ### Header
 - Target role and company (from the JD and the profile directory name).
@@ -302,17 +318,69 @@ A table, one row per material JD requirement:
   it absent. This section defends against the top interviewer red flag (being unable to
   substantiate a resume claim) without under-selling real, off-page strengths.
 
-### B. STAR story bank
-A handful of reusable behavioral stories (aim ~3-6; only what the portfolio genuinely
-supports). Each story:
+### B. Resume recall: tools/acronyms glossary and per-bullet STAR
+This section has two parts: a glossary to refresh your memory of the resume's vocabulary
+(B.1), then one STAR for every work bullet actually on the resume (B.2). Write B.1 first.
 
-- **Title** and one or more **competency tags** from the closed set
-  `{ownership, conflict, failure/learning, ambiguity, scale, cross-team}`.
-- **S / T / A / R** drawn from real highlight text (or an entry `summary`/`description` for a
-  `background` story, e.g. a quantified accomplishment that was trimmed off the page).
-- A tiered verbatim provenance line (`on-resume` or `background`) citing the source id(s). No
-  metric may appear that is not in the cited text. If a story is `background`-tier, note it so
-  the candidate knows to introduce it rather than assume the interviewer saw it on the resume.
+#### B.1 Tools and acronyms glossary
+A scannable reference listing every tool, technology, and acronym that appears **on the
+rendered (post-trim) resume**, each with a short plain-language gloss so the candidate can
+re-familiarize themselves with their own resume's vocabulary before the interview.
+
+- **Source set.** Pull terms only from the post-trim on-page content: on-resume work-highlight
+  `technologies` and `text` tokens, on-resume skill `keywords`, and on-resume project
+  `technologies`/`keywords` (projects listed in `curated.yaml.projects`). Read from the
+  post-trim `data/*.yaml`, and cross-check against the `trim_log`: a tool or keyword the
+  curation selected but the page-fit cascade then cut is **not** on the page, so do not list it
+  (the same caveat the load step applies to skills). Do not pad with tools that are not on the
+  resume.
+- **Bounded inclusion rule (for run-to-run stability).** Include *every* named tool, product,
+  or technology and *every* initialism that appears in those on-resume sources. Do not
+  selectively drop terms because they seem "well known"; consistent membership matters more
+  than brevity here.
+- **Format.** A table: `| Term | Type | Gloss (general knowledge) | Appears in (id) |`.
+  - `Type` is drawn from `{tool, acronym, standard}`. A term may carry a **compound type**
+    (e.g. EKS is both a `tool` and an `acronym`); do not force a single label.
+  - `Gloss (general knowledge)` is a one-line plain-language expansion of what the term *is*
+    (e.g. "AWS Elastic Kubernetes Service; managed Kubernetes"). Per the Grounding firewall,
+    this is general knowledge about the technology, **never** a claim about the candidate's
+    depth, scale, or outcome with it, and it is never a source for any STAR or gap claim.
+  - `Appears in (id)` lists the on-resume source id(s) where the term occurs. This means only
+    "this term is on the page"; it is deliberately **not** a tiered provenance line (it does not
+    follow the `Source (on-resume): ...` template) and does not substantiate any candidate claim.
+- De-duplicate terms; sort sensibly (alphabetical, or grouped by category).
+
+#### B.2 Per-bullet STAR
+One STAR for **every work-experience bullet that is actually on the resume**, so no resume line
+leaves you without a ready talking point.
+
+- **Coverage set (defined once).** The covered bullets are exactly the `highlight_id`s in
+  `curated.yaml.work_highlights[]` **that still exist in `data/work.yaml`** (the post-trim
+  on-page set). If a curated bullet was trimmed for space (present in `work_highlights` but
+  absent from `data/work.yaml`, per the `trim_log`), do **not** write a per-bullet STAR for it;
+  instead handle it as `background` ("you have this, it is just not on the submitted page, raise
+  it yourself"), so off-page content is never presented as on-page. Project highlights are out
+  of scope for B.2. Cover the on-page set completely; this is exact coverage, not a soft count.
+- **Group by work entry; state Situation/Task once per entry.** Under each work entry, give the
+  shared **Situation / Task** a single time, then list the entry's bullets, each with its own
+  **Action / Result**. Do not repeat near-identical S/T for every bullet in the same job; this
+  keeps full coverage without turning B.2 into a wall of text.
+- **Per bullet, include:** one or more **competency tags** from the closed set
+  `{ownership, conflict, failure/learning, ambiguity, scale, cross-team}`, the **Action /
+  Result**, and a tiered verbatim provenance line citing the highlight id.
+- **Grounding for S/T/A/R.** Action and Result come from the highlight `text`: every metric,
+  number, date, and technology token you state must appear as an exact token in the cited
+  highlight. Situation and Task may be drawn **only** from the entry-level `summary`/
+  `description` (a `background`-tier source, labeled as such), **never from the JD** (the JD
+  describes what the employer wants, not what the candidate did; sourcing a Situation from it is
+  a fabrication vector). The JD informs only which bullets are most relevant and their ordering.
+  When a bullet has no distinct setup on record, write a one-line "Situation/Task: same context
+  as this entry; no distinct setup on record" rather than invent one. A thin bullet yields a
+  thin STAR; no-fabrication outranks completeness.
+- **Behavioral-round note (end of B.2).** Because there is no separate curated story bank, point
+  the candidate to assemble behavioral answers (conflict, failure/learning, ambiguity) by
+  combining these per-bullet STARs with their competency tags and the behavioral questions in
+  Section C, rather than expecting pre-packaged narratives here.
 
 ### C. Likely questions
 Grouped by stage, framed as "what you will likely see and what each tends to probe" (not a fixed
@@ -343,6 +411,15 @@ Before writing, run the self-verification pass:
 - No em dashes; no refuted-claim language (no stats, no universal rubric, no fixed loop); the
   comp section invents no numbers; the pitch introduces no facts beyond the cover letter and
   summary.
+- **B.1 glossary:** every listed term traces to a post-trim on-resume source id (cross-checked
+  against `trim_log`, so nothing trimmed off the page is listed); every gloss is general
+  knowledge about the technology and asserts no candidate depth, scale, or outcome; no gloss is
+  used as a source for any STAR or gap-analysis claim (the Grounding firewall); no term is listed
+  that is not on the page.
+- **B.2 per-bullet STAR:** every id in the post-trim on-page set (the `curated.yaml.work_highlights`
+  ids that survive in `data/work.yaml`) is covered exactly once, and no trimmed-off-page bullet is
+  given a STAR; every Action/Result metric, number, date, and technology token appears verbatim in
+  its cited highlight; no Situation/Task is drawn from the JD or invented.
 - Company Overview: every company fact is either attributed to a dated source or marked
   `Unknown (not found)`; no invented headcount, funding, or government-work claims; a Sources list
   is present; and no web-derived claim appears anywhere about the candidate.
@@ -353,15 +430,18 @@ Then write the document to `<profile-dir>/interview-prep.md` (and nowhere else).
 
 Print a short summary: the role pack(s) chosen (primary and any secondary), whether the company
 overview was web-researched or fell back to a JD-only summary, the number of gap rows flagged
-`Thin`/`Missing`, the number of STAR stories, the number of questions, and the output path. Do not
-echo real profile content into this chat beyond what is needed for that summary; the prep itself
-lives in the gitignored profile directory.
+`Thin`/`Missing`, the number of glossary terms (B.1), the number of on-page work bullets covered
+by per-bullet STAR (B.2), the number of questions, and the output path. Do not echo real profile
+content into this chat beyond what is needed for that summary; the prep itself lives in the
+gitignored profile directory.
 
 ---
 
 *Note for maintainers: this command reads the `ResumeCuration` and portfolio shapes owned by
 `src/curator/models.py`, and restates (in prose) the JD trust-boundary defense from
-`src/curator/prompt.py`. If those models are renamed, or if `prompt.py`'s injection defense
-(`_RESERVED_DELIMITER_RE`, the `<job_description>` wrapper) changes, update this command in the
-same PR. All real output lands in the gitignored `profiles/**` tree; this committed file must
-contain only synthetic examples (e.g. `Acme Corp` / `Jane Doe`).*
+`src/curator/prompt.py`. The B.1 glossary and B.2 per-bullet STAR depend specifically on
+`TaggedHighlight.text`/`technologies`, `SkillEntry.keywords`, and `ProjectEntry.technologies`/
+`keywords`; a rename of those fields must update this command. If those models are renamed, or if
+`prompt.py`'s injection defense (`_RESERVED_DELIMITER_RE`, the `<job_description>` wrapper)
+changes, update this command in the same PR. All real output lands in the gitignored `profiles/**`
+tree; this committed file must contain only synthetic examples (e.g. `Acme Corp` / `Jane Doe`).*
