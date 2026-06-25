@@ -67,5 +67,7 @@ testing/results/
 # Config overrides (user-specific)
 config.toml
 
-# Claude Code agent local state (per-machine; not synced)
-.claude/
+# Claude Code agent local state (per-machine; not synced), EXCEPT committed
+# slash commands under .claude/commands/ which are shared and version-controlled.
+.claude/*
+!.claude/commands/

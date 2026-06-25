@@ -5,6 +5,26 @@ files point here; `docs/architecture.md` describes current state only.
 
 ---
 
+## Interview Prep Command
+
+- [x] Add `.claude/commands/interview-prep.md`: a prompt-driven slash command
+  that reads a `curator curate` profile directory and writes a tailored,
+  evidence-grounded `interview-prep.md` (JD-vs-portfolio gap analysis, STAR
+  story bank, per-stage + role-pack question list, pitch/reverse-questions/comp
+  worksheet) into the gitignored profile dir. JD-path only (refuses static-mode
+  profiles); no-fabrication enforced via verbatim provenance + self-verify pass.
+  Un-ignored `.claude/commands/` so the command is committable.
+- [ ] v2: interactive mock-interview / answer-critique mode.
+- [ ] v2: optional Typst-rendered PDF of the prep doc.
+- [ ] v2: promote to a tested `curator interview` Typer subcommand (structured
+  output, ID validation, audit log, eval) if it ever needs to be
+  repeatable/billable/regression-tested. Today it is a deliberately untested,
+  non-deterministic reading aid.
+- [ ] v2: JD-less "general interview prep" degraded mode for static profiles
+  (deliberately refused in v1).
+
+---
+
 ## Recently landed (2026-05-16/17, AI/code reallocation series)
 
 Fourteen commits on branch `ai-code-reallocation` (the original
