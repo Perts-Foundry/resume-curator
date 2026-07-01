@@ -1288,11 +1288,13 @@ validator behind it, it cannot reuse `_RESERVED_DELIMITER_RE`; instead its
 prompt body re-states the same trust posture (JD is untrusted data, internal
 `<job_description>` delimiting, refuse on injected directives, restate the
 `MAX_JD_LENGTH` size bound, write only the single `interview-prep.md` output).
-Its frontmatter pre-approves `Read, Write, Glob, WebSearch, WebFetch` (web access
-is used only for the Company Overview research) and uses `disallowed-tools` to
-deny `Bash`/`Edit`/`NotebookEdit` (since `allowed-tools` alone does not remove a
-tool from the pool). It is a deliberately untested, non-deterministic reading aid;
-see "Interview Prep Command" in `CLAUDE.md`.
+Its frontmatter pre-approves `Read, Write, Glob, Grep, WebSearch, WebFetch` (web
+access is used only for the Company Overview and Compensation research in Phase 3b;
+`Grep` is read-only, prose-scoped to the profile dir for counting/verification) and
+uses `disallowed-tools` to deny `Bash`/`Edit`/`NotebookEdit` (since `allowed-tools`
+alone does not remove a tool from the pool, so `Bash` stays hard-denied). It is a
+deliberately untested, non-deterministic reading aid; see "Interview Prep Command"
+in `CLAUDE.md`.
 
 ### Prompt Caching
 
