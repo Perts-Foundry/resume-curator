@@ -9,10 +9,10 @@ files point here; `docs/architecture.md` describes current state only.
 
 - [x] Add `.claude/commands/interview-prep.md`: a prompt-driven slash command
   that reads a `curator curate` profile directory and writes a tailored,
-  evidence-grounded `interview-prep.md` (JD-vs-portfolio gap analysis, a
-  tools/acronym glossary plus per-bullet STAR for every on-page work bullet,
-  per-stage + role-pack question list, pitch/reverse-questions/comp
-  worksheet) into the gitignored profile dir. JD-path only (refuses static-mode
+  evidence-grounded `interview-prep.md` (JD-vs-portfolio gap analysis, a two-tier
+  tools/acronym glossary plus a per-entry STAR table for every on-page work bullet,
+  per-stage + role-pack question list, pitch/reverse-questions/researched-compensation
+  section) into the gitignored profile dir. JD-path only (refuses static-mode
   profiles); no-fabrication enforced via verbatim provenance + self-verify pass.
   Un-ignored `.claude/commands/` so the command is committable.
 - [ ] v2: interactive mock-interview / answer-critique mode.

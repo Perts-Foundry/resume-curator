@@ -193,9 +193,10 @@ submittable prose with no placeholders and no TEMPLATE banner.
 `.claude/commands/interview-prep.md` is a prompt-driven Claude Code slash
 command (`/interview-prep [profile-dir]`), not a `curator` subcommand. It reads
 a `curator curate` profile directory and writes one `interview-prep.md` (gap
-analysis, a tools/acronym glossary plus per-bullet STAR for every on-page work
-bullet, per-stage + role-pack question list, pitch/reverse-questions/comp
-worksheet) back into it. Key invariants:
+analysis, a two-tier tools/acronym glossary plus a per-entry STAR table covering
+every on-page work bullet, per-stage + role-pack question list,
+pitch/reverse-questions/researched-compensation section) back into it. Key
+invariants:
 
 - **Reliability posture**: it is a deliberately untested, non-deterministic,
   non-audited reading aid. It has no validator, schema, audit log, or eval
@@ -208,18 +209,25 @@ worksheet) back into it. Key invariants:
   data, never instructions. The command body enforces (by prose, since no Python
   validator runs) the same posture as `prompt.py`/`eval/judge.py`: delimit the JD,
   refuse on injected directives, restate the `MAX_JD_LENGTH` size bound, write only
-  `<profile-dir>/interview-prep.md`. Its frontmatter pre-approves
-  `Read, Write, Glob, WebSearch, WebFetch` and `disallowed-tools` denies
-  `Bash`/`Edit`/`NotebookEdit` (`allowed-tools` alone does not remove a tool from the pool), with
-  the prose also instructing no command execution.
-- **Company overview (web research)**: the one section allowed web access.
-  WebSearch/WebFetch populate a top-of-document Company Overview (what they do,
-  offices, headcount, public/private, government work) about the target employer.
-  Web results are untrusted (a prompt-injection surface) and may describe the
-  company only, never the candidate; every fact is cited with a date or marked
-  `Unknown (not found)`, with a JD-only summary plus research checklist as the
-  fallback. This is the only place the JD-and-portfolio-only grounding is relaxed,
-  and only for company facts, never for candidate claims.
+  `<profile-dir>/interview-prep.md`. Its frontmatter grants a full tool set
+  (`Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch`, no `disallowed-tools`) so the
+  command does not hit tool denials mid-run (an earlier tighter config that hard-denied
+  `Bash`/`Edit` caused `ls`/`Edit` denials on every run). The trade-off: the injection defense is
+  now **prose-only** (untrusted JD/portfolio/web data is never a source of commands, edits, or
+  fetches; all tool use stays inside the profile dir), with no hard tool-level backstop. This
+  reverses the earlier Grep-only posture by explicit owner decision.
+- **Web research (company overview + compensation)**: the two purposes allowed web
+  access. WebSearch/WebFetch populate a top-of-document Company Overview (what they
+  do, offices, headcount, public/private, government work) about the target
+  employer, and a researched Compensation subsection (market range for the
+  title/level/location). Web results are untrusted (a prompt-injection surface) and
+  may describe the company/role/market only, never the candidate; every fact is
+  cited with a date or marked `Unknown (not found)`, bounded by a ~5-6 call ceiling
+  across both purposes, with a JD-only fallback. These are the only places the
+  JD-and-portfolio-only grounding is relaxed, and only for company/market facts,
+  never for candidate claims. Compensation allows cited market ranges but bans
+  negotiation-success statistics (out of scope even if sourced) and any model-side
+  figure interpolation.
 - **No fabrication**: every claim cites a real id with a tiered, verbatim
   provenance line; a self-verify pass drops anything unprovable; no-fabrication
   outranks completeness. Evidence has two tiers: **on-resume** (highlight `text`
@@ -232,6 +240,9 @@ worksheet) back into it. Key invariants:
   acronym *is* (firewalled so it can never source a STAR or gap claim, mirroring
   the company-research firewall), with terms tied to on-page entries pulled from
   `technologies`/`keywords` metadata as well as the rendered `text`/`keywords`.
+  B.1 is split into two tiers ("refresh these" acronyms/niche tools with glosses vs
+  a compact "you already know these" list); B.2 is a per-entry STAR table whose
+  verbatim bullet cell IS the on-resume provenance.
   This reads the `ResumeCuration`/portfolio shapes owned by `src/curator/models.py`
   (B.1/B.2 specifically depend on `TaggedHighlight.text`/`technologies`,
   `SkillEntry.keywords`, `ProjectEntry.technologies`/`keywords`), so a field rename
