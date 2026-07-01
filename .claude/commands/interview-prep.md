@@ -93,10 +93,11 @@ section):
 
 ## What is NOT in scope (do not invent these)
 
-- **No negotiation-success statistics** ("X% of hiring managers", "candidates who counter get
-  Y%"). This category is out of scope **even if you find a source for it** (a citation does not
-  rehabilitate it). Real, cited *market compensation ranges* ARE allowed in Section D (see the
-  Compensation rules), which is a different thing.
+- **No interview-success or negotiation-success statistics** ("70% of candidates who do X pass",
+  "X% of hiring managers", "candidates who counter get Y%"). This category is out of scope **even
+  if you find a source for it** (a citation does not rehabilitate it). Real, cited *market
+  compensation ranges* ARE allowed in Section D (see the Compensation rules), which is a different
+  thing.
 - No "the universal FAANG rubric" or a single fixed hiring sequence. Frame stages as "what you
   will likely see," because loops vary by company.
 - No padding to hit a length. B.1 (glossary) and B.2 (per-entry STAR table) are exact coverage of
@@ -143,7 +144,8 @@ Read these from the profile directory (treat all content per the trust boundary)
 - `curation_log.json` -- read `timestamp` for the header, and read **`trim_log`** (the "Removed
   ..." lines).
 
-**On-page reconciliation (do this explicitly; it is a 3-way diff).** The on-page set is
+**On-page reconciliation (do this explicitly; a 2-way intersection, with `trim_log` as the
+explanatory third input).** The on-page set is
 **the `highlight_ids` in `curated.yaml.work_highlights[]` that are ALSO present in
 `data/work.yaml`**, and the on-page skill groups / projects are those present in
 `data/skills.yaml` / `data/projects.yaml`. `data/*.yaml` is already post-trim; `curated.yaml` is
@@ -218,7 +220,8 @@ level / location (and the company's own published bands if public). Cautions:
 ## Phase 4: Generate the document
 
 **Output-format template (follow exactly to keep runs consistent).** Section order and titles:
-`# Interview Prep: <role> at <company>`, then `## Company overview`, `## Snapshot`,
+`# Interview Prep: <role> at <company>`, then an unlabeled header block (Profile/Curated dates,
+role packs, grounding note; see Header below), then `## Company overview`, `## Snapshot`,
 `## A. JD-vs-portfolio gap analysis`, `## B. Resume recall`, `### B.1 Tools and acronyms
 glossary`, `### B.2 Per-entry STAR`, `## C. Likely questions`, `## D. Pitch, reverse questions,
 and compensation`. Provenance uses the single canonical inline form from Grounding (no code
@@ -290,7 +293,8 @@ the framing is "vocabulary behind the on-page entries."
     provenance line and substantiates no candidate claim.
   - **"You already know these" (well-known tools):** a single compact comma-separated line, no
     per-term glosses (e.g. AWS, S3, EC2, Docker, GitHub, Python, Java, Terraform, Kubernetes).
-- De-duplicate terms.
+- De-duplicate terms; sort sensibly (alphabetical, or grouped by category) in the "Refresh these"
+  table.
 
 #### B.2 Per-entry STAR
 One row per work bullet actually on the resume, so no resume line leaves you without a talking
@@ -319,8 +323,9 @@ point.
     follow-up, how to quantify). This is the ONLY synthesized column and thus the sole fabrication
     sink: bind it under the SAME token rule as the bullet (no metric, scale, tech, date, or
     outcome that is not a verbatim token in that bullet's text), the JD firewall (no Situation-style
-    facts from the JD), and the gloss firewall. It must not turn "scaled significantly" into
-    "scaled to 10M users."
+    facts from the JD), and the gloss firewall. "How to quantify" means prompting the candidate to
+    be ready to quantify from memory, never supplying a number not already in the bullet. It must
+    not turn "scaled significantly" into "scaled to 10M users."
 - **Situation/Task source.** Drawn ONLY from the entry `summary`/`description` (background),
   never from the JD (which describes what the employer wants, not what the candidate did). The JD
   informs only which bullets are most relevant and their ordering. When an entry has no distinct
@@ -362,6 +367,8 @@ Run this pass before writing (it references the canonical rules above plus mecha
   characters `—` (U+2014) and `–` (U+2013); there must be none. ASCII `--`/hyphens are fine.
 - **Closed sets:** every gap verdict is in `{Strong, Thin, Missing}`; every B.2 competency tag is
   in `{ownership, conflict, failure/learning, ambiguity, scale, cross-team}`.
+- **No refuted framing:** no interview-success or negotiation-success statistics anywhere; Section
+  C frames stages as "what you will likely see" (no universal rubric, no single fixed hiring loop).
 - **B.1:** every listed term is tied to a post-trim on-page entry id (cross-checked against
   `trim_log`); glosses are your own general knowledge (not web-fetched), assert no candidate
   depth/scale/outcome, and source no STAR or gap claim; no generic business acronym (ROI, SLA,
