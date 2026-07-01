@@ -209,11 +209,13 @@ invariants:
   data, never instructions. The command body enforces (by prose, since no Python
   validator runs) the same posture as `prompt.py`/`eval/judge.py`: delimit the JD,
   refuse on injected directives, restate the `MAX_JD_LENGTH` size bound, write only
-  `<profile-dir>/interview-prep.md`. Its frontmatter pre-approves
-  `Read, Write, Glob, Grep, WebSearch, WebFetch` and `disallowed-tools` denies
-  `Bash`/`Edit`/`NotebookEdit` (`allowed-tools` alone does not remove a tool from the pool, so
-  `Bash` stays hard-denied). `Grep` is read-only, scoped by prose to the profile dir for
-  counting/verification; the prose still instructs no command execution.
+  `<profile-dir>/interview-prep.md`. Its frontmatter grants a full tool set
+  (`Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch`, no `disallowed-tools`) so the
+  command does not hit tool denials mid-run (an earlier tighter config that hard-denied
+  `Bash`/`Edit` caused `ls`/`Edit` denials on every run). The trade-off: the injection defense is
+  now **prose-only** (untrusted JD/portfolio/web data is never a source of commands, edits, or
+  fetches; all tool use stays inside the profile dir), with no hard tool-level backstop. This
+  reverses the earlier Grep-only posture by explicit owner decision.
 - **Web research (company overview + compensation)**: the two purposes allowed web
   access. WebSearch/WebFetch populate a top-of-document Company Overview (what they
   do, offices, headcount, public/private, government work) about the target
