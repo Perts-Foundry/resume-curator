@@ -533,6 +533,94 @@ class TestCurate:
         assert stream_kwargs["output_config"]["effort"] == "high"
         assert stream_kwargs["output_config"]["format"]["type"] == "json_schema"
 
+    def test_thinking_disabled_by_default(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Thinking is explicitly disabled for ordinary models.
+
+        The prompt relies on schema-based reasoning (grammar field
+        ordering), not extended thinking. Some models (e.g. Sonnet 5)
+        default thinking to *on* when the parameter is omitted, so this
+        must be sent explicitly rather than relied on by omission.
+        """
+        message = _make_mock_message(valid_curation)
+        mock_anthropic = _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        client.curate(portfolio_data, "Job description.")
+
+        stream_kwargs = mock_anthropic.return_value.messages.stream.call_args[1]
+        assert stream_kwargs["thinking"] == {"type": "disabled"}
+
+    def test_thinking_omitted_for_fable_and_mythos_models(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Fable/Mythos models reject an explicit thinking-disabled request.
+
+        These models cannot disable thinking (HTTP 400 on an explicit
+        ``{"type": "disabled"}``) and are outside this project's supported
+        model matrix; the client must not send the key for them.
+        """
+        for model in ("claude-fable-5", "claude-mythos-5"):
+            mock_settings = CuratorSettings(
+                anthropic_api_key=SecretStr("sk-ant-test-not-real"),
+                model=model,
+                max_tokens=4096,
+                effort=None,
+                api_max_retries=1,
+                portfolio_path=mock_settings.portfolio_path,
+                allow_api_spend=True,
+            )
+            message = _make_mock_message(valid_curation)
+            mock_anthropic = _wire_mock_stream(mocker, message)
+            client = CuratorClient(mock_settings)
+
+            client.curate(portfolio_data, "Job description.")
+
+            stream_kwargs = mock_anthropic.return_value.messages.stream.call_args[1]
+            assert "thinking" not in stream_kwargs
+
+    def test_thinking_disabled_for_haiku(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        """Haiku accepts an explicit thinking-disabled request.
+
+        Unlike ``effort`` (which Haiku 4.5 rejects with HTTP 400, see
+        ``_warn_if_effort_on_haiku`` in cli.py), Haiku fully supports the
+        ``thinking`` parameter, including an explicit ``{"type":
+        "disabled"}`` -- verified against the Anthropic docs during this
+        fix so Haiku is not lumped in with the Fable/Mythos exemption.
+        """
+        mock_settings = CuratorSettings(
+            anthropic_api_key=SecretStr("sk-ant-test-not-real"),
+            model="claude-haiku-4-5",
+            max_tokens=4096,
+            effort=None,
+            api_max_retries=1,
+            portfolio_path=mock_settings.portfolio_path,
+            allow_api_spend=True,
+        )
+        message = _make_mock_message(valid_curation)
+        mock_anthropic = _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        client.curate(portfolio_data, "Job description.")
+
+        stream_kwargs = mock_anthropic.return_value.messages.stream.call_args[1]
+        assert stream_kwargs["thinking"] == {"type": "disabled"}
+
     def test_calls_build_system_prompt(
         self,
         mocker: Any,

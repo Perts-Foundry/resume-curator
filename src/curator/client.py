@@ -501,6 +501,36 @@ def _sanitize_request_id(request_id: str | None) -> str:
     return _re.sub(r"[^A-Za-z0-9_-]", "_", request_id)[:40] or "unknown"
 
 
+# Model families that cannot disable adaptive thinking (an explicit
+# thinking={"type": "disabled"} request returns HTTP 400). These models are
+# outside this project's supported model matrix; every other supported model
+# (including Haiku, which does reject the sibling `effort` parameter) accepts
+# an explicit disable.
+_THINKING_ALWAYS_ON_MODEL_FAMILIES: tuple[str, ...] = ("fable", "mythos")
+
+
+def thinking_config_for_model(model: str) -> dict[str, str] | None:
+    """Build the ``thinking`` request kwarg that disables adaptive thinking.
+
+    Both the curate path (``CuratorClient.curate``) and the judge path
+    (``eval.judge.evaluate_tier2``) rely on schema-based reasoning (grammar
+    field ordering / a JSON-schema-shaped response) rather than extended
+    thinking blocks for audit visibility, and thinking tokens compete with
+    the structured output for the same ``max_tokens`` budget. Some models
+    (e.g. Sonnet 5) default thinking to *on* when the parameter is omitted,
+    unlike every other supported model, so this must be sent explicitly
+    rather than relied on by omission.
+
+    Returns ``None`` for the Fable/Mythos model family (see
+    ``_THINKING_ALWAYS_ON_MODEL_FAMILIES``); callers should omit the
+    ``thinking`` key entirely in that case rather than send a value those
+    models reject.
+    """
+    if any(family in model.lower() for family in _THINKING_ALWAYS_ON_MODEL_FAMILIES):
+        return None
+    return {"type": "disabled"}
+
+
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
@@ -639,6 +669,9 @@ class CuratorClient:
             "system": system,
             "messages": messages,
         }
+        thinking_config = thinking_config_for_model(self._model)
+        if thinking_config is not None:
+            kwargs["thinking"] = thinking_config
 
         # Log input sizes and request config.
         prompt_chars = sum(len(b["text"]) for b in system)

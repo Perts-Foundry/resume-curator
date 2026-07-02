@@ -759,6 +759,50 @@ class TestEvaluateTier2:
         call_kwargs = mock_client.messages.stream.call_args[1]
         assert call_kwargs["output_config"] == {"effort": "high"}
 
+    def test_thinking_disabled_for_default_judge_model(self) -> None:
+        """The judge call disables adaptive thinking for ordinary models.
+
+        Mirrors the same fix in ``CuratorClient.curate`` (see
+        ``thinking_config_for_model``): thinking tokens would otherwise
+        compete with JUDGE_MAX_TOKENS for the same budget, and some models
+        default thinking to *on* when the parameter is omitted.
+        """
+        ctx = _make_eval_context()
+        settings = _make_settings()
+        mock_msg = _make_mock_message()
+
+        mock_client = MagicMock()
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.get_final_message.return_value = mock_msg
+        mock_client.messages.stream.return_value = mock_stream
+
+        evaluate_tier2(ctx, settings=settings, client=mock_client)
+
+        call_kwargs = mock_client.messages.stream.call_args[1]
+        assert call_kwargs["thinking"] == {"type": "disabled"}
+
+    def test_thinking_omitted_for_fable_and_mythos_judge_models(self) -> None:
+        """Fable/Mythos judge models reject an explicit thinking-disabled request."""
+        for model in ("claude-fable-5", "claude-mythos-5"):
+            ctx = _make_eval_context()
+            settings = _make_settings()
+            settings.judge_model = model
+            mock_msg = _make_mock_message()
+
+            mock_client = MagicMock()
+            mock_stream = MagicMock()
+            mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+            mock_stream.__exit__ = MagicMock(return_value=False)
+            mock_stream.get_final_message.return_value = mock_msg
+            mock_client.messages.stream.return_value = mock_stream
+
+            evaluate_tier2(ctx, settings=settings, client=mock_client)
+
+            call_kwargs = mock_client.messages.stream.call_args[1]
+            assert "thinking" not in call_kwargs
+
 
 # ---------------------------------------------------------------------------
 # compare_judge_against_golden tests
