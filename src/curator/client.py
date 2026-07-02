@@ -701,11 +701,16 @@ class CuratorClient:
             except APIResponseError as exc:
                 if was_truncated:
                     # Add the truncation hint so the user can act on it.
+                    # Report the additive breakdown, not just the raw
+                    # CURATOR_MAX_TOKENS value: effective_max_tokens is
+                    # what was actually sent to the API and exhausted.
                     msg = (
                         f"Response truncated at max_tokens="
-                        f"{effective_max_tokens} and the partial JSON is "
-                        f"unparseable. Increase CURATOR_MAX_TOKENS "
-                        f"(current: {self._max_tokens}) and retry "
+                        f"{effective_max_tokens} "
+                        f"(CURATOR_MAX_TOKENS={self._max_tokens} + "
+                        f"{COVER_LETTER_MAX_TOKENS_HEADROOM} cover-letter "
+                        f"headroom) and the partial JSON is unparseable. "
+                        f"Increase CURATOR_MAX_TOKENS and retry "
                         f"(request_id={message.id}): {exc}"
                     )
                     raise APIResponseError(msg) from exc

@@ -861,8 +861,23 @@ class TestCurateGrammarSchemaAdapter:
         _wire_mock_stream(mocker, message)
         client = CuratorClient(mock_settings)
 
-        with pytest.raises(APIResponseError, match="truncated at max_tokens"):
+        with pytest.raises(
+            APIResponseError, match="truncated at max_tokens"
+        ) as exc_info:
             client.curate(portfolio_data, "Job description.", with_cover_letter=True)
+
+        # The message must show the effective (post-headroom) ceiling that
+        # was actually hit, not just the raw CURATOR_MAX_TOKENS config
+        # value -- and the additive breakdown so the user understands the
+        # cover-letter headroom is already baked into the number.
+        effective_max_tokens = (
+            mock_settings.max_tokens + COVER_LETTER_MAX_TOKENS_HEADROOM
+        )
+        assert f"max_tokens={effective_max_tokens}" in str(exc_info.value)
+        assert (
+            f"CURATOR_MAX_TOKENS={mock_settings.max_tokens} + "
+            f"{COVER_LETTER_MAX_TOKENS_HEADROOM} cover-letter headroom"
+        ) in str(exc_info.value)
 
     def test_synthesizes_empty_ranking_for_omitted_work_entry(
         self,
