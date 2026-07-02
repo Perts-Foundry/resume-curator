@@ -1085,6 +1085,17 @@ the truncation surfaces with a `(response was truncated at max_tokens)`
 hint in the error message so the user can distinguish a content drift from
 a budget cap.
 
+If the partial JSON is instead unparseable (the response was cut off
+mid-object rather than closing cleanly), `client.py` raises
+`APIResponseError` reporting `effective_max_tokens` (what was actually sent
+to the API and exhausted) plus the
+`CURATOR_MAX_TOKENS + COVER_LETTER_MAX_TOKENS_HEADROOM` breakdown, not just the raw
+`CURATOR_MAX_TOKENS` config value. The breakdown matters because the
+cover-letter headroom is additive on top of whatever `CURATOR_MAX_TOKENS`
+is set to: a user reading only the raw config value has no way to tell how
+much of the effective ceiling was already consumed by the fixed headroom
+bump.
+
 **Renderer artifacts:** `_render_cover_letter` writes three artifacts when
 a cover letter is present: `data/cover_letter.yaml` (letter fields plus
 `word_count`, `rendered_date`), `cover_letter.txt` (paste-ready plain text
