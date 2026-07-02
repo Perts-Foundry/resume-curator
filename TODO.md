@@ -636,6 +636,20 @@ expanding scope. Each is independently shippable.
 
 ## Eval Framework
 
+### Model compatibility
+
+- [ ] `eval/judge.py`'s `evaluate_tier2` unconditionally sends
+  `"temperature": 0` in the judge API request kwargs. Anthropic's
+  Sonnet 5 / Opus 4.7+ family rejects non-default `temperature` with
+  HTTP 400 (sampling parameters were removed on that model family).
+  `judge_model` defaults to `claude-haiku-4-5` today so this is latent,
+  not active, but `--judge-model claude-sonnet-5` (or any Opus 4.7+/Fable
+  family model) would 400 on every judge call. Fix: drop `temperature=0`
+  (or make it conditional the same way `thinking_config_for_model` is
+  conditional on model family) when targeting an affected model.
+  Discovered 2026-07-01 while fixing the sibling `thinking`-disable bug
+  in the same request-building code.
+
 ### Calibration
 
 - [ ] Run 3 judge passes per golden case and use mean scores for more

@@ -22,6 +22,7 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from curator.client import thinking_config_for_model
 from curator.eval.report import EVAL_SCHEMA_VERSION
 from curator.exceptions import (
     APIAuthError,
@@ -730,6 +731,9 @@ def evaluate_tier2(
         "system": system,
         "messages": messages,
     }
+    thinking_config = thinking_config_for_model(model)
+    if thinking_config is not None:
+        kwargs["thinking"] = thinking_config
     if settings.judge_effort is not None:
         kwargs["output_config"] = {"effort": settings.judge_effort}
 
