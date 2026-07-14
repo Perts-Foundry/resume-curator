@@ -258,7 +258,10 @@ def scan_job_description(jd_text: str) -> JDScanResult:
     pattern_findings: list[PatternFinding] = []
     for pattern_id, pattern, description in _COMPILED_PATTERNS:
         for match in pattern.finditer(text):
-            snippet = _escape_invisibles(match.group(0))[:JD_SCAN_SNIPPET_MAX]
+            # Cap the RAW match before escaping so invisibles (which expand
+            # 1 char to 6+) cannot push the visible directive text past the
+            # cap, and so the slice never tears a \uXXXX escape mid-sequence.
+            snippet = _escape_invisibles(match.group(0)[:JD_SCAN_SNIPPET_MAX])
             pattern_findings.append(
                 PatternFinding(
                     pattern_id=pattern_id,
@@ -303,57 +306,91 @@ def scan_job_description(jd_text: str) -> JDScanResult:
     )
 
 
+def _deobfuscate_line(line: str) -> tuple[str, int, int]:
+    """Delete suspicious invisibles and normalize unusual whitespace.
+
+    Returns ``(cleaned, removed_char_count, normalized_space_count)``.
+    """
+    out: list[str] = []
+    removed = 0
+    normalized = 0
+    for ch in line:
+        category = _classify_invisible(ch)
+        if category is None:
+            out.append(ch)
+        elif category in _INFORMATIONAL_CATEGORIES:
+            out.append(" ")
+            normalized += 1
+        else:
+            removed += 1
+    return "".join(out), removed, normalized
+
+
 def strip_findings(jd_text: str, result: JDScanResult) -> StripOutcome:
-    """Remove flagged content from ``jd_text`` per the module strip semantics.
+    r"""Remove flagged content from ``jd_text`` per the module strip semantics.
 
-    Whole lines touched by any pattern-finding span are removed;
-    suspicious invisible characters are deleted everywhere;
-    informational whitespace is normalized to a single ASCII space.
-    The stripped text is rescanned into ``residual``.
+    Deobfuscation happens BEFORE line dooming: every line first has its
+    suspicious invisibles deleted and unusual whitespace normalized, then
+    the deobfuscated text is rescanned and every line a pattern touches is
+    removed whole. This ordering is load-bearing. A directive hidden by a
+    zero-width character inside a keyword (``Ig<ZWSP>nore all previous
+    instructions``) breaks the pattern's ``\b`` boundary and is invisible
+    to the pre-strip scan; if invisibles were deleted from the KEPT line
+    after dooming (the naive order), the strip would reconstitute the now
+    plainly-readable directive and ship it to the API. Scanning the
+    deobfuscated text for dooming closes that gap, so ``residual`` comes
+    back clean rather than carrying a reconstituted match.
 
-    ``result`` must come from :func:`scan_job_description` on the same
-    ``jd_text`` (spans are offsets into the BOM-normalized text).
+    Suspicious-invisible and normalized-space counts are tallied over the
+    KEPT lines only; a doomed line's characters are accounted for by the
+    line removal, not the per-char counters.
+
+    ``result`` is retained for API symmetry and to let callers surface what
+    the original scan detected; line dooming does not depend on it.
     """
     text = _normalize_leading_bom(jd_text)
+    original_lines = text.split("\n")
 
-    # Whole-line removal for pattern findings. Work on line indices so
-    # two matches on one line remove it once.
-    lines = text.split("\n")
+    # Deobfuscate every line up front so a hidden directive is revealed to
+    # the dooming scan below. Per-line counts are summed over kept lines only.
+    deobf_lines: list[str] = []
+    per_line_removed: list[int] = []
+    per_line_normalized: list[int] = []
+    for line in original_lines:
+        cleaned, removed, normalized = _deobfuscate_line(line)
+        deobf_lines.append(cleaned)
+        per_line_removed.append(removed)
+        per_line_normalized.append(normalized)
+
+    # Doom every line a pattern touches in the DEOBFUSCATED text. Whole-line
+    # removal keeps the surviving lines' own newlines, so line removal never
+    # rejoins two lines into a fresh match; the only reconstitution risk was
+    # intra-line deobfuscation, already handled above.
+    deobf_text = "\n".join(deobf_lines)
+    doom_scan = scan_job_description(deobf_text)
     doomed: set[int] = set()  # 0-based line indices
-    for finding in result.pattern_findings:
-        start_line = _line_no_at(text, finding.span[0]) - 1
-        # span[1] is exclusive; step back one char so a match ending
-        # exactly at a newline does not doom the following line.
-        end_line = _line_no_at(text, max(finding.span[1] - 1, finding.span[0])) - 1
+    for finding in doom_scan.pattern_findings:
+        start_line = finding.line_no - 1
+        # span[1] is exclusive; step back one char so a match ending exactly
+        # at a newline does not doom the following line.
+        end_line = (
+            _line_no_at(deobf_text, max(finding.span[1] - 1, finding.span[0])) - 1
+        )
         doomed.update(range(start_line, end_line + 1))
 
+    # Echo the ORIGINAL (escaped) line so the operator sees what was there,
+    # invisibles and all, not the deobfuscated form.
     removed_lines = tuple(
-        (idx + 1, _escape_invisibles(lines[idx])) for idx in sorted(doomed)
+        (idx + 1, _escape_invisibles(original_lines[idx])) for idx in sorted(doomed)
     )
-    kept = [line for idx, line in enumerate(lines) if idx not in doomed]
+    kept_indices = [idx for idx in range(len(deobf_lines)) if idx not in doomed]
+    stripped = "\n".join(deobf_lines[idx] for idx in kept_indices)
 
-    removed_char_count = 0
-    normalized_space_count = 0
-    cleaned_lines: list[str] = []
-    for line in kept:
-        out: list[str] = []
-        for ch in line:
-            category = _classify_invisible(ch)
-            if category is None:
-                out.append(ch)
-            elif category in _INFORMATIONAL_CATEGORIES:
-                out.append(" ")
-                normalized_space_count += 1
-            else:
-                removed_char_count += 1
-        cleaned_lines.append("".join(out))
-
-    stripped = "\n".join(cleaned_lines)
     return StripOutcome(
         text=stripped,
         removed_lines=removed_lines,
-        removed_char_count=removed_char_count,
-        normalized_space_count=normalized_space_count,
+        removed_char_count=sum(per_line_removed[idx] for idx in kept_indices),
+        normalized_space_count=sum(per_line_normalized[idx] for idx in kept_indices),
         residual=scan_job_description(stripped),
     )
 
