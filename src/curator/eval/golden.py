@@ -299,16 +299,18 @@ def materialize_profile(golden: GoldenCase, target_dir: Path) -> Path:
     atomic_text_write(target_dir / "job_description.txt", golden.job_description)
 
     # Write curation_log.json (required by from_profile_dir for schema check).
-    # ``format_version`` matches what the live renderer writes so goldens
-    # and real curations are byte-shape-compatible. Additive fields
-    # (e.g., ai_hints.work_highlight_weights_raw, system_prompt_hash) are
-    # omitted: goldens carry no AI emission, so there's nothing to mirror,
-    # and the absence is the documented "treat missing as raw == clamped"
-    # default on the reader path.
+    # ``format_version`` is imported from the renderer (the live writer) so
+    # goldens and real curations cannot drift on the field that identifies
+    # the log schema. Additive fields (e.g., ai_hints.work_highlight_
+    # weights_raw, system_prompt_hash) are omitted: goldens carry no AI
+    # emission, so there's nothing to mirror, and the absence is the
+    # documented "treat missing as raw == clamped" default on the reader path.
+    from curator.renderer import CURATION_LOG_FORMAT_VERSION
+
     atomic_json_write(
         target_dir / "curation_log.json",
         {
-            "format_version": "2.8",
+            "format_version": CURATION_LOG_FORMAT_VERSION,
             "max_pages": golden.meta.max_pages,
         },
     )

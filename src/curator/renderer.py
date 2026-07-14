@@ -174,6 +174,16 @@ Consumed by ``curator.publish.publish_artifacts``; order-stable for
 reproducible publish output.
 """
 
+#: ``format_version`` written into ``curation_log.json`` by
+#: ``_write_audit_artifacts``. Single source of truth: the golden
+#: materializer (``curator.eval.golden``) imports this so the two writers
+#: cannot drift on the field that identifies the log schema. Bump this on
+#: any additive log-field change (see the version-history comment in
+#: ``_write_audit_artifacts``); the "2.x -> 2.y" convention there applies.
+#: Test pins keep the literal string deliberately, so a bump forces a
+#: conscious test update rather than silently passing.
+CURATION_LOG_FORMAT_VERSION: str = "2.8"
+
 
 # ---------------------------------------------------------------------------
 # Selection logic
@@ -1204,7 +1214,7 @@ def _write_audit_artifacts(
     # non-renderer consumer can read it without reconstructing the
     # three-branch ladder from raw token counts.
     log_data: dict[str, Any] = {
-        "format_version": "2.8",
+        "format_version": CURATION_LOG_FORMAT_VERSION,
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "system_prompt_hash": SYSTEM_PROMPT_HASH,

@@ -557,6 +557,11 @@ class TestWriteAuditArtifacts:
         # jd_injection_scan (2.8): absent when the caller passes no
         # record (static path, or a library caller that skipped the scan).
         assert "jd_injection_scan" not in log_data
+        # The written value must equal the exported constant so the golden
+        # materializer (which imports it) cannot drift from the renderer.
+        from curator.renderer import CURATION_LOG_FORMAT_VERSION
+
+        assert log_data["format_version"] == CURATION_LOG_FORMAT_VERSION
 
     def test_curation_log_records_jd_injection_scan(
         self,
