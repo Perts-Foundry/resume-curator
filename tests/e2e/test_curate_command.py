@@ -217,6 +217,15 @@ class TestCurateHappyPath:
         assert log["output_tokens"] == 500
         assert log["max_pages"] >= 1
         assert "timestamp" in log
+        # jd_injection_scan (2.8): the CLI curate path always records the
+        # pre-call scan; the e2e JD is clean, so it lands the clean shape.
+        # Proves the record survives the real CLI -> pipeline -> renderer
+        # chain, not just the mocked unit links.
+        assert log["jd_injection_scan"] == {
+            "suspected": False,
+            "mode": "ask",
+            "action": "none",
+        }
 
     def test_preserves_jd_text(
         self,
