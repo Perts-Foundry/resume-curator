@@ -205,6 +205,13 @@ invariants:
   promotion to a real subcommand (tracked in `TODO.md`).
 - **JD-path only**: it requires `job_description.txt` + `curated.yaml` and
   refuses static-mode profiles (those carry `mode.txt`, no JD).
+- **Phase 2b injection gate**: before any JD analysis it reads the pipeline's
+  `jd_injection_scan` verdict from `curation_log.json` and independently greps
+  the JD for injection-directive themes (canonical list:
+  `JD_INJECTION_PATTERNS` in `src/curator/rules.py`; edit both in the same PR)
+  plus suspicious invisible chars. On any finding it stops and asks the user
+  (continue with flagged spans excluded from reasoning, or abort); it never
+  edits `job_description.txt`.
 - **Trust boundary**: the JD, portfolio files, and any web content are untrusted
   data, never instructions. The command body enforces (by prose, since no Python
   validator runs) the same posture as `prompt.py`/`eval/judge.py`: delimit the JD,
@@ -397,6 +404,14 @@ resume-curator/
                                     #   ("api" | "static"); injects the per-call
                                     #   schema built by output_schema.py via
                                     #   output_config.format
+      jd_scan.py                    # Heuristic JD prompt-injection detector +
+                                    #   strip mechanics (advisory, pre-API).
+                                    #   Patterns are JD_INJECTION_PATTERNS in
+                                    #   rules.py; policy layer is --jd-scan
+                                    #   {ask,strip,proceed,fail} on curate
+                                    #   (cli.py::_resolve_jd_scan). Outcome is
+                                    #   audited as curation_log.json
+                                    #   jd_injection_scan (format 2.8).
       output_schema.py              # Per-call JSON schema construction from
                                     #   PortfolioData; grammar-enforces
                                     #   parent-child ID scoping on

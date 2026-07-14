@@ -63,6 +63,16 @@ class JobDescriptionError(CuratorError):
     """Unreadable or invalid job description input."""
 
 
+class JDInjectionError(JobDescriptionError):
+    """Suspected prompt-injection content in the JD; run aborted pre-API.
+
+    Raised by the CLI's ``--jd-scan`` action layer when the scan
+    suspects an embedded injection and the resolved policy is to stop
+    (mode ``fail``, an interactive abort, or mode ``ask`` on a
+    non-interactive stdin). Always raised before any billable API call.
+    """
+
+
 class EvalError(CuratorError):
     """Evaluation framework error (metric computation, golden loading, etc.)."""
 

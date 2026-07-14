@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -160,6 +160,7 @@ def run_pipeline(
     with_cover_letter: bool = False,
     publish_to: Path | None = None,
     on_status: Callable[[str], None] | None = None,
+    jd_scan_record: dict[str, Any] | None = None,
 ) -> PipelineResult:
     """Execute the full curation pipeline with renderer-side page fitting.
 
@@ -182,6 +183,10 @@ def run_pipeline(
             ``<publish_to>/<profile_name>/`` after rendering. The CLI
             ``--publish DIR`` option supplies this kwarg inline.
         on_status: Optional callback for progress updates (e.g., Rich status).
+        jd_scan_record: Optional ``jd_injection_scan`` audit sub-object
+            from the CLI's pre-call JD injection scan (see
+            ``curator.jd_scan.to_audit_record``); persisted into
+            ``curation_log.json`` when provided.
 
     Returns:
         PipelineResult with curation decisions, render output, and token usage.
@@ -230,6 +235,7 @@ def run_pipeline(
         settings,
         skip_pdf=skip_pdf,
         safety_net=True,
+        jd_scan_record=jd_scan_record,
     )
     logger.info("Rendering completed in {:.1f}s", time.perf_counter() - t0)
 

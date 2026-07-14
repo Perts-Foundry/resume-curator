@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from curator.eval import EvalContext
     from curator.eval.judge import Tier2Report
     from curator.eval.report import EvalReport
+    from curator.jd_scan import JDScanResult
     from curator.models import PortfolioData
 
 app = typer.Typer(
@@ -403,6 +404,190 @@ def _read_jd_text(
     return text
 
 
+def _stdin_is_interactive() -> bool:
+    """Whether stdin can answer an interactive prompt.
+
+    Checked at call time (a piped JD means stdin is the JD stream and
+    cannot also carry a prompt answer). Isolated as a helper so tests
+    can patch interactivity without fighting CliRunner's stdin swap.
+    """
+    return sys.stdin.isatty()
+
+
+def _display_jd_scan_findings(console: Console, result: JDScanResult) -> None:
+    """Render the JD injection-scan findings as a table on stderr.
+
+    Snippets and codepoint names go to the console (and later the audit
+    record); the WARN log line carries counts only, honoring the
+    no-PII-in-logs rule. Every JD-derived cell is passed through
+    ``rich.markup.escape`` so bracketed JD content cannot inject Rich
+    markup into (or crash) the very table the operator reads to decide.
+    """
+    from rich.markup import escape
+
+    table = Table(title="Suspected prompt-injection content in job description")
+    table.add_column("Type", style="red")
+    table.add_column("Line", justify="right")
+    table.add_column("Detail", overflow="fold")
+    for f in result.pattern_findings:
+        table.add_row(f.pattern_id, str(f.line_no), escape(f.snippet))
+    for inv in result.invisible_findings:
+        table.add_row(
+            f"invisible:{inv.category}",
+            str(inv.first_line_no),
+            escape(f"{inv.codepoint} {inv.name} x{inv.count}"),
+        )
+    console.print()
+    console.print(table)
+
+
+def _resolve_jd_scan(
+    jd_text: str,
+    mode: str,
+    console: Console,
+    *,
+    enforce: bool = True,
+) -> tuple[str, dict[str, Any]]:
+    """Scan the JD for injection content and apply the ``--jd-scan`` policy.
+
+    Runs strictly before any billable API call. Returns the JD text to
+    use downstream (original or stripped) and the ``jd_injection_scan``
+    audit record for ``curation_log.json``.
+
+    Args:
+        jd_text: Validated JD text (post ``validate_job_description``).
+        mode: One of ``ask`` / ``strip`` / ``proceed`` / ``fail``.
+        console: stderr console for findings display.
+        enforce: When True (real run), apply the policy: prompt, strip,
+            or raise. When False (``--dry-run``, a zero-cost preview with
+            no billable call at stake), display the findings and warn but
+            never prompt, strip, or raise; the original text is returned
+            and the record is discarded by the dry-run branch. This keeps
+            the dry-run contract that a preview never hard-fails after JD
+            validation, while still surfacing the scan.
+
+    Raises:
+        JDInjectionError: ``enforce`` is True and mode is ``fail``, the
+            user aborted, mode is ``ask`` on a non-interactive stdin, or
+            stripping left an empty job description.
+    """
+    from curator.exceptions import JDInjectionError
+    from curator.jd_scan import scan_job_description, strip_findings, to_audit_record
+
+    result = scan_job_description(jd_text)
+    if not result.suspected:
+        logger.debug("JD injection scan: clean")
+        return jd_text, to_audit_record(result, action="none", mode=mode)
+
+    _display_jd_scan_findings(console, result)
+    suspicious_invisibles = sum(
+        f.count for f in result.invisible_findings if f.category != "unusual_space"
+    )
+    logger.warning(
+        "JD injection scan: {} pattern match(es), {} suspicious invisible "
+        "char(s); mode={}",
+        len(result.pattern_findings),
+        suspicious_invisibles,
+        mode,
+    )
+
+    if not enforce:
+        # Dry-run preview: surface the findings, enforce nothing. No paid
+        # call is at stake, so a non-interactive dry-run must not hard-fail
+        # and a preview must not block on a prompt. The record is unused
+        # (the dry-run branch returns before the pipeline).
+        return jd_text, to_audit_record(result, action="preview", mode=mode)
+
+    if mode == "fail":
+        msg = (
+            f"Job description contains suspected prompt-injection content "
+            f"({len(result.pattern_findings)} pattern match(es), "
+            f"{suspicious_invisibles} suspicious invisible char(s)). "
+            f"Re-run with --jd-scan strip to remove the flagged lines, "
+            f"--jd-scan proceed to continue anyway, or edit the JD file."
+        )
+        raise JDInjectionError(msg)
+
+    if mode == "proceed":
+        logger.warning("Proceeding with suspected injection content unmodified")
+        return jd_text, to_audit_record(result, action="proceed", mode=mode)
+
+    if mode == "ask":
+        if not _stdin_is_interactive():
+            msg = (
+                "Job description contains suspected prompt-injection "
+                "content and stdin is not interactive. Pass --jd-scan "
+                "strip, --jd-scan proceed, or --jd-scan fail."
+            )
+            raise JDInjectionError(msg)
+        choice: str = typer.prompt(
+            "Action [strip: remove flagged lines / proceed: use as-is / "
+            "abort: stop before the API call]",
+            type=click.Choice(["strip", "proceed", "abort"]),
+            default="abort",
+        )
+        if choice == "abort":
+            msg = "Aborted by user before API call."
+            raise JDInjectionError(msg)
+        if choice == "proceed":
+            logger.warning("Proceeding with suspected injection content unmodified")
+            return jd_text, to_audit_record(result, action="proceed", mode=mode)
+        # fall through to strip
+    # mode == "strip", or interactive choice == "strip"
+    outcome = strip_findings(jd_text, result)
+    _display_strip_outcome(console, outcome)
+    if not outcome.text.strip():
+        # Every line was flagged. Re-validating downstream would raise a
+        # generic "must not be empty" with no mention of the strip, so
+        # fail here with a strip-aware message.
+        msg = (
+            "Stripping the suspected content left an empty job description. "
+            "Edit the JD file to remove the injected content by hand, or "
+            "re-run with --jd-scan proceed to send the JD unmodified."
+        )
+        raise JDInjectionError(msg)
+    if mode == "ask" and not typer.confirm(
+        "Continue with the stripped JD?", default=True
+    ):
+        msg = "Aborted by user before API call."
+        raise JDInjectionError(msg)
+    return outcome.text, to_audit_record(
+        result, action="strip", mode=mode, strip=outcome
+    )
+
+
+def _display_strip_outcome(console: Console, outcome: Any) -> None:
+    """Echo what stripping removed so the operator can confirm after the fact.
+
+    Removed-line text is passed through ``rich.markup.escape`` for the same
+    reason as the findings table: it is attacker-controlled JD content.
+    """
+    from rich.markup import escape
+
+    if outcome.removed_lines:
+        console.print("[yellow]Removed line(s):[/]")
+        for line_no, line_text in outcome.removed_lines:
+            console.print(f"  {line_no}: {escape(line_text)}")
+    if outcome.removed_char_count:
+        console.print(
+            f"[yellow]Deleted {outcome.removed_char_count} suspicious "
+            f"invisible char(s).[/]"
+        )
+    if outcome.normalized_space_count:
+        console.print(
+            f"Normalized {outcome.normalized_space_count} unusual "
+            f"whitespace char(s) to ASCII space."
+        )
+    if outcome.residual.suspected:
+        # Defensive: strip_findings deobfuscates before dooming, so residual
+        # should come back clean. If a future pattern change reintroduces a
+        # reconstitution path, surface it rather than shipping silently.
+        logger.warning(
+            "JD still carries suspected content after stripping; "
+            "review the JD file manually"
+        )
+
+
 def _guard_publish_destination(publish: Path | None) -> None:
     """Reject a ``--publish`` value that is an existing file, not a directory.
 
@@ -519,6 +704,17 @@ def curate(
             "Takes precedence over CURATOR_EFFORT and .env."
         ),
     ),
+    jd_scan: str = typer.Option(
+        "ask",
+        "--jd-scan",
+        click_type=click.Choice(["ask", "strip", "proceed", "fail"]),
+        help=(
+            "Action when the JD scan suspects an embedded prompt "
+            "injection: ask interactively (TTY only), strip the flagged "
+            "lines and continue, proceed with a warning, or fail before "
+            "any API call."
+        ),
+    ),
     publish: Path | None = _CURATE_PUBLISH_OPT,
 ) -> None:
     """Curate a resume tailored to a job description."""
@@ -585,6 +781,16 @@ def curate(
 
         validate_job_description(jd_text)
 
+        # Injection scan + policy resolution BEFORE the dry-run branch and
+        # before any billable call. On a real run the resolved text (with
+        # any strip applied) is what flows downstream. A dry-run is a
+        # zero-cost preview, so it surfaces the findings but enforces
+        # nothing (no prompt, no strip, no hard-fail); the preview shows
+        # the JD as it sits on disk.
+        jd_text, jd_scan_record = _resolve_jd_scan(
+            jd_text, jd_scan, console, enforce=not dry_run
+        )
+
         # --- Dry-run: zero-cost preview, no API call ---
         if dry_run:
             from curator.loader import load_portfolio
@@ -621,6 +827,7 @@ def curate(
                 with_cover_letter=cover_letter,
                 publish_to=publish_to,
                 on_status=status.update,
+                jd_scan_record=jd_scan_record,
             )
 
         logger.info("Total pipeline: {:.1f}s", time.perf_counter() - pipeline_start)

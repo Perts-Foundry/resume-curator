@@ -174,6 +174,16 @@ Consumed by ``curator.publish.publish_artifacts``; order-stable for
 reproducible publish output.
 """
 
+#: ``format_version`` written into ``curation_log.json`` by
+#: ``_write_audit_artifacts``. Single source of truth: the golden
+#: materializer (``curator.eval.golden``) imports this so the two writers
+#: cannot drift on the field that identifies the log schema. Bump this on
+#: any additive log-field change (see the version-history comment in
+#: ``_write_audit_artifacts``); the "2.x -> 2.y" convention there applies.
+#: Test pins keep the literal string deliberately, so a bump forces a
+#: conscious test update rather than silently passing.
+CURATION_LOG_FORMAT_VERSION: str = "2.8"
+
 
 # ---------------------------------------------------------------------------
 # Selection logic
@@ -1142,6 +1152,7 @@ def _write_audit_artifacts(
     max_pages: int,
     add_back_count: int = 0,
     over_budget: bool = False,
+    jd_scan_record: dict[str, Any] | None = None,
 ) -> tuple[Path, Path, Path | None, Path | None]:
     """Write curated.yaml, curation_log.json, and per-source descriptor.
 
@@ -1149,6 +1160,12 @@ def _write_audit_artifacts(
     runs (``jd_text=None``) write ``mode.txt`` with a brief descriptor
     instead; ``curation_log.json.source`` is the authoritative provenance
     signal.
+
+    ``jd_scan_record`` is the ``jd_injection_scan`` sub-object built by
+    ``curator.jd_scan.to_audit_record``; the CLI supplies it on the
+    curate path (clean scans included, so "scanned clean" is
+    distinguishable from a pre-2.8 log). ``None`` (static path, or a
+    library caller that skipped the scan) omits the key.
 
     When ``trim_log`` is provided (after the trim loop), the curation log
     is rewritten with the trim history for auditability.
@@ -1178,6 +1195,12 @@ def _write_audit_artifacts(
     # carries (cascade-exhausted vs add-back-failed). Renderer caps
     # are deterministic from ``max_pages`` via ``_caps_for_pages`` and
     # are intentionally not persisted; storing both invites drift.
+    # 2.8 adds the optional ``jd_injection_scan`` sub-object (built by
+    # ``curator.jd_scan.to_audit_record``) recording the pre-API JD
+    # injection scan: suspected flag, matched patterns, invisible-char
+    # summary, and the operator's chosen action. Present on curate-path
+    # runs (including clean scans); absent on static runs, which take
+    # no JD.
     #
     # Version semantics: a minor bump (2.x -> 2.y) covers all additive
     # field surfaces shipped in the same PR. The number identifies the
@@ -1191,7 +1214,7 @@ def _write_audit_artifacts(
     # non-renderer consumer can read it without reconstructing the
     # three-branch ladder from raw token counts.
     log_data: dict[str, Any] = {
-        "format_version": "2.7",
+        "format_version": CURATION_LOG_FORMAT_VERSION,
         "prompt_version": PROMPT_VERSION,
         "prompt_hash": PROMPT_HASH,
         "system_prompt_hash": SYSTEM_PROMPT_HASH,
@@ -1265,6 +1288,8 @@ def _write_audit_artifacts(
         }
     else:
         log_data["cover_letter"] = {"enabled": False}
+    if jd_scan_record is not None:
+        log_data["jd_injection_scan"] = jd_scan_record
     atomic_json_write(log_path, log_data)
 
     # Per-source descriptor: JD text for API runs, mode.txt for static runs.
@@ -1465,6 +1490,7 @@ def render(
     *,
     skip_pdf: bool = False,
     safety_net: bool | None = None,
+    jd_scan_record: dict[str, Any] | None = None,
 ) -> RenderOutput:
     """Apply curation selections, produce a PDF, and trim to fit.
 
@@ -1485,6 +1511,9 @@ def render(
             — True for ``"api"`` (trusts AI to rank correctly; safety net
             catches accidental omissions), False for ``"static"`` (honors
             ``--max-highlights`` caps verbatim). Pipelines can override.
+        jd_scan_record: Optional ``jd_injection_scan`` audit sub-object
+            (see ``curator.jd_scan.to_audit_record``); persisted into
+            ``curation_log.json`` when provided.
 
     Returns:
         ``RenderOutput`` with paths to all generated files.
@@ -1612,6 +1641,7 @@ def render(
             max_pages=settings.max_pages,
             add_back_count=add_back_count,
             over_budget=over_budget,
+            jd_scan_record=jd_scan_record,
         )
 
         # Cover letter (if present on the curation result). Runs after the

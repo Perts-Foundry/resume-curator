@@ -437,6 +437,99 @@ SCORE_WARN_THRESHOLD: int = 75
 BASELINE_MARGIN: int = 5  # Points below actual score for golden baselines
 MAX_JD_LENGTH: int = 50_000  # Maximum job description length in characters
 
+# ---------------------------------------------------------------------------
+# JD injection-scan heuristics
+# ---------------------------------------------------------------------------
+# Consumed by ``curator.jd_scan``; restated in prose form in
+# ``.claude/commands/interview-prep.md`` (Phase 2b). This tuple is the
+# canonical list; update the command file in the same PR when editing.
+#
+# Each entry is (pattern_id, regex, description). Regexes are compiled
+# case-insensitive by the consumer. The ``[^.\n]{0,40}`` proximity
+# windows keep verbs and their objects inside a single clause, which is
+# the primary false-positive control: "you will follow instructions
+# from the team lead" has no override verb; "override default
+# configurations via Terraform" has no instruction-noun.
+#
+# Known soft false positive: ``system_prompt_probe`` can co-trigger on
+# a security JD that lists "prompt injection defense" duties. Accepted
+# because this layer is warn-plus-one-keypress (advisory), never a
+# silent hard block.
+
+JD_INJECTION_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    (
+        "instruction_override",
+        r"\b(ignore|disregard|forget|overrule)\b[^.\n]{0,40}"
+        r"\b(previous|prior|above|earlier|all|any|your|these|system)\b"
+        r"[^.\n]{0,40}\b(instructions?|prompts?|rules?|directives?"
+        r"|guidelines?|context)\b",
+        "directive to override prior instructions",
+    ),
+    (
+        "new_instructions_block",
+        r"\b(new|updated|real|true|actual|important)\s+"
+        r"(instructions?|prompts?|directives?)\s*:",
+        "colon-introduced replacement-instruction block",
+    ),
+    (
+        "ai_addressing",
+        r"\bif\s+you('?re|\s+are)\s+(an?\s+)?"
+        r"(ai|llm|language\s+model|assistant|chatbot|bot|claude|gpt|copilot)\b",
+        "conditional addressed to an AI reader",
+    ),
+    (
+        "ai_identity",
+        r"\byou\s+are\s+(an?\s+)?(ai|llm|language\s+model|chatbot)\b",
+        "direct address asserting the reader is an AI",
+    ),
+    (
+        "canary_token_directive",
+        r"\b(mention|include|insert|add|say|use|write)\b[^.\n]{0,40}"
+        r"\b(the\s+)?(word|phrase|term|emoji)\b",
+        "directive to emit a specific token",
+    ),
+    (
+        "canary_content_directive",
+        r"\b(add|include|insert|write|mention)\b[^.\n]{0,40}"
+        r"\b(a\s+)?(joke|poem|haiku|riddle|recipe|banana|pineapple|unicorn)s?\b",
+        "directive to emit gotcha content",
+    ),
+    (
+        "human_proof_canary",
+        r"\b(prove|show|confirm|demonstrate)\b[^.\n]{0,40}"
+        r"\b(you\s+(read|are\s+human|are\s+not\s+(an?\s+)?(ai|bot|robot)))\b",
+        "prove-you-are-human canary",
+    ),
+    (
+        "system_prompt_probe",
+        r"\b(system\s+prompt|developer\s+message|hidden\s+(prompt|instructions?)"
+        r"|your\s+(initial\s+)?instructions)\b",
+        "reference to the model's own prompt or instructions",
+    ),
+    (
+        "output_redirection",
+        r"\b(begin|start|end)\s+(your|the)\s+"
+        r"(response|answer|output|summary|resume|cover\s+letter)\s+with\b",
+        "directive to reshape the output",
+    ),
+    (
+        "role_reassignment",
+        r"\b(pretend\s+(to\s+be|you\s+are)|roleplay\s+as"
+        r"|act\s+as\s+(an?\s+)?(ai|assistant|system|chatbot))\b",
+        "directive to adopt a different role",
+    ),
+    (
+        "disregard_defense",
+        r"\bdo\s+not\s+(follow|obey|comply\s+with|apply)\s+"
+        r"(the\s+)?(above|previous|prior|system|your)\b",
+        "inverse-form override directive",
+    ),
+)
+
+#: Maximum characters of matched JD text surfaced per finding in the
+#: console table and the ``jd_injection_scan`` audit record.
+JD_SCAN_SNIPPET_MAX: int = 120
+
 # Summary word-count thresholds — shared by prompt.py (AI instruction) and
 # eval/content.py (scoring). Prompt target is tighter than eval PASS range
 # to give Claude a clear anchor inside the acceptable band.
