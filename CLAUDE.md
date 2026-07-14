@@ -6,6 +6,22 @@ resume-curator is an AI-powered CLI tool that tailors resume content to specific
 descriptions using structured portfolio data (YAML) and the Claude API. It selects and
 prioritizes existing experience entries — it does not fabricate content.
 
+## Primary Design Constraint: Zero-Touch Output
+
+The tool must produce PDFs that are ready to submit **without any manual editing**. This
+is the primary constraint against which all architectural decisions are evaluated: ask
+"does this get us closer to zero-touch output?"
+
+- **Why**: the resume-curator is one stage of an automated pipeline (later phases add job
+  discovery and application submission) that generates resumes in bulk for different
+  positions. There is no human review step, so any manual editing defeats the purpose of
+  the automation and does not scale for bulk processing.
+- **What it drives**: template quality, content-selection precision, and length
+  enforcement (page-fitting) all matter specifically because nothing downstream fixes a
+  bad output. The same standard extends to cover letters (fully-filled, submittable
+  prose, no placeholders or TEMPLATE banners; see **Cover Letters** below) and to the
+  static path, which must hit the same submittable bar with zero API cost.
+
 ## Key Documents
 
 - `docs/architecture.md` — Current architecture and design decisions.
