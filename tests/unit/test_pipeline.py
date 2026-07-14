@@ -163,10 +163,37 @@ class TestSkipPdf:
             settings,
             skip_pdf=True,
             safety_net=True,
+            jd_scan_record=None,
         )
         assert result.skip_pdf is True
         assert result.page_count is None
         assert result.converged is True
+
+    def test_jd_scan_record_threaded_to_render(
+        self,
+        mocker: Any,
+        tmp_path: Path,
+    ) -> None:
+        settings = _make_mock_settings(tmp_path)
+        mocker.patch("curator.pipeline.load_portfolio")
+
+        mock_client = MagicMock()
+        mock_client.curate.return_value = _make_mock_result()
+        mock_client_cls = mocker.patch("curator.pipeline.CuratorClient")
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        mock_render_output = MagicMock()
+        mock_render_output.pdf_path = None
+        mock_render_output.trim_log = []
+        mock_render_output.page_count = None
+        mock_render = mocker.patch(
+            "curator.pipeline.render", return_value=mock_render_output
+        )
+
+        record = {"suspected": False, "mode": "ask", "action": "none"}
+        run_pipeline(settings, "JD.", skip_pdf=True, jd_scan_record=record)
+
+        assert mock_render.call_args.kwargs["jd_scan_record"] == record
 
     def test_skip_pdf_token_counts(
         self,

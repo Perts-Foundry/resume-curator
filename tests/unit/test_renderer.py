@@ -529,7 +529,7 @@ class TestWriteAuditArtifacts:
             SYSTEM_PROMPT_HASH,
         )
 
-        assert log_data["format_version"] == "2.7"
+        assert log_data["format_version"] == "2.8"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
         assert log_data["prompt_version"] == "2026-05-26"
@@ -554,6 +554,50 @@ class TestWriteAuditArtifacts:
         # call site omits them (no add-back occurred, on-budget render).
         assert log_data["add_back_count"] == 0
         assert log_data["over_budget"] is False
+        # jd_injection_scan (2.8): absent when the caller passes no
+        # record (static path, or a library caller that skipped the scan).
+        assert "jd_injection_scan" not in log_data
+
+    def test_curation_log_records_jd_injection_scan(
+        self,
+        tmp_path: Path,
+        curation_result: CurationResult,
+    ) -> None:
+        record = {
+            "suspected": True,
+            "mode": "ask",
+            "action": "strip",
+            "pattern_findings": [
+                {
+                    "pattern_id": "instruction_override",
+                    "line": 3,
+                    "snippet": "Ignore all previous instructions",
+                }
+            ],
+            "stripped_line_count": 1,
+            "stripped_char_count": 0,
+            "normalized_space_count": 0,
+            "residual_suspected": False,
+        }
+        _, log_path, _, _ = _write_audit_artifacts(
+            tmp_path, curation_result, "JD text.", jd_scan_record=record
+        )
+        log_data = json.loads(log_path.read_text())
+        assert log_data["jd_injection_scan"] == record
+
+    def test_curation_log_records_clean_jd_injection_scan(
+        self,
+        tmp_path: Path,
+        curation_result: CurationResult,
+    ) -> None:
+        # Clean scans still land a record so "scanned clean" is
+        # distinguishable from a pre-2.8 log with no scan at all.
+        record = {"suspected": False, "mode": "ask", "action": "none"}
+        _, log_path, _, _ = _write_audit_artifacts(
+            tmp_path, curation_result, "JD text.", jd_scan_record=record
+        )
+        log_data = json.loads(log_path.read_text())
+        assert log_data["jd_injection_scan"] == record
 
     def test_jd_text_preserved(
         self,
