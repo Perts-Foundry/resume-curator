@@ -403,6 +403,145 @@ def _read_jd_text(
     return text
 
 
+def _stdin_is_interactive() -> bool:
+    """Whether stdin can answer an interactive prompt.
+
+    Checked at call time (a piped JD means stdin is the JD stream and
+    cannot also carry a prompt answer). Isolated as a helper so tests
+    can patch interactivity without fighting CliRunner's stdin swap.
+    """
+    return sys.stdin.isatty()
+
+
+def _display_jd_scan_findings(console: Console, result: Any) -> None:
+    """Render the JD injection-scan findings as a table on stderr.
+
+    Snippets and codepoint names go to the console (and later the audit
+    record); the WARN log line carries counts only, honoring the
+    no-PII-in-logs rule.
+    """
+    table = Table(title="Suspected prompt-injection content in job description")
+    table.add_column("Type", style="red")
+    table.add_column("Line", justify="right")
+    table.add_column("Detail", overflow="fold")
+    for f in result.pattern_findings:
+        table.add_row(f.pattern_id, str(f.line_no), f.snippet)
+    for inv in result.invisible_findings:
+        table.add_row(
+            f"invisible:{inv.category}",
+            str(inv.first_line_no),
+            f"{inv.codepoint} {inv.name} x{inv.count}",
+        )
+    console.print()
+    console.print(table)
+
+
+def _resolve_jd_scan(
+    jd_text: str,
+    mode: str,
+    console: Console,
+) -> tuple[str, dict[str, Any]]:
+    """Scan the JD for injection content and apply the ``--jd-scan`` policy.
+
+    Runs strictly before any billable API call. Returns the JD text to
+    use downstream (original or stripped) and the ``jd_injection_scan``
+    audit record for ``curation_log.json``.
+
+    Args:
+        jd_text: Validated JD text (post ``validate_job_description``).
+        mode: One of ``ask`` / ``strip`` / ``proceed`` / ``fail``.
+        console: stderr console for findings display.
+
+    Raises:
+        JDInjectionError: Mode is ``fail``, the user aborted, or mode is
+            ``ask`` on a non-interactive stdin.
+    """
+    from curator.exceptions import JDInjectionError
+    from curator.jd_scan import scan_job_description, strip_findings, to_audit_record
+
+    result = scan_job_description(jd_text)
+    if not result.suspected:
+        logger.debug("JD injection scan: clean")
+        return jd_text, to_audit_record(result, action="none", mode=mode)
+
+    _display_jd_scan_findings(console, result)
+    suspicious_invisibles = sum(
+        f.count for f in result.invisible_findings if f.category != "unusual_space"
+    )
+    logger.warning(
+        "JD injection scan: {} pattern match(es), {} suspicious invisible "
+        "char(s); mode={}",
+        len(result.pattern_findings),
+        suspicious_invisibles,
+        mode,
+    )
+
+    if mode == "fail":
+        msg = (
+            f"Job description contains suspected prompt-injection content "
+            f"({len(result.pattern_findings)} pattern match(es), "
+            f"{suspicious_invisibles} suspicious invisible char(s)). "
+            f"Re-run with --jd-scan strip to remove the flagged lines, "
+            f"--jd-scan proceed to continue anyway, or edit the JD file."
+        )
+        raise JDInjectionError(msg)
+
+    if mode == "proceed":
+        logger.warning("Proceeding with suspected injection content unmodified")
+        return jd_text, to_audit_record(result, action="proceed", mode=mode)
+
+    if mode == "ask":
+        if not _stdin_is_interactive():
+            msg = (
+                "Job description contains suspected prompt-injection "
+                "content and stdin is not interactive. Pass --jd-scan "
+                "strip, --jd-scan proceed, or --jd-scan fail."
+            )
+            raise JDInjectionError(msg)
+        choice: str = typer.prompt(
+            "Action [strip: remove flagged lines / proceed: use as-is / "
+            "abort: stop before the API call]",
+            type=click.Choice(["strip", "proceed", "abort"]),
+            default="abort",
+        )
+        if choice == "abort":
+            msg = "Aborted by user before API call."
+            raise JDInjectionError(msg)
+        if choice == "proceed":
+            logger.warning("Proceeding with suspected injection content unmodified")
+            return jd_text, to_audit_record(result, action="proceed", mode=mode)
+        # fall through to strip
+    # mode == "strip", or interactive choice == "strip"
+    outcome = strip_findings(jd_text, result)
+    if outcome.removed_lines:
+        console.print("[yellow]Removed line(s):[/]")
+        for line_no, line_text in outcome.removed_lines:
+            console.print(f"  {line_no}: {line_text}")
+    if outcome.removed_char_count:
+        console.print(
+            f"[yellow]Deleted {outcome.removed_char_count} suspicious "
+            f"invisible char(s).[/]"
+        )
+    if outcome.normalized_space_count:
+        console.print(
+            f"Normalized {outcome.normalized_space_count} unusual "
+            f"whitespace char(s) to ASCII space."
+        )
+    if outcome.residual.suspected:
+        logger.warning(
+            "JD still carries suspected content after stripping; "
+            "review the JD file manually"
+        )
+    if mode == "ask" and not typer.confirm(
+        "Continue with the stripped JD?", default=True
+    ):
+        msg = "Aborted by user before API call."
+        raise JDInjectionError(msg)
+    return outcome.text, to_audit_record(
+        result, action="strip", mode=mode, strip=outcome
+    )
+
+
 def _guard_publish_destination(publish: Path | None) -> None:
     """Reject a ``--publish`` value that is an existing file, not a directory.
 
@@ -519,6 +658,17 @@ def curate(
             "Takes precedence over CURATOR_EFFORT and .env."
         ),
     ),
+    jd_scan: str = typer.Option(
+        "ask",
+        "--jd-scan",
+        click_type=click.Choice(["ask", "strip", "proceed", "fail"]),
+        help=(
+            "Action when the JD scan suspects an embedded prompt "
+            "injection: ask interactively (TTY only), strip the flagged "
+            "lines and continue, proceed with a warning, or fail before "
+            "any API call."
+        ),
+    ),
     publish: Path | None = _CURATE_PUBLISH_OPT,
 ) -> None:
     """Curate a resume tailored to a job description."""
@@ -585,6 +735,11 @@ def curate(
 
         validate_job_description(jd_text)
 
+        # Injection scan + policy resolution BEFORE the dry-run branch
+        # (the preview shows exactly what a real run would send,
+        # including post-strip text) and before any billable call.
+        jd_text, jd_scan_record = _resolve_jd_scan(jd_text, jd_scan, console)
+
         # --- Dry-run: zero-cost preview, no API call ---
         if dry_run:
             from curator.loader import load_portfolio
@@ -621,6 +776,7 @@ def curate(
                 with_cover_letter=cover_letter,
                 publish_to=publish_to,
                 on_status=status.update,
+                jd_scan_record=jd_scan_record,
             )
 
         logger.info("Total pipeline: {:.1f}s", time.perf_counter() - pipeline_start)
