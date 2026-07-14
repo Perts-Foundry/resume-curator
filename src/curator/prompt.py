@@ -79,7 +79,7 @@ from curator.rules import (
 #:
 #: Whether a run included the cover-letter rulebook block is recorded
 #: separately via the ``with_cover_letter`` field in the audit log.
-PROMPT_VERSION: str = "2026-05-26"
+PROMPT_VERSION: str = "2026-07-14"
 
 # ---------------------------------------------------------------------------
 # Section constants

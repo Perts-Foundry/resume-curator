@@ -532,7 +532,7 @@ class TestWriteAuditArtifacts:
         assert log_data["format_version"] == "2.8"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
-        assert log_data["prompt_version"] == "2026-05-26"
+        assert log_data["prompt_version"] == "2026-07-14"
         # Combined hash retained for back-compat readers; split hashes
         # added in 2026-05-18 so the CI gate can target system-prompt
         # drift without firing on cover-letter-only edits.
