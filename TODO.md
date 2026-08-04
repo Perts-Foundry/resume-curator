@@ -344,6 +344,16 @@ on `summary` length, etc.) plus observability gaps.
   usage-log move.
 - [ ] `test_build_system_prompt_is_byte_stable_across_retries` cache-
   preservation invariant.
+- [ ] Move `_FakeClaudeRun` / `_make_envelope` from
+  `tests/unit/test_headless.py` into `tests/helpers.py`. They are now
+  the canonical mock of an external contract (the Claude Code CLI
+  envelope) used by two test modules, and cross-module private imports
+  break the suite convention.
+- [ ] End-to-end claude-code integration test (curate -> pipeline ->
+  `HeadlessCuratorClient` with a faked subprocess -> renderer)
+  asserting `curation_log.json["backend"] == "claude-code"`. The
+  current `--backend` CLI tests all use `--dry-run`, so no client is
+  ever constructed on that path.
 
 ---
 
@@ -730,15 +740,45 @@ expanding scope. Each is independently shippable.
   processing).
 - [ ] Token pre-counting via `client.messages.count_tokens()` to
   reject oversized inputs before batch requests.
+- [ ] Stream-json progress output for long headless runs: `claude -p
+  --output-format stream-json` would let `headless.py` surface
+  incremental progress instead of a silent subprocess for up to
+  `headless_timeout` seconds. Needs an envelope-parsing rework
+  (line-delimited events vs one JSON object), so measure demand first.
+- [ ] Envelope-contract check against future Claude Code CLI versions:
+  the headless backend's envelope handling (`is_error`, `subtype`,
+  `structured_output`, `usage` key casing) is verified against one CLI
+  version. Add a cheap version probe or a documented compatibility
+  check so CLI drift surfaces as an actionable error rather than a
+  puzzling `APIResponseError`.
+- [ ] Harden the headless invocation against user-scope context bleed:
+  the child still resolves USER-scope settings, hooks, and the global
+  `~/.claude/CLAUDE.md` (project scope is already closed by the tmpdir
+  cwd, MCP by `--strict-mcp-config`). Evaluate `--safe-mode` or
+  `--setting-sources`, plus `--disable-slash-commands`. Needs a live
+  smoke run to validate that structured output still works under them.
+- [ ] Re-check `HEADLESS_DISALLOWED_TOOLS` on every Claude Code CLI
+  upgrade. It is a name-based deny list, so it fails open for any tool
+  the CLI adds after it was written; a wildcard is not an option
+  (it also denies the internal StructuredOutput tool).
+- [ ] Consider a retry posture for transient headless CLI failures
+  (subprocess launch races, malformed stdout). Usage limits must stay
+  never-retried: they reset on a clock, not on backoff.
 
 ### CLI / UX
 
-- [ ] Dry-run cost label is hardcoded `~$0.07 first / ~$0.02 cached
-  (Sonnet)` in `cli.py` `_display_dry_run_preview`. Now that
-  `curate --model` is a first-class flag, the parenthetical can mislead
-  for non-Sonnet models (Haiku is ~$0.07 cold / ~$0.01 warm). Make the
-  estimate model-aware or drop the model name. (Deferred from the
-  2026-06-04 per-run model/effort flags PR.)
+- [ ] Dry-run cost label for the API backend is hardcoded `~$0.07
+  first / ~$0.02 cached (Sonnet)` in `cli.py`
+  `_display_dry_run_preview`. The claude-code backend now gets its own
+  accurate `$0 marginal (subscription usage; notional cost logged)`
+  label, but the API estimate still misleads for non-Sonnet models
+  (Haiku is ~$0.07 cold / ~$0.01 warm) now that `curate --model` is a
+  first-class flag. Make the API estimate model-aware or drop the
+  model name. (Deferred from the 2026-06-04 per-run model/effort flags
+  PR; headless case handled in the 2026-08-03 backend PR.)
+- [ ] Dry-run preview still prints a "Max tokens" row on the
+  claude-code backend, where there is no analog (the CLI takes no
+  max-tokens flag). Suppress the row, or label it API-only.
 
 ### Prompt iteration
 
@@ -772,6 +812,14 @@ expanding scope. Each is independently shippable.
   dumped values before wrapping in section tags, or scan serialized
   section output for reserved delimiters and raise
   `PortfolioValidationError`.
+- [ ] Investigate whether `@path` mentions and `/slash-command` text
+  inside a job description expand client-side in `claude -p` mode. If
+  they do, a JD could reach a file read or a command the in-prompt
+  defenses never see. Fix is backend-independent: add an
+  `@`-reference pattern to `JD_INJECTION_PATTERNS` in `rules.py` so the
+  gate fires on both backends, and update the interview-prep command's
+  canonical pattern list in the same PR (same-PR sync is already the
+  documented rule for that list).
 
 ### Static-mode
 

@@ -73,6 +73,11 @@ def _e2e_env(
     monkeypatch.setenv("CURATOR_PORTFOLIO_PATH", str(portfolio_root))
     monkeypatch.setenv("CURATOR_OUTPUT_DIR", str(e2e_output_dir))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    # Pin both backends to the SDK path so E2E behavior cannot shift if
+    # the defaults ever change; the suite mocks the Anthropic SDK, never
+    # the headless subprocess.
+    monkeypatch.setenv("CURATOR_BACKEND", "api")
+    monkeypatch.setenv("CURATOR_JUDGE_BACKEND", "api")
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +266,9 @@ def curation_result() -> CurationResult:
         output_tokens=500,
         cache_creation_input_tokens=3000,
         cache_read_input_tokens=0,
+        # The real API client stamps backend="api"; mirroring it here lets
+        # the e2e suite pin the backend field end to end into the log.
+        backend="api",
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import patch
@@ -529,9 +530,12 @@ class TestWriteAuditArtifacts:
             SYSTEM_PROMPT_HASH,
         )
 
-        assert log_data["format_version"] == "2.8"
+        assert log_data["format_version"] == "2.9"
         assert log_data["max_pages"] == 1
         assert log_data["source"] == "api"
+        # backend (2.9): the fixture is rerender-shaped (constructed
+        # directly, no transport), so the key is present but null.
+        assert log_data["backend"] is None
         assert log_data["prompt_version"] == "2026-07-14"
         # Combined hash retained for back-compat readers; split hashes
         # added in 2026-05-18 so the CI gate can target system-prompt
@@ -562,6 +566,41 @@ class TestWriteAuditArtifacts:
         from curator.renderer import CURATION_LOG_FORMAT_VERSION
 
         assert log_data["format_version"] == CURATION_LOG_FORMAT_VERSION
+
+    @pytest.mark.parametrize("backend", ["api", "claude-code"])
+    def test_curation_log_records_backend(
+        self,
+        tmp_path: Path,
+        curation_result: CurationResult,
+        backend: str,
+    ) -> None:
+        # backend (2.9): mirrors CurationResult.backend verbatim so the
+        # audit log says which transport carried the AI call.
+        result = replace(curation_result, backend=backend)
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, "JD text.")
+        log_data = json.loads(log_path.read_text())
+        assert log_data["backend"] == backend
+
+    def test_curation_log_backend_null_on_static(
+        self,
+        tmp_path: Path,
+        curation_result: CurationResult,
+    ) -> None:
+        # Static runs make no AI call, so backend stays None (the
+        # cache_ttl precedent: null, not absent, once the key exists).
+        result = replace(
+            curation_result,
+            source="static",
+            model="n/a",
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+        _, log_path, _, _ = _write_audit_artifacts(tmp_path, result, None)
+        log_data = json.loads(log_path.read_text())
+        assert log_data["source"] == "static"
+        assert log_data["backend"] is None
 
     def test_curation_log_records_jd_injection_scan(
         self,
@@ -4383,8 +4422,6 @@ class TestGenerateNextTrimEdgeCases:
 # Cover letter writer + audit log
 # ---------------------------------------------------------------------------
 
-
-from dataclasses import replace  # noqa: E402
 
 from curator.renderer import _render_cover_letter  # noqa: E402
 

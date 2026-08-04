@@ -9,6 +9,7 @@ import pytest
 
 from curator.pipeline import (
     PipelineResult,
+    _select_client,
     _summarize_pipeline_result,
     run_pipeline,
     run_static_pipeline,
@@ -278,6 +279,79 @@ class TestSingleApiCall:
 
         assert result.total_input_tokens == 2000
         assert result.total_output_tokens == 800
+
+
+# ---------------------------------------------------------------------------
+# TestBackendSelection
+# ---------------------------------------------------------------------------
+
+
+class TestBackendSelection:
+    """_select_client routes on settings.backend with late-bound lookups.
+
+    Both tests patch the class on its OWN module (the ~15 existing
+    pipeline tests patch ``curator.pipeline.CuratorClient``; the headless
+    route patches ``curator.headless.HeadlessCuratorClient``), locking the
+    call-time resolution that keeps every existing patch site working.
+    """
+
+    def test_default_backend_resolves_patched_pipeline_curator_client(
+        self,
+        mocker: Any,
+        tmp_path: Path,
+    ) -> None:
+        settings = _make_mock_settings(tmp_path)
+        settings.backend = "api"
+        mock_client_cls = mocker.patch("curator.pipeline.CuratorClient")
+
+        client = _select_client(settings)
+
+        mock_client_cls.assert_called_once_with(settings)
+        assert client is mock_client_cls.return_value
+
+    def test_claude_code_routes_to_patched_headless_client(
+        self,
+        mocker: Any,
+        tmp_path: Path,
+    ) -> None:
+        settings = _make_mock_settings(tmp_path)
+        settings.backend = "claude-code"
+        mock_headless_cls = mocker.patch("curator.headless.HeadlessCuratorClient")
+        mock_client_cls = mocker.patch("curator.pipeline.CuratorClient")
+
+        client = _select_client(settings)
+
+        mock_headless_cls.assert_called_once_with(settings)
+        assert client is mock_headless_cls.return_value
+        mock_client_cls.assert_not_called()
+
+    def test_run_pipeline_uses_headless_client_on_claude_code(
+        self,
+        mocker: Any,
+        tmp_path: Path,
+    ) -> None:
+        settings = _make_mock_settings(tmp_path)
+        settings.backend = "claude-code"
+        mocker.patch("curator.pipeline.load_portfolio", return_value=MagicMock())
+
+        mock_result = _make_mock_result()
+        mock_client = MagicMock()
+        mock_client.curate.return_value = mock_result
+        mock_headless_cls = mocker.patch("curator.headless.HeadlessCuratorClient")
+        mock_headless_cls.return_value.__enter__.return_value = mock_client
+        mock_client_cls = mocker.patch("curator.pipeline.CuratorClient")
+
+        mocker.patch(
+            "curator.pipeline.render",
+            return_value=_make_mock_render_output(tmp_path),
+        )
+
+        result = run_pipeline(settings, "Job description.", skip_pdf=True)
+
+        mock_headless_cls.assert_called_once_with(settings)
+        mock_client.curate.assert_called_once()
+        mock_client_cls.assert_not_called()
+        assert result.curation is mock_result
 
 
 # ---------------------------------------------------------------------------

@@ -266,6 +266,7 @@ def _display_dry_run_preview(
     if other_counts:
         table.add_row("  Other sections", " ".join(other_counts))
     table.add_row("Job description", f"{len(jd_text):,} chars")
+    table.add_row("Backend", settings.backend)
     table.add_row("Model", settings.model)
     table.add_row("Max tokens", f"{settings.max_tokens:,}")
     table.add_row("Effort", effort_str)
@@ -273,7 +274,13 @@ def _display_dry_run_preview(
         "Target pages",
         f"{settings.max_pages} (up to {settings.max_trim_iterations} trims)",
     )
-    table.add_row("Estimated cost", "~$0.07 first / ~$0.02 cached (Sonnet)")
+    if settings.backend == "claude-code":
+        table.add_row(
+            "Estimated cost",
+            "$0 marginal (subscription usage; notional cost logged)",
+        )
+    else:
+        table.add_row("Estimated cost", "~$0.07 first / ~$0.02 cached (Sonnet)")
 
     console.print()
     console.print(table)
@@ -704,6 +711,30 @@ def curate(
             "Takes precedence over CURATOR_EFFORT and .env."
         ),
     ),
+    backend: str | None = typer.Option(
+        None,
+        "--backend",
+        click_type=click.Choice(["api", "claude-code"]),
+        help=(
+            "Override the curation backend for this run. 'api' calls the "
+            "Anthropic API via the SDK; 'claude-code' shells out to a "
+            "headless `claude -p` subprocess billed against the operator's "
+            "Claude subscription. Takes precedence over CURATOR_BACKEND "
+            "and .env."
+        ),
+    ),
+    headless_timeout: int | None = typer.Option(
+        None,
+        "--headless-timeout",
+        min=60,
+        max=3600,
+        help=(
+            "Timeout in seconds for the headless `claude -p` subprocess "
+            "(60..3600); the subprocess timeout is the runaway bound on the "
+            "claude-code backend. Takes precedence over "
+            "CURATOR_HEADLESS_TIMEOUT and .env."
+        ),
+    ),
     jd_scan: str = typer.Option(
         "ask",
         "--jd-scan",
@@ -745,16 +776,30 @@ def curate(
                 # "off" is an explicit force-disable (effort=None override),
                 # distinct from the flag being absent (fall through to env/.env).
                 overrides["effort"] = None if effort == "off" else effort
+            if backend is not None:
+                overrides["backend"] = backend
+            if headless_timeout is not None:
+                overrides["headless_timeout"] = headless_timeout
             settings = CuratorSettings(**overrides)
         except ValidationError as e:
             raise ConfigError(str(e)) from e
 
         _warn_if_effort_on_haiku(settings.model, settings.effort, kind="curate")
 
+        if cache_ttl is not None and settings.backend == "claude-code":
+            # Advisory only (flag presence, not env values): subscription
+            # auth caches at a fixed 1h TTL, so the flag is a no-op headless.
+            logger.warning(
+                "--cache-ttl has no effect on the claude-code backend; "
+                "subscription auth caches at a fixed 1h TTL. The flag is "
+                "ignored for this run."
+            )
+
         # Log resolved config for troubleshooting.
         logger.info(
-            "Config: model={}, max_tokens={}, effort={}, "
+            "Config: backend={}, model={}, max_tokens={}, effort={}, "
             "max_pages={}, max_trim={}, retries={}, cache_ttl={}",
+            settings.backend,
             settings.model,
             settings.max_tokens,
             settings.effort,
@@ -1250,6 +1295,19 @@ _EVAL_JUDGE_EFFORT_OPT = typer.Option(
         "CURATOR_JUDGE_EFFORT and .env."
     ),
 )
+_EVAL_JUDGE_BACKEND_OPT = typer.Option(
+    None,
+    "--judge-backend",
+    click_type=click.Choice(["api", "claude-code"]),
+    help=(
+        "Override the Tier 2 judge backend for this run. 'api' calls the "
+        "Anthropic API via the SDK; 'claude-code' shells out to a headless "
+        "`claude -p` subprocess billed against the operator's Claude "
+        "subscription. Requires --judge; rejected with --golden (golden "
+        "baselines are calibrated against the API judge). Takes precedence "
+        "over CURATOR_JUDGE_BACKEND and .env."
+    ),
+)
 
 
 @app.command(name="eval")
@@ -1266,13 +1324,16 @@ def eval_cmd(
     pages: int | None = _EVAL_PAGES_OPT,
     judge_model: str | None = _EVAL_JUDGE_MODEL_OPT,
     judge_effort: str | None = _EVAL_JUDGE_EFFORT_OPT,
+    judge_backend: str | None = _EVAL_JUDGE_BACKEND_OPT,
 ) -> None:
     """Evaluate a curated resume profile with quality metrics."""
     from curator.exceptions import CuratorError
 
     console = Console(stderr=True)
 
-    judge_flags_set = judge_model is not None or judge_effort is not None
+    judge_flags_set = (
+        judge_model is not None or judge_effort is not None or judge_backend is not None
+    )
 
     # Validate flag dependencies.
     if calibrate and not golden:
@@ -1282,15 +1343,20 @@ def eval_cmd(
         console.print("[red]Error:[/] --apply requires --calibrate.")
         raise typer.Exit(code=1)
     if judge_flags_set and not judge:
-        console.print("[red]Error:[/] --judge-model/--judge-effort require --judge.")
+        console.print(
+            "[red]Error:[/] --judge-model/--judge-effort/--judge-backend "
+            "require --judge."
+        )
         raise typer.Exit(code=1)
     if judge_flags_set and golden:
         # Golden human_scores and judge tolerances are calibrated against the
-        # default judge model; overriding it here would silently re-score
-        # against the wrong baseline (mirrors the --pages/--golden guard).
+        # default judge model and the API judge backend; overriding either
+        # here would silently re-score against the wrong baseline (mirrors
+        # the --pages/--golden guard).
         console.print(
-            "[red]Error:[/] --judge-model/--judge-effort are not allowed with "
-            "--golden; golden cases are scored against the default judge."
+            "[red]Error:[/] --judge-model/--judge-effort/--judge-backend are "
+            "not allowed with --golden; golden cases are scored against the "
+            "default judge."
         )
         raise typer.Exit(code=1)
     if golden and pages is not None:
@@ -1312,6 +1378,8 @@ def eval_cmd(
         judge_overrides["judge_effort"] = (
             None if judge_effort == "off" else judge_effort
         )
+    if judge_backend is not None:
+        judge_overrides["judge_backend"] = judge_backend
 
     try:
         if golden:
@@ -1463,6 +1531,16 @@ def _run_golden_eval(
         from curator.config import CuratorSettings
 
         settings = CuratorSettings()
+
+        # Golden judging is API-only: baselines are calibrated against the
+        # API judge (temperature=0 has no headless analog). Catch an
+        # env-leaked CURATOR_JUDGE_BACKEND before any spend or client setup.
+        if settings.judge_backend != "api":
+            console.print(
+                "[red]Error:[/] golden judging is calibrated against the "
+                "API judge; unset CURATOR_JUDGE_BACKEND."
+            )
+            raise typer.Exit(code=1)
 
         # Fail fast: check spend guard before creating the client and
         # iterating 24 golden cases that would each fail individually.

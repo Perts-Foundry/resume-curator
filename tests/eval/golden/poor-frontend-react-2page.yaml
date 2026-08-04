@@ -1,7 +1,7 @@
 meta:
   id: poor-frontend-react-2page
   name: Frontend Engineer (React) at PixelCraft UI (long-form variant)
-  eval_schema_version: 4
+  eval_schema_version: 5
   tier: poor
   max_pages: 2
 job_description: 'Frontend Engineer (React) — PixelCraft UI (San Francisco, CA)

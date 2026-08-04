@@ -403,7 +403,9 @@ resume-curator/
       __init__.py
       __main__.py                   # python -m curator
       cli.py                        # Typer CLI entry point, JD input handling
-      pipeline.py                   # Pipeline orchestration: run_pipeline (API path),
+      pipeline.py                   # Pipeline orchestration: run_pipeline (AI path;
+                                    #   _select_client picks api vs claude-code
+                                    #   transport from settings.backend),
                                     #   run_static_pipeline (zero-API path), shared
                                     #   _summarize_pipeline_result helper
       models.py                     # Pydantic models for structured output;
@@ -417,9 +419,18 @@ resume-curator/
       loader.py                     # YAML loading from portfolio-source
                                     #   (incl. optional data/cover-letter.yaml)
       client.py                     # Anthropic API wrapper; CurationResult.source
-                                    #   ("api" | "static"); injects the per-call
-                                    #   schema built by output_schema.py via
-                                    #   output_config.format
+                                    #   ("api" | "static") and CurationResult.backend
+                                    #   ("api" | "claude-code" | null); injects the
+                                    #   per-call schema built by output_schema.py
+                                    #   via output_config.format
+      headless.py                   # Headless Claude Code transport (claude -p
+                                    #   subprocess) behind --backend claude-code;
+                                    #   HeadlessCuratorClient reuses client.py's
+                                    #   validation ladder; shared
+                                    #   run_structured_prompt engine also used by
+                                    #   the eval judge; explicit tool deny list;
+                                    #   strips ANTHROPIC_API_KEY; session_id
+                                    #   log-only
       jd_scan.py                    # Heuristic JD prompt-injection detector +
                                     #   strip mechanics (advisory, pre-API).
                                     #   Patterns are JD_INJECTION_PATTERNS in
@@ -427,7 +438,8 @@ resume-curator/
                                     #   {ask,strip,proceed,fail} on curate
                                     #   (cli.py::_resolve_jd_scan). Outcome is
                                     #   audited as curation_log.json
-                                    #   jd_injection_scan (format 2.8).
+                                    #   jd_injection_scan (added in format 2.8;
+                                    #   current version 2.9).
       output_schema.py              # Per-call JSON schema construction from
                                     #   PortfolioData; grammar-enforces
                                     #   parent-child ID scoping on
@@ -439,7 +451,11 @@ resume-curator/
       static_mode.py                # Zero-API curation synthesis (synthesize_curation,
                                     #   build_static_result, synthesize_cover_letter)
       config.py                     # pydantic-settings configuration; max_pages
-                                    #   default 2, range 1..5; cover_letter_template_path
+                                    #   default 2, range 1..5; cover_letter_template_path;
+                                    #   backend/judge_backend/headless_timeout;
+                                    #   HEADLESS_DEFAULT_MODEL (Opus default,
+                                    #   resolved only when backend=claude-code
+                                    #   and model unset); spend_guard_message
       exceptions.py                 # Custom exception hierarchy
       rules.py                      # Shared resume quality constants (word lists, thresholds)
       io_utils.py                   # Shared I/O: atomic writes, YAML loading, PDF page counting,
@@ -534,6 +550,10 @@ These rules apply to all code interacting with the Claude API. Consult
   (`hit` / `create` / `miss`) in `curation_log.json` so a cache miss is
   observable per-run. See `docs/architecture.md` "Prompt Caching" for the
   break-even math and the single-shot-waste WARN-log behavior.
+- **claude-code backend caveats**: `--cache-ttl` is a no-op headless
+  (subscription auth auto-caches at 1h); SDK retries don't apply (single
+  subprocess; usage-limit errors are never auto-retried); headless default
+  model is Opus (`HEADLESS_DEFAULT_MODEL`) while the API default is unchanged.
 - **Never log API keys, full request/response bodies, or PII.** Use
   `SecretStr` for secrets.
 - **Never re-run a paid API call just to change output format.** A single
@@ -566,3 +586,7 @@ These rules apply to all code interacting with the Claude API. Consult
   Read-only from this tool's perspective. Default path:
   `../professional-portfolio-source` (the author's private portfolio repo);
   forks should override `CURATOR_PORTFOLIO_PATH` to point at their own.
+- **Claude Code CLI** (optional) — only for `--backend claude-code` /
+  `--judge-backend claude-code`: a `claude` binary on `PATH` plus an existing
+  login (`claude /login`, or `claude setup-token` non-interactively). The tool
+  never logs in on the operator's behalf.

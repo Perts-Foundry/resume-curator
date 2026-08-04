@@ -1,7 +1,7 @@
 meta:
   id: moderate-release-build
   name: Release / Build Engineer at ShipFast
-  eval_schema_version: 4
+  eval_schema_version: 5
   tier: moderate
 job_description: 'Release / Build Engineer — ShipFast (San Francisco, CA)
 

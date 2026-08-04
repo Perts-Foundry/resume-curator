@@ -866,7 +866,9 @@ class TestCurateGrammarSchemaAdapter:
         """Non-ASCII characters and punctuation get collapsed to hyphens
         by ``slugify``. The slug is always a valid ID pattern match."""
         wire = _curation_to_wire_dict(valid_curation)
-        wire["company_name"] = "Café & Bar (Paris) — Joinery"
+        # \u2014 is an em dash, escaped so the character still exercises
+        # slugify without a literal em dash in the source.
+        wire["company_name"] = "Café & Bar (Paris) \u2014 Joinery"
         message = _make_mock_message(raw_text=json.dumps(wire))
         _wire_mock_stream(mocker, message)
         client = CuratorClient(mock_settings)
@@ -1479,7 +1481,7 @@ class TestCurateErrorMapping:
         mock_anthropic = mocker.patch("curator.client.anthropic.Anthropic")
         mock_instance = mock_anthropic.return_value
 
-        # Build an appropriate SDK exception — connection/timeout types
+        # Build an appropriate SDK exception; connection/timeout types
         # take only `request`, while status-code errors need response+body.
         connection_types = (
             anthropic.APIConnectionError,
@@ -2293,6 +2295,35 @@ class TestCurationResultCoverLetterField:
             cover_letter=letter,
         )
         assert result.cover_letter is letter
+
+
+class TestCurationResultBackendField:
+    def test_defaults_to_none(self, valid_curation: ResumeCuration) -> None:
+        result = CurationResult(
+            curation=valid_curation,
+            model="test",
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+        assert result.backend is None
+
+    def test_api_curate_sets_backend_api(
+        self,
+        mocker: Any,
+        mock_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        valid_curation: ResumeCuration,
+    ) -> None:
+        message = _make_mock_message(valid_curation)
+        _wire_mock_stream(mocker, message)
+        client = CuratorClient(mock_settings)
+
+        result = client.curate(portfolio_data, "Senior role at Acme.")
+
+        assert result.backend == "api"
+        assert result.source == "api"
 
 
 class TestCurateSingleCallInvariant:

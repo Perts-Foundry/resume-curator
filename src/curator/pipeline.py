@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from curator import headless
 from curator.client import CuratorClient
 from curator.loader import load_portfolio
 from curator.renderer import render
@@ -77,6 +78,22 @@ def _maybe_publish(
     paths = publish_artifacts(render_output.profile_dir, publish_to)
     on_status(f"Published {len(paths)} file(s)")
     return paths
+
+
+def _select_client(
+    settings: CuratorSettings,
+) -> CuratorClient | headless.HeadlessCuratorClient:
+    """Instantiate the curation client for the configured backend.
+
+    Both class names are resolved at call time (module-global lookup for
+    ``CuratorClient``, attribute lookup on :mod:`curator.headless` for
+    ``HeadlessCuratorClient``), so tests that patch either
+    ``curator.pipeline.CuratorClient`` or
+    ``curator.headless.HeadlessCuratorClient`` keep working unmodified.
+    """
+    if settings.backend == "claude-code":
+        return headless.HeadlessCuratorClient(settings)
+    return CuratorClient(settings)
 
 
 def _summarize_pipeline_result(
@@ -205,8 +222,9 @@ def run_pipeline(
     portfolio = load_portfolio(settings.portfolio_data_path)
     logger.info("Portfolio loaded in {:.1f}s", time.perf_counter() - t0)
 
-    # Single API call for curation (optionally bundled with a cover letter).
-    with CuratorClient(settings) as client:
+    # Single AI call for curation (optionally bundled with a cover letter),
+    # via the SDK or the headless Claude Code subprocess per the backend.
+    with _select_client(settings) as client:
         update(
             "Curating resume and cover letter..."
             if with_cover_letter

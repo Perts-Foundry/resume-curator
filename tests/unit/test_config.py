@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from curator.config import CuratorSettings
+from curator.config import HEADLESS_DEFAULT_MODEL, CuratorSettings, spend_guard_message
 from curator.exceptions import ConfigError
 
 _TEST_KEY = SecretStr("test-key-not-real")
@@ -21,6 +21,9 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("CURATOR_PORTFOLIO_PATH", raising=False)
     monkeypatch.delenv("CURATOR_EFFORT", raising=False)
     monkeypatch.delenv("CURATOR_CACHE_TTL", raising=False)
+    monkeypatch.delenv("CURATOR_BACKEND", raising=False)
+    monkeypatch.delenv("CURATOR_JUDGE_BACKEND", raising=False)
+    monkeypatch.delenv("CURATOR_HEADLESS_TIMEOUT", raising=False)
     monkeypatch.chdir(tmp_path)
 
 
@@ -257,3 +260,107 @@ class TestSectionOrder:
     def test_incomplete_rejected(self) -> None:
         with pytest.raises(ValidationError, match="must include all sections"):
             _settings(section_order=("work", "skills"))
+
+
+class TestBackendSettings:
+    """Tests for backend, judge_backend, and headless_timeout fields."""
+
+    def test_defaults(self) -> None:
+        settings = _settings()
+        assert settings.backend == "api"
+        assert settings.judge_backend == "api"
+        assert settings.headless_timeout == 600
+
+    def test_env_var_resolution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CURATOR_ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.setenv("CURATOR_BACKEND", "claude-code")
+        monkeypatch.setenv("CURATOR_JUDGE_BACKEND", "claude-code")
+        monkeypatch.setenv("CURATOR_HEADLESS_TIMEOUT", "120")
+        settings = CuratorSettings()
+        assert settings.backend == "claude-code"
+        assert settings.judge_backend == "claude-code"
+        assert settings.headless_timeout == 120
+
+    @pytest.mark.parametrize("field", ["backend", "judge_backend"])
+    @pytest.mark.parametrize("invalid", ["", "claude", "claudecode", "API"])
+    def test_invalid_backend_literal_rejected(self, field: str, invalid: str) -> None:
+        with pytest.raises(ValidationError):
+            _settings(**{field: invalid})
+
+    @pytest.mark.parametrize("timeout", [60, 600, 3600])
+    def test_headless_timeout_valid_bounds(self, timeout: int) -> None:
+        settings = _settings(headless_timeout=timeout)
+        assert settings.headless_timeout == timeout
+
+    @pytest.mark.parametrize("timeout", [59, 0, 3601])
+    def test_headless_timeout_out_of_bounds_rejected(self, timeout: int) -> None:
+        with pytest.raises(ValidationError):
+            _settings(headless_timeout=timeout)
+
+
+class TestHeadlessDefaultModel:
+    """Opus default-resolution matrix for the claude-code backend."""
+
+    def test_claude_code_backend_defaults_to_opus(self) -> None:
+        settings = _settings(backend="claude-code")
+        assert settings.model == HEADLESS_DEFAULT_MODEL
+
+    def test_claude_code_backend_via_env_defaults_to_opus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CURATOR_ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.setenv("CURATOR_BACKEND", "claude-code")
+        settings = CuratorSettings()
+        assert settings.model == HEADLESS_DEFAULT_MODEL
+
+    def test_explicit_model_kwarg_wins(self) -> None:
+        settings = _settings(backend="claude-code", model="claude-sonnet-4-6")
+        assert settings.model == "claude-sonnet-4-6"
+
+    def test_model_env_var_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CURATOR_ANTHROPIC_API_KEY", "test-key-from-env")
+        monkeypatch.setenv("CURATOR_MODEL", "claude-haiku-4-5")
+        settings = CuratorSettings(backend="claude-code")
+        assert settings.model == "claude-haiku-4-5"
+
+    def test_api_backend_default_model_unchanged(self) -> None:
+        settings = _settings()
+        assert settings.backend == "api"
+        assert settings.model == "claude-sonnet-4-6"
+
+    def test_judge_model_default_unchanged_on_claude_code(self) -> None:
+        settings = _settings(backend="claude-code")
+        assert settings.judge_model == "claude-haiku-4-5"
+
+    def test_judge_backend_alone_leaves_model_at_api_default(self) -> None:
+        """The Opus default keys on `backend` only, never `judge_backend`.
+
+        Mixing backends is supported (a headless judge with an API
+        curate), so a headless judge must not silently re-point the
+        curate model. If the validator is ever widened to consider
+        judge_backend, this fails loudly rather than changing the model
+        an operator is billed for.
+        """
+        settings = _settings(judge_backend="claude-code")
+        assert settings.backend == "api"
+        assert settings.model == "claude-sonnet-4-6"
+
+
+class TestSpendGuardMessage:
+    """Tests for the per-backend spend-guard message helper."""
+
+    def test_api_text_byte_identical_to_client_guard_site(self) -> None:
+        # This literal is the message raised at the CuratorClient guard
+        # site (client.py __init__). It must stay byte-identical so the
+        # client can switch to spend_guard_message with zero churn.
+        assert spend_guard_message("api") == (
+            "API spending is not authorized. "
+            "Set CURATOR_ALLOW_API_SPEND=true to allow Anthropic API calls."
+        )
+
+    def test_claude_code_text(self) -> None:
+        assert spend_guard_message("claude-code") == (
+            "Claude subscription usage is not authorized. "
+            "Set CURATOR_ALLOW_API_SPEND=true to allow headless Claude Code "
+            "calls (they consume your subscription's usage limits)."
+        )

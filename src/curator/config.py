@@ -5,12 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, computed_field, field_validator
+from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from curator import default_cover_letter_template_path, default_template_path
 from curator.exceptions import ConfigError
 from curator.models import RENDERER_SECTIONS
+
+# Default model for the headless (claude-code) backend. Subscription usage
+# has zero marginal cost, so the headless path defaults to the strongest
+# model; the API path's default (`model` field below) is unchanged. Fixed
+# ID rather than a date-suffixed snapshot, matching the alias convention
+# documented on the `model` field.
+HEADLESS_DEFAULT_MODEL = "claude-opus-5"
 
 
 class CuratorSettings(BaseSettings):
@@ -82,6 +89,36 @@ class CuratorSettings(BaseSettings):
         ),
     )
 
+    # Backend selection: "api" uses the Anthropic SDK (default, unchanged);
+    # "claude-code" shells out to a headless `claude -p` subprocess billed
+    # against the operator's Claude subscription. Two fields mirror the
+    # model/judge_model split; operators legitimately mix backends.
+    backend: Literal["api", "claude-code"] = Field(
+        default="api",
+        description=(
+            "Curation backend. 'api' calls the Anthropic API via the SDK; "
+            "'claude-code' runs a headless Claude Code subprocess on the "
+            "operator's subscription."
+        ),
+    )
+    judge_backend: Literal["api", "claude-code"] = Field(
+        default="api",
+        description=(
+            "Tier 2 judge backend. Same values as `backend`; kept separate "
+            "so curate and judge can use different backends."
+        ),
+    )
+    headless_timeout: int = Field(
+        default=600,
+        ge=60,
+        le=3600,
+        description=(
+            "Subprocess timeout in seconds for headless Claude Code calls. "
+            "The CLI has no --max-turns bound, so this timeout is the "
+            "runaway guard; an observed successful run takes ~75s."
+        ),
+    )
+
     # Paths
     portfolio_path: Path = Field(
         default=Path("../professional-portfolio-source"),
@@ -136,7 +173,7 @@ class CuratorSettings(BaseSettings):
         description="Max retry attempts for Anthropic API calls (SDK built-in retries)",
     )
 
-    # Cost guard — must be explicitly set to allow API spending.
+    # Cost guard: must be explicitly set to allow API spending.
     allow_api_spend: bool = Field(
         default=False,
         description=(
@@ -188,6 +225,20 @@ class CuratorSettings(BaseSettings):
         description="Effort level for judge response quality tuning",
     )
 
+    @model_validator(mode="after")
+    def _resolve_headless_default_model(self) -> CuratorSettings:
+        """Default the headless backend to Opus when no model was given.
+
+        Applies only when ``backend == "claude-code"`` and ``model`` was not
+        explicitly provided (no CLI flag, no env var, no .env value;
+        pydantic-settings records all three in ``model_fields_set``). An
+        explicit model always wins on either backend, and the API path's
+        default is untouched.
+        """
+        if self.backend == "claude-code" and "model" not in self.model_fields_set:
+            self.model = HEADLESS_DEFAULT_MODEL
+        return self
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def portfolio_data_path(self) -> Path:
@@ -207,3 +258,30 @@ class CuratorSettings(BaseSettings):
             )
             raise ConfigError(msg)
         return self.anthropic_api_key.get_secret_value()
+
+
+def spend_guard_message(backend: Literal["api", "claude-code"]) -> str:
+    """Return the spend-guard error message for the given backend.
+
+    Both backends sit behind the same ``allow_api_spend`` gate: subscription
+    usage is a billable quota, and a second knob would double the scrub
+    surface for no safety gain. The API text is byte-identical to the
+    message historically raised at the ``CuratorClient`` guard site so
+    existing operator tooling that matches on it keeps working.
+
+    Args:
+        backend: The backend whose guard tripped.
+
+    Returns:
+        The message to pass to ``APISpendGuardError``.
+    """
+    if backend == "claude-code":
+        return (
+            "Claude subscription usage is not authorized. "
+            "Set CURATOR_ALLOW_API_SPEND=true to allow headless Claude Code "
+            "calls (they consume your subscription's usage limits)."
+        )
+    return (
+        "API spending is not authorized. "
+        "Set CURATOR_ALLOW_API_SPEND=true to allow Anthropic API calls."
+    )
