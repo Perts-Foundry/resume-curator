@@ -1464,6 +1464,16 @@ def _run_golden_eval(
 
         settings = CuratorSettings()
 
+        # Golden judging is API-only: baselines are calibrated against the
+        # API judge (temperature=0 has no headless analog). Catch an
+        # env-leaked CURATOR_JUDGE_BACKEND before any spend or client setup.
+        if settings.judge_backend != "api":
+            console.print(
+                "[red]Error:[/] golden judging is calibrated against the "
+                "API judge; unset CURATOR_JUDGE_BACKEND."
+            )
+            raise typer.Exit(code=1)
+
         # Fail fast: check spend guard before creating the client and
         # iterating 24 golden cases that would each fail individually.
         if not settings.allow_api_spend:

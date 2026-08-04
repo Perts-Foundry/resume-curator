@@ -1655,6 +1655,33 @@ class TestEvalJudgeModelEffortFlags:
         mock_warn.assert_called_once_with("claude-haiku-4-5", "high", kind="judge")
 
 
+class TestGoldenJudgeBackendPreflight:
+    """Golden judging is API-only; an env-leaked headless backend is rejected."""
+
+    def test_env_leaked_headless_judge_backend_rejected(self, mocker: Any) -> None:
+        # No --judge-backend flag exists on this path; the leak vector is
+        # the CURATOR_JUDGE_BACKEND env var resolving into the settings
+        # the golden run builds. Discovery is mocked so the check fires
+        # regardless of golden-dir contents, before any client setup.
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        runner = CliRunner()
+        mocker.patch(
+            "curator.eval.golden.discover_golden_cases",
+            return_value=[mocker.MagicMock()],
+        )
+        result = runner.invoke(
+            app,
+            ["eval", "--golden", "--judge"],
+            env={"CURATOR_JUDGE_BACKEND": "claude-code"},
+        )
+        assert result.exit_code == 1
+        assert "calibrated against the API judge" in result.output
+        assert "CURATOR_JUDGE_BACKEND" in result.output
+
+
 class TestCurateJdScan:
     """`curate --jd-scan` policy layer: detect, act, thread the audit record."""
 

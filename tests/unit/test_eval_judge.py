@@ -37,6 +37,12 @@ from curator.exceptions import (
     APISpendGuardError,
     EvalError,
 )
+from tests.unit.test_headless import (
+    _DEFAULT_USAGE,
+    _SERVED_MODEL,
+    _FakeClaudeRun,
+    _make_envelope,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -136,6 +142,8 @@ def _make_settings() -> MagicMock:
     settings = MagicMock()
     settings.judge_model = "claude-sonnet-4-6"
     settings.judge_effort = None
+    settings.judge_backend = "api"
+    settings.headless_timeout = 600
     settings.require_api_key.return_value = "sk-ant-test-key"
     settings.api_max_retries = 3
     settings.allow_api_spend = True
@@ -805,6 +813,153 @@ class TestEvaluateTier2:
 
 
 # ---------------------------------------------------------------------------
+# Headless judge backend tests
+# ---------------------------------------------------------------------------
+
+
+class TestJudgeHeadlessBackend:
+    """`judge_backend='claude-code'` transport via headless Claude Code.
+
+    All subprocess activity is faked by patching
+    ``curator.headless.subprocess.run`` (no test spawns a real ``claude``
+    process or consumes subscription quota).
+    """
+
+    @staticmethod
+    def _headless_settings() -> MagicMock:
+        settings = _make_settings()
+        settings.judge_backend = "claude-code"
+        settings.judge_model = "claude-haiku-4-5"
+        return settings
+
+    def test_tier2_report_backend_defaults_to_api(self) -> None:
+        report = _make_tier2_report()
+        assert report.backend == "api"
+        assert report.to_dict()["backend"] == "api"
+
+    def test_to_dict_carries_backend(self) -> None:
+        report = _make_tier2_report(backend="claude-code")
+        assert report.to_dict()["backend"] == "claude-code"
+
+    def test_api_path_reports_backend_api(self) -> None:
+        ctx = _make_eval_context()
+        settings = _make_settings()
+        mock_msg = _make_mock_message()
+
+        mock_client = MagicMock()
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.get_final_message.return_value = mock_msg
+        mock_client.messages.stream.return_value = mock_stream
+
+        result = evaluate_tier2(ctx, settings=settings, client=mock_client)
+
+        assert result.backend == "api"
+
+    def test_headless_happy_path(self) -> None:
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        fake = _FakeClaudeRun(_make_envelope(_make_judge_response_dict()))
+
+        with patch("curator.headless.subprocess.run", fake):
+            result = evaluate_tier2(ctx, settings=settings)
+
+        assert isinstance(result, Tier2Report)
+        assert result.backend == "claude-code"
+        assert result.to_dict()["backend"] == "claude-code"
+        # Envelope metadata maps onto the same report fields as API usage.
+        assert result.model == _SERVED_MODEL
+        assert result.input_tokens == _DEFAULT_USAGE["input_tokens"]
+        assert result.output_tokens == _DEFAULT_USAGE["output_tokens"]
+        assert len(result.dimensions) == len(JUDGE_DIMENSIONS)
+
+    def test_headless_single_subprocess_invocation(self) -> None:
+        """Exactly one subprocess per judge call.
+
+        Analog of the curate-path single-call invariant: a judge call is
+        billable subscription usage, so new judge features must
+        parametrize this test, not delete it.
+        """
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        fake = _FakeClaudeRun(_make_envelope(_make_judge_response_dict()))
+
+        with patch("curator.headless.subprocess.run", fake):
+            evaluate_tier2(ctx, settings=settings)
+
+        assert len(fake.calls) == 1
+
+    def test_headless_invalid_output_raises_api_response_error(self) -> None:
+        # structured_output present but not a valid JudgeResponse (all
+        # dimensions missing except one).
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        fake = _FakeClaudeRun(_make_envelope({"relevance": _make_dimension_score()}))
+
+        with (
+            patch("curator.headless.subprocess.run", fake),
+            pytest.raises(APIResponseError, match="JudgeResponse validation"),
+        ):
+            evaluate_tier2(ctx, settings=settings)
+
+    def test_headless_rejects_injected_client(self) -> None:
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        fake = _FakeClaudeRun(_make_envelope(_make_judge_response_dict()))
+
+        with (
+            patch("curator.headless.subprocess.run", fake),
+            pytest.raises(EvalError, match="injected API client"),
+        ):
+            evaluate_tier2(ctx, settings=settings, client=MagicMock())
+
+        # Rejected before any subscription usage.
+        assert fake.calls == []
+
+    def test_headless_spend_guard_subscription_wording(self) -> None:
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        settings.allow_api_spend = False
+
+        with pytest.raises(APISpendGuardError, match="subscription"):
+            evaluate_tier2(ctx, settings=settings)
+
+    def test_no_effort_flag_for_default_judge(self) -> None:
+        """The default judge (Haiku, effort None) must never emit --effort.
+
+        Haiku models reject the effort parameter; the CLI flag is emitted
+        only when a non-None effort is configured.
+        """
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        assert settings.judge_effort is None
+        fake = _FakeClaudeRun(_make_envelope(_make_judge_response_dict()))
+
+        with patch("curator.headless.subprocess.run", fake):
+            evaluate_tier2(ctx, settings=settings)
+
+        cmd = fake.calls[0][0]
+        assert "--effort" not in cmd
+        # Model rides argv verbatim (aliases drift on the CLI).
+        assert cmd[cmd.index("--model") + 1] == "claude-haiku-4-5"
+
+    def test_judge_schema_preserves_cot_ordering(self) -> None:
+        """The headless schema keeps the deliberate decoding order.
+
+        The API path gets justification-before-score chain-of-thought and
+        overall-impression-last from constrained decoding over the model's
+        field order; ``model_json_schema()`` must preserve both for the
+        ``--json-schema`` transport.
+        """
+        schema = JudgeResponse.model_json_schema()
+        assert tuple(schema["properties"]) == JUDGE_DIMENSIONS
+        assert next(reversed(schema["properties"])) == "overall_impression"
+        dimension_schema = schema["$defs"]["DimensionScore"]
+        assert list(dimension_schema["properties"]) == ["justification", "score"]
+
+
+# ---------------------------------------------------------------------------
 # compare_judge_against_golden tests
 # ---------------------------------------------------------------------------
 
@@ -945,6 +1100,7 @@ class TestCompareJudgeAgainstGolden:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         golden = _make_matching_golden(tier2)
         golden.human_scores = {"relevance": 2}  # diff=3
@@ -1158,6 +1314,7 @@ class TestBuildTier2Report:
             output_tokens=50,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         dim_names = [d.name for d in report.dimensions]
         assert dim_names == list(JUDGE_DIMENSIONS)
@@ -1171,6 +1328,7 @@ class TestBuildTier2Report:
             output_tokens=50,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         for dim in report.dimensions:
             assert dim.group == _DIMENSION_GROUPS[dim.name]
@@ -1184,6 +1342,7 @@ class TestBuildTier2Report:
             output_tokens=50,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         for dim in report.dimensions:
             assert dim.normalized_score == normalize_score(dim.score)
@@ -1202,6 +1361,7 @@ class TestBuildTier2Report:
             output_tokens=50,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         expected_aggregate = sum(normalize_score(s) for s in scores) / len(scores)
         assert abs(report.aggregate_score - expected_aggregate) < 0.001
@@ -1215,6 +1375,7 @@ class TestBuildTier2Report:
             output_tokens=567,
             cache_creation_input_tokens=89,
             cache_read_input_tokens=10,
+            backend="api",
         )
         assert report.model == "claude-test-v1"
         assert report.input_tokens == 1234
@@ -1232,6 +1393,7 @@ class TestBuildTier2Report:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         assert report.aggregate_score == 0.0
 
@@ -1245,6 +1407,7 @@ class TestBuildTier2Report:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         assert report.aggregate_score == 100.0
 
@@ -1485,6 +1648,7 @@ class TestTier2ReportAdditional:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         d = report.to_dict()
         assert d["aggregate_score"] == 50.12
@@ -1556,6 +1720,7 @@ class TestCompareJudgeAgainstGoldenAdditional:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
+            backend="api",
         )
         golden = _make_matching_golden(tier2)
         golden.human_scores = {"relevance": 5}  # diff=4

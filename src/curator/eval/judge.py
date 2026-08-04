@@ -14,15 +14,16 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import anthropic
 import httpx
 import yaml
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from curator.client import thinking_config_for_model
+from curator.config import spend_guard_message
 from curator.eval.report import EVAL_SCHEMA_VERSION
 from curator.exceptions import (
     APIAuthError,
@@ -33,9 +34,12 @@ from curator.exceptions import (
     APISpendGuardError,
     EvalError,
 )
+from curator.headless import flatten_system_blocks, run_structured_prompt
 from curator.rules import MAX_JD_LENGTH
 
 if TYPE_CHECKING:
+    from anthropic.types import TextBlockParam
+
     from curator.config import CuratorSettings
     from curator.eval import EvalContext
 
@@ -210,6 +214,10 @@ class Tier2Report:
     # ``JUDGE_PROMPT_HASH``. ``_build_tier2_report`` always sets this
     # explicitly so the dataclass attribute matches the dict.
     judge_prompt_hash: str = ""
+    # Transport provenance: "api" (Anthropic API) or "claude-code"
+    # (headless subscription call). Defaulted like ``judge_prompt_hash``;
+    # ``_build_tier2_report`` always sets it explicitly.
+    backend: str = "api"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the report to a JSON-compatible dict."""
@@ -219,6 +227,7 @@ class Tier2Report:
             "judge_prompt_hash": self.judge_prompt_hash or JUDGE_PROMPT_HASH,
             "aggregate_score": round(self.aggregate_score, 2),
             "model": self.model,
+            "backend": self.backend,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "cache_creation_input_tokens": self.cache_creation_input_tokens,
@@ -671,23 +680,30 @@ def evaluate_tier2(
 
     Creates a temporary Anthropic client if none is provided. For batch
     runs (``--golden --judge``), pass a shared client to avoid creating
-    24 separate TCP connections.
+    24 separate TCP connections. When ``settings.judge_backend`` is
+    ``"claude-code"`` the call is transported through headless Claude
+    Code instead (see ``_call_judge_headless``); client injection is
+    API-only and rejected on that backend.
 
     Args:
         ctx: Evaluation context (same as Tier 1).
         settings: Application settings for model, API key, and retries.
-        client: Optional pre-built Anthropic client for batch reuse.
+        client: Optional pre-built Anthropic client for batch reuse
+            (API backend only).
 
     Returns:
         Tier2Report with 8 scored dimensions.
 
     Raises:
-        EvalError: If JD text is missing (required for judge).
+        EvalError: If JD text is missing (required for judge), or a
+            client was injected with the claude-code backend.
         APIRefusalError: Claude refused due to safety filters.
-        APIAuthError: Invalid or missing API key.
+        APIAuthError: Invalid or missing API key, or headless CLI not
+            logged in.
         APIRateLimitError: Rate limit exceeded after SDK retries.
         APIResponseError: Invalid response or truncation.
-        APIError: Other Anthropic API errors.
+        APIError: Other Anthropic API errors, including the headless
+            taxonomy (``HeadlessCLIError``, ``HeadlessUsageLimitError``).
     """
     if ctx.source == "static":
         msg = (
@@ -702,11 +718,7 @@ def evaluate_tier2(
         raise EvalError(msg)
 
     if not settings.allow_api_spend:
-        msg = (
-            "API spending is not authorized. "
-            "Set CURATOR_ALLOW_API_SPEND=true to allow judge API calls."
-        )
-        raise APISpendGuardError(msg)
+        raise APISpendGuardError(spend_guard_message(settings.judge_backend))
 
     curation_dict = ctx.curation.model_dump()
 
@@ -720,6 +732,17 @@ def evaluate_tier2(
 
     system = _build_system_blocks(cache_ttl=settings.cache_ttl)
     model = settings.judge_model
+
+    if settings.judge_backend == "claude-code":
+        # Golden batch runs share one API client; that reuse contract has
+        # no headless analog, so an injected client signals a caller that
+        # still expects the API transport.
+        if client is not None:
+            msg = (
+                "An injected API client cannot be used with judge_backend='claude-code'"
+            )
+            raise EvalError(msg)
+        return _call_judge_headless(settings, system, messages)
 
     # Build API kwargs. temperature=0 reduces score variance between runs
     # (not fully deterministic per Anthropic docs, but significantly more consistent).
@@ -836,6 +859,7 @@ def _call_judge_api(
             output_tokens=usage.output_tokens,
             cache_creation_input_tokens=cache_create,
             cache_read_input_tokens=cache_read,
+            backend="api",
         )
 
     except (APIRefusalError, APIResponseError, EvalError):
@@ -896,6 +920,72 @@ def _call_judge_api(
         raise APIError(msg) from e
 
 
+def _call_judge_headless(
+    settings: CuratorSettings,
+    system_blocks: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+) -> Tier2Report:
+    """Execute the judge via one headless ``claude -p`` call.
+
+    Transport analog of ``_call_judge_api``: same prompts and the same
+    ``JudgeResponse`` schema, but the call rides the operator's Claude
+    subscription through ``curator.headless.run_structured_prompt``.
+    The API path's ``temperature=0`` has no CLI flag, so headless judge
+    runs are less repeatable; golden calibration therefore never runs
+    on this backend (enforced by the golden pre-flight in cli.py).
+
+    ``JudgeResponse.model_json_schema()`` preserves field-definition
+    order (pydantic v2), keeping the deliberate ordering the API path
+    gets from constrained decoding: dimensions in rubric order with
+    ``overall_impression`` last, and justification-before-score inside
+    each dimension.
+    """
+    system_text = flatten_system_blocks(cast("list[TextBlockParam]", system_blocks))
+    # build_judge_messages always constructs str content.
+    user_text = cast("str", messages[0]["content"])
+    schema = JudgeResponse.model_json_schema()
+
+    logger.info(
+        "Headless judge request: model={}{}, judge_version={}, judge_prompt_hash={}",
+        settings.judge_model,
+        f", effort={settings.judge_effort}" if settings.judge_effort else "",
+        JUDGE_VERSION,
+        JUDGE_PROMPT_HASH,
+    )
+
+    # Exactly one subprocess call (locked by test). judge_effort defaults
+    # to None, so the default Haiku judge never emits --effort.
+    result = run_structured_prompt(
+        system_text=system_text,
+        user_text=user_text,
+        schema=schema,
+        model=settings.judge_model,
+        effort=settings.judge_effort,
+        timeout=settings.headless_timeout,
+    )
+
+    try:
+        judge_response = JudgeResponse.model_validate(result.structured_output)
+    except ValidationError as exc:
+        # session_id stays local-only (logs and console), matching the
+        # request_id convention on the API path.
+        msg = (
+            "Headless judge output failed JudgeResponse validation "
+            f"(session_id={result.session_id}): {exc}"
+        )
+        raise APIResponseError(msg) from exc
+
+    return _build_tier2_report(
+        judge_response,
+        model=result.model,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cache_creation_input_tokens=result.cache_creation_input_tokens,
+        cache_read_input_tokens=result.cache_read_input_tokens,
+        backend="claude-code",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Report construction
 # ---------------------------------------------------------------------------
@@ -909,6 +999,7 @@ def _build_tier2_report(
     output_tokens: int,
     cache_creation_input_tokens: int,
     cache_read_input_tokens: int,
+    backend: str,
 ) -> Tier2Report:
     """Convert a validated JudgeResponse into a Tier2Report."""
     dimensions: list[Tier2DimensionResult] = []
@@ -940,4 +1031,5 @@ def _build_tier2_report(
         cache_creation_input_tokens=cache_creation_input_tokens,
         cache_read_input_tokens=cache_read_input_tokens,
         judge_prompt_hash=JUDGE_PROMPT_HASH,
+        backend=backend,
     )
