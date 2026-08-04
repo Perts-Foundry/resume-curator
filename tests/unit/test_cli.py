@@ -285,6 +285,7 @@ class TestCurateCommandLogging:
         from unittest.mock import MagicMock
 
         mock_settings = MagicMock()
+        mock_settings.backend = "api"
         mock_settings.model = "claude-sonnet-4-6-20260217"
         mock_settings.max_tokens = 4096
         mock_settings.effort = None
@@ -365,7 +366,7 @@ class TestCurateCommandLogging:
         """Settings are logged after CuratorSettings loads."""
         messages = self._invoke_curate_with_log_capture(tmp_path)
         combined = " ".join(messages)
-        assert "Config: model=claude-sonnet-4-6-20260217" in combined
+        assert "Config: backend=api, model=claude-sonnet-4-6-20260217" in combined
         assert "max_tokens=4096" in combined
 
     def test_pipeline_timing_logs_appear(self, tmp_path: Path) -> None:
@@ -1566,7 +1567,8 @@ class TestEvalJudgeModelEffortFlags:
             app, ["eval", "--golden", "--judge", "--judge-effort", "high"]
         )
         assert result.exit_code == 1
-        assert "not allowed with --golden" in result.output
+        # Normalize whitespace: rich wraps the message at the 80-col default.
+        assert "not allowed with --golden" in " ".join(result.output.split())
 
     def _spy_settings(self, mocker: Any) -> Any:
         """Patch CuratorSettings to record the resolved settings object.
@@ -1659,10 +1661,10 @@ class TestGoldenJudgeBackendPreflight:
     """Golden judging is API-only; an env-leaked headless backend is rejected."""
 
     def test_env_leaked_headless_judge_backend_rejected(self, mocker: Any) -> None:
-        # No --judge-backend flag exists on this path; the leak vector is
-        # the CURATOR_JUDGE_BACKEND env var resolving into the settings
-        # the golden run builds. Discovery is mocked so the check fires
-        # regardless of golden-dir contents, before any client setup.
+        # --judge-backend is rejected outright with --golden, so the leak
+        # vector is the CURATOR_JUDGE_BACKEND env var resolving into the
+        # settings the golden run builds. Discovery is mocked so the check
+        # fires regardless of golden-dir contents, before any client setup.
         from typer.testing import CliRunner
 
         from curator.cli import app
@@ -1680,6 +1682,294 @@ class TestGoldenJudgeBackendPreflight:
         assert result.exit_code == 1
         assert "calibrated against the API judge" in result.output
         assert "CURATOR_JUDGE_BACKEND" in result.output
+
+
+class TestCurateBackendFlag:
+    """`curate --backend` / `--headless-timeout` override CuratorSettings."""
+
+    @staticmethod
+    def _fake_portfolio() -> Any:
+        from unittest.mock import MagicMock
+
+        p = MagicMock()
+        p.work = []
+        p.skills = []
+        p.education = []
+        p.certificates = []
+        p.projects = []
+        return p
+
+    def _invoke_dry_run(
+        self,
+        tmp_path: Path,
+        extra_args: list[str],
+        env: dict[str, str] | None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Any, dict[str, Any], Any]:
+        """Run `curate --dry-run` with a CuratorSettings spy.
+
+        Mirrors TestCurateModelEffortFlags._invoke_dry_run: the spy records
+        the override kwargs and returns a *real* settings object built with
+        ``_env_file=None`` (so a developer's local ``.env`` cannot make the
+        test non-deterministic), letting us assert both the override mapping
+        and the resolved value (flag-beats-env).
+        """
+        from typer.testing import CliRunner
+
+        from curator import config as _config
+        from curator.cli import app
+
+        for key, value in (env or {}).items():
+            monkeypatch.setenv(key, value)
+
+        real_cls = _config.CuratorSettings
+        captured: dict[str, Any] = {}
+
+        def _spy(**kwargs: Any) -> Any:
+            captured["kwargs"] = kwargs
+            inst = real_cls(_env_file=None, **kwargs)
+            captured["settings"] = inst
+            return inst
+
+        jd = tmp_path / "jd.txt"
+        jd.write_text(
+            "Senior DevOps Engineer at Acme Corp building AWS infrastructure.",
+            encoding="utf-8",
+        )
+        runner = CliRunner()
+        with (
+            patch("curator.config.CuratorSettings", side_effect=_spy),
+            patch(
+                "curator.loader.load_portfolio",
+                return_value=self._fake_portfolio(),
+            ),
+        ):
+            result = runner.invoke(app, ["curate", str(jd), "--dry-run", *extra_args])
+        return result, captured.get("kwargs", {}), captured.get("settings")
+
+    def test_backend_flag_sets_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, kwargs, settings = self._invoke_dry_run(
+            tmp_path, ["--backend", "claude-code"], None, monkeypatch
+        )
+        assert result.exit_code == 0, result.output
+        assert kwargs.get("backend") == "claude-code"
+        assert settings.backend == "claude-code"
+
+    def test_no_backend_flag_leaves_backend_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, kwargs, _ = self._invoke_dry_run(tmp_path, [], None, monkeypatch)
+        assert result.exit_code == 0, result.output
+        assert "backend" not in kwargs
+        assert "headless_timeout" not in kwargs
+
+    def test_backend_flag_beats_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, _, settings = self._invoke_dry_run(
+            tmp_path,
+            ["--backend", "claude-code"],
+            {"CURATOR_BACKEND": "api"},
+            monkeypatch,
+        )
+        assert result.exit_code == 0, result.output
+        assert settings.backend == "claude-code"
+
+    def test_invalid_backend_choice_rejected(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        jd = tmp_path / "jd.txt"
+        jd.write_text("Senior DevOps Engineer at Acme Corp.", encoding="utf-8")
+        result = CliRunner().invoke(
+            app, ["curate", str(jd), "--dry-run", "--backend", "bogus"]
+        )
+        # click.Choice rejection is a usage error (exit 2), not an app guard.
+        assert result.exit_code == 2
+
+    def test_headless_timeout_flows_into_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, kwargs, settings = self._invoke_dry_run(
+            tmp_path,
+            ["--backend", "claude-code", "--headless-timeout", "120"],
+            None,
+            monkeypatch,
+        )
+        assert result.exit_code == 0, result.output
+        assert kwargs.get("headless_timeout") == 120
+        assert settings.headless_timeout == 120
+
+    def test_cache_ttl_flag_warns_on_headless_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: Any
+    ) -> None:
+        # Advisory, not a rejection: the run must still succeed.
+        mock_warning = mocker.patch("curator.cli.logger.warning")
+        result, _, _ = self._invoke_dry_run(
+            tmp_path,
+            ["--backend", "claude-code", "--cache-ttl", "5m"],
+            None,
+            monkeypatch,
+        )
+        assert result.exit_code == 0, result.output
+        warned = " ".join(str(c.args[0]) for c in mock_warning.call_args_list)
+        assert "--cache-ttl has no effect" in warned
+
+    @pytest.mark.parametrize(
+        ("extra_args", "env"),
+        [
+            # Env-sourced cache_ttl values stay silent (flag presence only).
+            (["--backend", "claude-code"], {"CURATOR_CACHE_TTL": "5m"}),
+            # Flag on the API backend is meaningful, so no advisory either.
+            (["--cache-ttl", "5m"], None),
+        ],
+    )
+    def test_cache_ttl_advisory_silent_without_flag_plus_headless(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mocker: Any,
+        extra_args: list[str],
+        env: dict[str, str] | None,
+    ) -> None:
+        mock_warning = mocker.patch("curator.cli.logger.warning")
+        result, _, _ = self._invoke_dry_run(tmp_path, extra_args, env, monkeypatch)
+        assert result.exit_code == 0, result.output
+        warned = " ".join(str(c.args[0]) for c in mock_warning.call_args_list)
+        assert "--cache-ttl has no effect" not in warned
+
+    def _render_preview(self, backend: str) -> str:
+        """Render _display_dry_run_preview on a wide recording console.
+
+        Direct helper call (width=200) so the cost-label assertions cannot
+        be broken by rich wrapping the cell at the CLI's default width.
+        """
+        from rich.console import Console as RichConsole
+
+        from curator.cli import _display_dry_run_preview
+        from curator.config import CuratorSettings
+
+        settings = CuratorSettings(_env_file=None, backend=backend)
+        console = RichConsole(record=True, width=200)
+        _display_dry_run_preview(
+            console, settings, self._fake_portfolio(), "Acme Corp JD text"
+        )
+        return console.export_text()
+
+    def test_dry_run_preview_shows_subscription_label(self) -> None:
+        text = self._render_preview("claude-code")
+        assert "Backend" in text
+        assert "claude-code" in text
+        assert "$0 marginal (subscription usage; notional cost logged)" in text
+
+    def test_dry_run_preview_api_cost_label_unchanged(self) -> None:
+        text = self._render_preview("api")
+        assert "Backend" in text
+        assert "~$0.07 first / ~$0.02 cached (Sonnet)" in text
+
+
+class TestEvalJudgeBackendFlag:
+    """`eval --judge-backend` threading and guards."""
+
+    @staticmethod
+    def _runner() -> tuple[Any, Any]:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        return CliRunner(), app
+
+    def test_judge_backend_requires_judge(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        result = runner.invoke(
+            app, ["eval", str(profile), "--judge-backend", "claude-code"]
+        )
+        assert result.exit_code == 1
+        assert "require --judge" in result.output
+
+    def test_judge_backend_rejected_with_golden(self) -> None:
+        runner, app = self._runner()
+        result = runner.invoke(
+            app, ["eval", "--golden", "--judge", "--judge-backend", "claude-code"]
+        )
+        assert result.exit_code == 1
+        # Normalize whitespace: rich wraps the message at the 80-col default.
+        assert "not allowed with --golden" in " ".join(result.output.split())
+
+    def test_invalid_judge_backend_choice_rejected(self, tmp_path: Path) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        result = runner.invoke(
+            app, ["eval", str(profile), "--judge", "--judge-backend", "bogus"]
+        )
+        # click.Choice rejection is a usage error (exit 2), not an app guard.
+        assert result.exit_code == 2
+
+    def test_flows_into_judge_overrides(self, tmp_path: Path, mocker: Any) -> None:
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+        mock_prof = mocker.patch("curator.cli._run_profile_eval")
+        result = runner.invoke(
+            app,
+            ["eval", str(profile), "--judge", "--judge-backend", "claude-code"],
+        )
+        assert result.exit_code == 0, result.output
+        assert mock_prof.call_args.kwargs["judge_overrides"] == {
+            "judge_backend": "claude-code"
+        }
+
+    def test_judge_backend_resolves_into_settings(
+        self, tmp_path: Path, mocker: Any
+    ) -> None:
+        # Consumer half (mirrors TestEvalJudgeModelEffortFlags): the override
+        # must resolve into the settings _run_profile_eval builds AND reach
+        # _run_judge.
+        from curator import config as _config
+
+        runner, app = self._runner()
+        profile = tmp_path / "profile"
+        profile.mkdir()
+
+        real_cls = _config.CuratorSettings
+        captured: dict[str, Any] = {}
+
+        def _spy(**kwargs: Any) -> Any:
+            inst = real_cls(_env_file=None, **kwargs)
+            captured["settings"] = inst
+            return inst
+
+        mocker.patch("curator.config.CuratorSettings", side_effect=_spy)
+        mocker.patch("curator.eval.from_profile_dir", return_value=mocker.MagicMock())
+        mocker.patch(
+            "curator.eval.evaluate_tier1",
+            return_value=mocker.MagicMock(to_dict=lambda: {}),
+        )
+        mock_judge = mocker.patch(
+            "curator.cli._run_judge",
+            return_value=mocker.MagicMock(to_dict=lambda: {}),
+        )
+        result = runner.invoke(
+            app,
+            [
+                "eval",
+                str(profile),
+                "--judge",
+                "--json",
+                "--judge-backend",
+                "claude-code",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["settings"].judge_backend == "claude-code"
+        # _run_judge(ctx, settings): settings is the 2nd positional arg.
+        assert mock_judge.call_args.args[1].judge_backend == "claude-code"
 
 
 class TestCurateJdScan:
