@@ -874,6 +874,53 @@ class TestJudgeHeadlessBackend:
         assert result.output_tokens == _DEFAULT_USAGE["output_tokens"]
         assert len(result.dimensions) == len(JUDGE_DIMENSIONS)
 
+    def test_headless_input_wiring(self) -> None:
+        """The judge prompts and schema actually reach the subprocess.
+
+        The happy-path test pins the output side only (the fake returns a
+        canned envelope regardless of inputs), so this test pins the input
+        side: the exact ``--json-schema`` payload on argv, the exact judge
+        user message on stdin, and the rubric in the system-prompt file.
+        Without it, an implementation passing an empty schema, an empty
+        user text, or swapped system/user text would still pass.
+        """
+        ctx = _make_eval_context()
+        ctx.max_pages = 2
+        settings = self._headless_settings()
+        fake = _FakeClaudeRun(_make_envelope(_make_judge_response_dict()))
+
+        with patch("curator.headless.subprocess.run", fake):
+            evaluate_tier2(ctx, settings=settings)
+
+        cmd, kwargs = fake.calls[0]
+
+        # Schema on argv is JudgeResponse.model_json_schema() with the
+        # deliberate decoding order intact on the wire (json round-trips
+        # preserve key order).
+        wire_schema = json.loads(cmd[cmd.index("--json-schema") + 1])
+        assert wire_schema == JudgeResponse.model_json_schema()
+        assert tuple(wire_schema["properties"]) == JUDGE_DIMENSIONS
+        assert list(wire_schema["$defs"]["DimensionScore"]["properties"]) == [
+            "justification",
+            "score",
+        ]
+
+        # stdin carries exactly the message build_judge_messages produces
+        # for this context (JD, curation, sections, basics, page budget).
+        expected_messages = build_judge_messages(
+            ctx.jd_text,
+            ctx.curation.model_dump.return_value,
+            ctx.section_data,
+            ctx.basics,
+            max_pages=2,
+        )
+        assert kwargs["input"] == expected_messages[0]["content"]
+
+        # The rubric rides the system-prompt file, not the user message,
+        # and the JD stays out of the system prompt (no swapped roles).
+        assert _RUBRIC_SYSTEM_PROMPT in fake.system_prompt_contents[0]
+        assert ctx.jd_text not in fake.system_prompt_contents[0]
+
     def test_headless_single_subprocess_invocation(self) -> None:
         """Exactly one subprocess per judge call.
 
