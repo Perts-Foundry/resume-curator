@@ -135,6 +135,9 @@ def integration_curation() -> CurationResult:
         output_tokens=500,
         cache_creation_input_tokens=3000,
         cache_read_input_tokens=0,
+        # The real API client stamps backend="api"; mirroring it here lets
+        # the log-metadata test pin the backend field into curation_log.
+        backend="api",
     )
 
 
@@ -268,6 +271,7 @@ class TestRenderPipeline:
         log = json.loads(result.curation_log_path.read_text())
         assert log["format_version"] == "2.9"
         assert log["source"] == "api"
+        assert log["backend"] == "api"
         assert log["model"] == "claude-sonnet-4-6-20260217"
         assert log["input_tokens"] == 5000
         assert log["cache_creation_input_tokens"] == 3000

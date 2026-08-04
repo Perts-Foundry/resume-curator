@@ -991,6 +991,32 @@ class TestJudgeHeadlessBackend:
         # Model rides argv verbatim (aliases drift on the CLI).
         assert cmd[cmd.index("--model") + 1] == "claude-haiku-4-5"
 
+    def test_effort_flag_emitted_when_judge_effort_set(self) -> None:
+        """A configured judge_effort must reach the subprocess argv."""
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        settings.judge_effort = "medium"
+        fake = _FakeClaudeRun(_make_envelope(_make_judge_response_dict()))
+
+        with patch("curator.headless.subprocess.run", fake):
+            evaluate_tier2(ctx, settings=settings)
+
+        cmd = fake.calls[0][0]
+        assert cmd[cmd.index("--effort") + 1] == "medium"
+
+    def test_headless_timeout_from_settings(self) -> None:
+        """The subprocess timeout must come from settings, not a constant."""
+        ctx = _make_eval_context()
+        settings = self._headless_settings()
+        # Non-default value so a hardcoded 600 would fail the assertion.
+        settings.headless_timeout = 120
+        fake = _FakeClaudeRun(_make_envelope(_make_judge_response_dict()))
+
+        with patch("curator.headless.subprocess.run", fake):
+            evaluate_tier2(ctx, settings=settings)
+
+        assert fake.calls[0][1]["timeout"] == 120
+
     def test_judge_schema_preserves_cot_ordering(self) -> None:
         """The headless schema keeps the deliberate decoding order.
 

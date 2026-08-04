@@ -4,7 +4,7 @@ These tests invoke the full CLI pipeline via Typer's CliRunner:
     loader → prompt → (mocked) API → renderer → real Typst compilation
 
 The Claude API is mocked at the CuratorClient class boundary. Everything
-else — portfolio loading, YAML rendering, Typst PDF compilation — runs
+else (portfolio loading, YAML rendering, Typst PDF compilation) runs
 for real.
 """
 
@@ -212,6 +212,7 @@ class TestCurateHappyPath:
         log = json.loads((output_dir / "curation_log.json").read_text())
         assert log["format_version"] == "2.9"
         assert log["source"] == "api"
+        assert log["backend"] == "api"
         assert log["model"] == "claude-sonnet-4-6-20260217"
         assert log["input_tokens"] == 5000
         assert log["output_tokens"] == 500
@@ -330,7 +331,7 @@ class TestCurateErrors:
         invoke_curate: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # portfolio_dir intentionally omitted — we override the path to test the error.
+        # portfolio_dir intentionally omitted; we override the path to test the error.
         monkeypatch.setenv("CURATOR_PORTFOLIO_PATH", "/nonexistent/portfolio")
 
         result, _ = invoke_curate(jd_file)
@@ -559,7 +560,7 @@ def test_curate_pages_flag_threads_through_render_and_log(
 
     Pinned by AR-6. With real Typst + mocked API, a 1-page run and a
     2-page run produce different ``curation_log.json["max_pages"]``
-    values and different actual PDF page counts (within reason — the
+    values and different actual PDF page counts (within reason; the
     cascade may converge identically on a small fixture, but the
     persisted ``max_pages`` is unconditional).
     """

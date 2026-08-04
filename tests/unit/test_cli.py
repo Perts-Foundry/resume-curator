@@ -27,7 +27,7 @@ class TestRedactingFilter:
     def _make_record(message: str) -> Record:
         """Build a minimal record stub for filter testing.
 
-        Only ``message`` is populated — sufficient because
+        Only ``message`` is populated; sufficient because
         ``_redacting_filter`` only reads/writes that field.
         """
         return cast("Record", {"message": message})
@@ -83,7 +83,7 @@ class TestRedactingFilter:
 
     def test_preserves_token_count_fields(self) -> None:
         """Token usage like input_tokens=1500 is NOT redacted."""
-        msg = "Tokens — input_tokens=1500, output_tokens=950"
+        msg = "Tokens: input_tokens=1500, output_tokens=950"
         record = self._make_record(msg)
         _redacting_filter(record)
         assert "input_tokens=1500" in record["message"]
@@ -1623,7 +1623,7 @@ class TestEvalJudgeModelEffortFlags:
         assert result.exit_code == 0, result.output
         assert captured["settings"].judge_model == "claude-sonnet-4-6"
         assert captured["settings"].judge_effort is None
-        # _run_judge(ctx, settings) — settings is the 2nd positional arg.
+        # _run_judge(ctx, settings): settings is the 2nd positional arg.
         assert mock_judge.call_args.args[1].judge_model == "claude-sonnet-4-6"
         assert mock_judge.call_args.args[1].judge_effort is None
 
@@ -1817,6 +1817,38 @@ class TestCurateBackendFlag:
         assert result.exit_code == 0, result.output
         warned = " ".join(str(c.args[0]) for c in mock_warning.call_args_list)
         assert "--cache-ttl has no effect" in warned
+
+    def test_cache_ttl_flag_warns_on_env_sourced_headless_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: Any
+    ) -> None:
+        # The advisory keys on the resolved settings.backend, so an
+        # env-sourced claude-code backend plus the --cache-ttl flag must
+        # warn exactly like the flag-sourced backend.
+        mock_warning = mocker.patch("curator.cli.logger.warning")
+        result, _, settings = self._invoke_dry_run(
+            tmp_path,
+            ["--cache-ttl", "5m"],
+            {"CURATOR_BACKEND": "claude-code"},
+            monkeypatch,
+        )
+        assert result.exit_code == 0, result.output
+        assert settings.backend == "claude-code"
+        warned = " ".join(str(c.args[0]) for c in mock_warning.call_args_list)
+        assert "--cache-ttl has no effect" in warned
+
+    def test_headless_timeout_below_min_rejected(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from curator.cli import app
+
+        jd = tmp_path / "jd.txt"
+        jd.write_text("Senior DevOps Engineer at Acme Corp.", encoding="utf-8")
+        result = CliRunner().invoke(
+            app,
+            ["curate", str(jd), "--dry-run", "--headless-timeout", "30"],
+        )
+        # click range rejection (min=60) is a usage error (exit 2).
+        assert result.exit_code == 2
 
     @pytest.mark.parametrize(
         ("extra_args", "env"),

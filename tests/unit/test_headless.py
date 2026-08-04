@@ -349,6 +349,46 @@ class TestRunStructuredPromptContract:
         assert result.cache_creation_input_tokens == 0
         assert result.cache_read_input_tokens == 0
 
+    @pytest.mark.parametrize(
+        "usage",
+        [None, "not-a-dict"],
+        ids=["null", "wrong-type"],
+    )
+    def test_non_dict_usage_defaults_to_zero(self, mocker: Any, usage: Any) -> None:
+        envelope = _make_envelope({"summary": "ok"})
+        envelope["usage"] = usage
+        fake = _FakeClaudeRun(envelope)
+        result = _run_with_fake(mocker, fake)
+        assert result.input_tokens == 0
+        assert result.output_tokens == 0
+        assert result.cache_creation_input_tokens == 0
+        assert result.cache_read_input_tokens == 0
+
+    @pytest.mark.parametrize(
+        ("total_cost_usd", "expected"),
+        [
+            (1.23, 1.23),
+            # json.loads parses a whole-number cost as int; it must
+            # coerce to float, not silently drop to None.
+            (2, 2.0),
+            # bool subclasses int and must NOT be treated as a cost.
+            (True, None),
+            ("1.23", None),
+            (None, None),
+        ],
+        ids=["float", "int", "bool", "string", "null"],
+    )
+    def test_total_cost_usd_numeric_coercion(
+        self, mocker: Any, total_cost_usd: Any, expected: float | None
+    ) -> None:
+        envelope = _make_envelope({"summary": "ok"})
+        envelope["total_cost_usd"] = total_cost_usd
+        fake = _FakeClaudeRun(envelope)
+        result = _run_with_fake(mocker, fake)
+        assert result.total_cost_usd == expected
+        if expected is not None:
+            assert isinstance(result.total_cost_usd, float)
+
     def test_error_envelope_wins_over_nonzero_exit(self, mocker: Any) -> None:
         fake = _FakeClaudeRun(
             _make_envelope(None, is_error=True, result_text="something broke"),
@@ -524,6 +564,30 @@ class TestHeadlessCurate:
         persisted = json.loads(raw_files[0].read_text(encoding="utf-8"))
         assert persisted == wire
 
+    def test_raw_persist_failure_degrades_to_hint(
+        self,
+        mocker: Any,
+        headless_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """A failed raw-response persist must not mask the original error."""
+        wire = _valid_wire_dict()
+        wire["work_highlights_by_id"] = {"ghost-corp-role": ["ghost-highlight"]}
+        fake = _FakeClaudeRun(_make_envelope(wire))
+        mocker.patch("curator.headless.subprocess.run", side_effect=fake)
+        mocker.patch(
+            "curator.headless._persist_raw_response",
+            side_effect=OSError("disk full"),
+        )
+        mock_error = mocker.patch("curator.headless.logger.error")
+
+        client = HeadlessCuratorClient(headless_settings)
+        with pytest.raises(APIResponseError, match=r"not persisted \(see logs\)"):
+            client.curate(portfolio_data, "Senior role at Acme.")
+
+        logged = " ".join(str(c.args[0]) for c in mock_error.call_args_list)
+        assert "Failed to persist raw headless response" in logged
+
     def test_cover_letter_happy_path(
         self,
         mocker: Any,
@@ -578,6 +642,41 @@ class TestHeadlessCurate:
             headless_settings.output_dir.glob("curation_partial-*.yaml")
         )
         assert len(partial_files) == 1
+
+    def test_partial_persist_failure_degrades_to_hint(
+        self,
+        mocker: Any,
+        headless_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """A failed partial-resume persist must not mask the policy error."""
+        from tests.helpers import body_paragraph_embedding, valid_cover_letter_kwargs
+
+        kwargs = valid_cover_letter_kwargs()
+        kwargs["body_paragraphs"] = [
+            body_paragraph_embedding("[COMPANY]"),
+            kwargs["body_paragraphs"][1],
+        ]
+        structured = {
+            "resume": _valid_wire_dict(),
+            "cover_letter": CoverLetterCuration(**kwargs).model_dump(mode="json"),
+        }
+        fake = _FakeClaudeRun(_make_envelope(structured))
+        mocker.patch("curator.headless.subprocess.run", side_effect=fake)
+        mocker.patch(
+            "curator.headless._persist_partial_resume",
+            side_effect=OSError("disk full"),
+        )
+        mock_error = mocker.patch("curator.headless.logger.error")
+
+        client = HeadlessCuratorClient(headless_settings)
+        with pytest.raises(APIResponseError, match=r"not persisted \(see logs\)"):
+            client.curate(
+                portfolio_data, "Senior role at Acme.", with_cover_letter=True
+            )
+
+        logged = " ".join(str(c.args[0]) for c in mock_error.call_args_list)
+        assert "Failed to persist partial resume" in logged
 
     def test_spend_guard_uses_subscription_wording(self, tmp_path: Path) -> None:
         settings = CuratorSettings(

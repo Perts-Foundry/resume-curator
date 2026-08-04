@@ -266,6 +266,9 @@ def curation_result() -> CurationResult:
         output_tokens=500,
         cache_creation_input_tokens=3000,
         cache_read_input_tokens=0,
+        # The real API client stamps backend="api"; mirroring it here lets
+        # the e2e suite pin the backend field end to end into the log.
+        backend="api",
     )
 
 
