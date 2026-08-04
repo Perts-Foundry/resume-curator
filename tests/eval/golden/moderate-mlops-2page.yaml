@@ -1,7 +1,7 @@
 meta:
   id: moderate-mlops-2page
   name: MLOps Engineer at ModelForge AI (long-form variant)
-  eval_schema_version: 4
+  eval_schema_version: 5
   tier: moderate
   max_pages: 2
 job_description: 'MLOps Engineer — ModelForge AI (Seattle, WA)

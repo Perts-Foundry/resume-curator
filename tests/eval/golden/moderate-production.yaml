@@ -1,7 +1,7 @@
 meta:
   id: moderate-production
   name: Production Engineer at ScaleCore
-  eval_schema_version: 4
+  eval_schema_version: 5
   tier: moderate
 job_description: 'Production Engineer — ScaleCore (New York, NY)
 

@@ -1,7 +1,7 @@
 meta:
   id: moderate-devops-manager
   name: DevOps Manager at TeamOps
-  eval_schema_version: 4
+  eval_schema_version: 5
   tier: moderate
 job_description: 'DevOps Manager — TeamOps (Chicago, IL)
 

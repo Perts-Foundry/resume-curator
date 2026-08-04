@@ -1,7 +1,7 @@
 meta:
   id: moderate-sre-platform
   name: Senior SRE / Platform Engineer at Uptime Labs
-  eval_schema_version: 4
+  eval_schema_version: 5
   tier: moderate
 job_description: 'Senior Site Reliability Engineer — Uptime Labs (Denver, CO)
 

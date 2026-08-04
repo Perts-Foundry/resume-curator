@@ -9,7 +9,8 @@ from typing import Any
 from curator.page_caps import _caps_for_pages
 from curator.rules import CATEGORY_WEIGHTS, SCORE_PASS_THRESHOLD, SCORE_WARN_THRESHOLD
 
-EVAL_SCHEMA_VERSION: int = 4
+# 5 (2026-08-03, additive): ``Tier2Report.to_dict()`` gained ``backend``.
+EVAL_SCHEMA_VERSION: int = 5
 
 type EvalMetricValue = (
     int | float | str | bool | None | list[Any] | dict[str, Any] | tuple[Any, ...]
