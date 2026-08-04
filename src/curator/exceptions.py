@@ -55,6 +55,35 @@ class APIRefusalError(APIError):
     """
 
 
+class HeadlessCLIError(APIError):
+    """Headless Claude Code subprocess failure.
+
+    Raised when the ``claude -p`` subprocess cannot run or its output
+    cannot be interpreted: missing binary, timeout, or malformed stdout.
+    Inherits from ``APIError`` so existing API-error handling covers the
+    headless backend without new except clauses.
+    """
+
+
+class HeadlessUsageLimitError(APIError):
+    """Subscription usage limit reached on the headless backend.
+
+    Carries the reset text reported by the CLI (e.g. ``3:45pm``) so
+    callers can surface when usage resumes. Never auto-retried: the
+    limit resets on a clock, not on backoff.
+    """
+
+    def __init__(self, message: str, *, reset_text: str | None = None) -> None:
+        """Initialise with the error message and optional reset text.
+
+        Args:
+            message: Human-readable error description.
+            reset_text: The reset time reported by the CLI, if parseable.
+        """
+        super().__init__(message)
+        self.reset_text = reset_text
+
+
 class RenderError(CuratorError):
     """Typst compilation or output writing failure."""
 
