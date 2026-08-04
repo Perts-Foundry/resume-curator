@@ -19,6 +19,7 @@ import httpx
 from loguru import logger
 from pydantic import ValidationError
 
+from curator.config import spend_guard_message
 from curator.exceptions import (
     APIAuthError,
     APIError,
@@ -566,11 +567,7 @@ class CuratorClient:
     def __init__(self, settings: CuratorSettings) -> None:
         """Initialise the client from validated application settings."""
         if not settings.allow_api_spend:
-            msg = (
-                "API spending is not authorized. "
-                "Set CURATOR_ALLOW_API_SPEND=true to allow Anthropic API calls."
-            )
-            raise APISpendGuardError(msg)
+            raise APISpendGuardError(spend_guard_message("api"))
 
         self._client = anthropic.Anthropic(
             api_key=settings.require_api_key(),
