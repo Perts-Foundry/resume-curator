@@ -3,7 +3,7 @@
 Current architecture for resume-curator. This document is kept up to date as the
 project evolves.
 
-Last updated: 2026-07-14
+Last updated: 2026-08-04
 
 ---
 
@@ -60,6 +60,7 @@ education, certificates, interests, page fitting, and section ordering.
 | CLI framework | Typer + Rich | Modern CLI UX, auto-generated help, progress/tables |
 | AI model | Claude Sonnet 4.6 | Cost/quality balance for selection/ranking tasks |
 | Structured output | Pydantic v2 + `messages.stream()` | Constrained decoding guarantees schema compliance |
+| Alternate transport | Headless Claude Code (`claude -p` subprocess) | Optional `--backend claude-code`: same prompts and schema billed to the operator's Claude subscription instead of the API |
 | Data format | YAML | Portfolio source format, human-readable |
 | PDF compilation | Typst | Fast, modern typesetting |
 | Configuration | pydantic-settings | Type-safe, env var + .env + defaults |
@@ -451,12 +452,17 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
 ```
 1. User runs: curator curate [--dry-run | --no-pdf | --clipboard] <file | ->
 2. cli.py loads CuratorSettings, reads JD from file, stdin (`-`), or clipboard
-3. If --dry-run: display preview (portfolio stats, JD length, cost estimate) and exit (no API call)
+3. If --dry-run: display preview (portfolio stats, JD length, backend, cost estimate) and exit (no API call)
 4. cli.py calls pipeline.run_pipeline(settings, jd_text, skip_pdf=...)
 5. pipeline.py: loader.py reads all YAML from portfolio-source directory
-6. pipeline.py: client.py calls Claude once via messages.stream() with a
-   per-call JSON schema built by
+6. pipeline.py: _select_client picks the transport from settings.backend, then
+   that client makes exactly one Claude call with a per-call JSON schema built by
    output_schema.build_curation_schema(portfolio, *, with_cover_letter, max_pages)
+   - backend "api" (default): client.py calls messages.stream() against the
+     Anthropic API, passing the schema as output_config.format
+   - backend "claude-code": headless.py runs one `claude -p` subprocess billed
+     against the operator's Claude subscription, passing the same schema as
+     --json-schema (see "Backend Abstraction" under Claude API Design Decisions)
    - prompt.py constructs system prompt (with portfolio data) + user message (with JD)
    - output_schema.py builds the wire schema (work_highlights_by_id
      object-keyed-by-work-ID with items.enum scoping per entry plus
@@ -464,22 +470,27 @@ Both paths produce the same `CurationResult` shape, distinguished by a `source: 
      skills as a top-level array of portfolio skill group IDs with items.enum;
      projects with top-level items.enum; optional work_highlight_weights
      and trim_priority AI-hint fields)
-   - Streaming prevents timeouts; get_final_message() returns the message
+   - API path only: streaming prevents timeouts; get_final_message() returns
+     the message
    - Portfolio data is prompt-cached (stable across requests); schema is
-     part of the cache prefix and invalidates on the same axis
+     part of the cache prefix and invalidates on the same axis. The headless
+     backend caches on subscription auth's own fixed 1h TTL
    - Job description varies per request
 7. Claude returns structured JSON conforming to the schema; client.py extracts
-   from message.content[0].text and adapts the wire shape into the domain
+   from message.content[0].text (headless: the envelope's structured_output
+   dict, fed through the same helpers) and adapts the wire shape into the domain
    shape (object-keyed work_highlights_by_id -> list[WorkHighlightRanking];
    skill-group-ID array -> list[SkillRanking] with keywords filled per-group
    by jd_scorer.score_keywords_for_jd against the JD text; company_name ->
    slugified company_slug via io_utils.slugify; unknown group IDs and
    over-cap emissions logged and dropped) before constructing ResumeCuration
-8. client.py runs validate_curation_ids as defense-in-depth; the schema
-   already made cross-parent highlight-ID emission decode-time-impossible,
-   and the adapter already filtered non-verbatim skill keywords, so this
-   layer mainly catches grammar regressions, adapter regressions, and
-   static-path issues
+8. client.py runs validate_curation_ids as defense-in-depth; on the API path
+   the schema already made cross-parent highlight-ID emission
+   decode-time-impossible, and the adapter already filtered non-verbatim skill
+   keywords, so this layer mainly catches grammar regressions, adapter
+   regressions, and static-path issues. On the headless path decoding is not
+   grammar-constrained (see "Backend Abstraction"), so this layer is the
+   enforcement point rather than a backstop
 9. pipeline.py: renderer.py applies selections, writes per-section YAML, compiles PDF
 10. renderer.py: if PDF exceeds max_pages, trims content deterministically and re-compiles
     - 8-tier trim cascade with pinned guardrails: interests is ALWAYS
@@ -1493,7 +1504,9 @@ to authorize Anthropic API calls; prevents surprise charges),
 also configurable via `--cache-ttl` on `curator curate`; see "Prompt Caching"
 above for the break-even math),
 `model` / `effort` (curate model and quality dial; also configurable per-run via
-`--model` / `--effort` on `curator curate`),
+`--model` / `--effort` on `curator curate`; when `model` is unset the
+claude-code backend resolves `HEADLESS_DEFAULT_MODEL` instead of the API
+default, see "Backend Abstraction"),
 `judge_model` (Tier 2 judge model, default `claude-haiku-4-5`; also `--judge-model`
 on `curator eval`),
 `judge_effort` (judge quality tuning; also `--judge-effort` on `curator eval`),
@@ -1559,7 +1572,11 @@ Custom exception hierarchy rooted in `CuratorError`:
 - `ConfigError` — missing/invalid configuration (wraps Pydantic `ValidationError` from settings)
 - `PortfolioError` → `PortfolioNotFoundError`, `PortfolioValidationError`
 - `APISpendGuardError` — API spend not authorized (`CURATOR_ALLOW_API_SPEND` not set to `true`)
-- `APIError` → `APIAuthError`, `APIRateLimitError`, `APIResponseError`, `APIRefusalError`
+- `APIError` → `APIAuthError`, `APIRateLimitError`, `APIResponseError`, `APIRefusalError`,
+  `HeadlessCLIError` (headless Claude Code transport failure: missing or
+  unlaunchable `claude` binary, subprocess timeout, malformed stdout),
+  `HeadlessUsageLimitError` (subscription usage limit; carries `reset_text`,
+  the only exception in the project with extra state)
 - `RenderError` — Typst compilation failure
 - `JobDescriptionError` — unreadable JD input
 - `EvalError` — evaluation framework error (metric computation, golden loading)
@@ -1707,9 +1724,15 @@ the curate path and rejects an injected API client with `EvalError`.
 `--disallowed-tools` deny list last. The ~80KB system prompt travels via a
 temp file (avoids ARG_MAX and `/proc/*/cmdline` leakage); the user prompt
 arrives on stdin; the temp dir is also the subprocess cwd so no repo CLAUDE.md
-or project context bleeds into the call. `ANTHROPIC_API_KEY` is stripped from
-the subprocess environment (it outranks the subscription login, and the point
-of this backend is to bill the subscription). No `--bare` (API-key-only, never
+or project context bleeds into the call. `HEADLESS_STRIPPED_ENV_VARS` is
+removed from the subprocess environment and logged by name only (never by
+value): `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` outrank the
+subscription login and would silently bill the API this backend exists to
+avoid; `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`,
+`CLAUDE_CODE_USE_BEDROCK`, and `CLAUDE_CODE_USE_VERTEX` would ship the
+serialized portfolio to a third-party endpoint; `ANTHROPIC_MODEL` and
+`ANTHROPIC_SMALL_FAST_MODEL` would shadow the explicit `--model` argv flag.
+No `--bare` (API-key-only, never
 reads the OAuth login) and no `--max-turns` (does not exist on the CLI); the
 subprocess timeout (`settings.headless_timeout`, default 600s, bounds
 60..3600) is the runaway guard. Model IDs pass verbatim: CLI aliases drift
@@ -1718,18 +1741,69 @@ never aliases on the operator's behalf.
 
 **Envelope handling.** The subprocess returns a JSON envelope; checks run in
 order: unparseable stdout raises `HeadlessCLIError` (with exit code and
-truncated stderr); `is_error: true` routes on the result text (usage-limit
-phrasing raises `HeadlessUsageLimitError` with the extracted `reset_text`;
-login-ish phrasing raises `APIAuthError` naming `claude /login`,
-`claude setup-token`, and `--backend api`; anything else raises
-`APIResponseError`); a non-`success` subtype raises `APIResponseError`; and
-crucially, envelope health alone is NOT success: `structured_output` presence
-is checked explicitly, because a run whose CLI-internal StructuredOutput tool
-was denied still reports `subtype: success` with no payload. A non-zero exit
-code with a parseable error envelope is reported from the envelope (richer
-text), not the exit code. On success, the envelope's `usage` maps onto the
-same four token fields the API path records, so `cache_outcome` derivation
-keeps working unchanged.
+truncated stderr); `is_error: true` routes the result text through
+`_match_known_error`, which classifies usage-limit phrasing as
+`HeadlessUsageLimitError` (with the extracted `reset_text`) and login-ish
+phrasing as `APIAuthError` naming `claude /login`, `claude setup-token`, and
+`--backend api`, with `APIResponseError` as the fallback; a non-`success`
+subtype raises `APIResponseError`; and crucially, envelope health alone is NOT
+success: `structured_output` presence is checked explicitly, because a run
+whose CLI-internal StructuredOutput tool was denied still reports
+`subtype: success` with no payload. A non-zero exit code with a parseable
+error envelope is reported from the envelope (richer text), not the exit code.
+On success, the envelope's `usage` maps onto the same four token fields the
+API path records, so `cache_outcome` derivation keeps working unchanged; each
+count is read through `_usage_int`, which drops a wrong-typed value (a
+stringified count, `null`, a bool) to `0` rather than letting a non-int reach
+`CurationResult` and the audit log, where downstream arithmetic would break.
+
+**Classifying the no-`structured_output` branch.** A denied StructuredOutput
+tool is only one way that branch is reached. A usage-limit or auth failure has
+been observed arriving with `is_error` false, and a model refusal arrives as
+prose inside a healthy envelope, so the branch runs `_match_known_error` on the
+result text first (same classifier, same check order: usage-limit wins over
+auth when both match, because re-running `claude /login` cannot fix a
+clock-bound limit) and then tests refusal cues. The CLI envelope has no
+`stop_reason` field, so those cues are how the project's "always check for a
+refusal" rule is enforced on this transport: a match raises `APIRefusalError`,
+matching the API path's `stop_reason == "refusal"` behavior. The deny-list
+message is the fallback only, so it can no longer misdiagnose the three cases
+above.
+
+**Subprocess launch failures.** The whole `OSError` family maps to
+`HeadlessCLIError`, not just `FileNotFoundError`: a non-executable or
+wrong-architecture `claude` raises `PermissionError` / `OSError`, which would
+otherwise escape the `CuratorError` taxonomy entirely and surface at the CLI
+boundary as a traceback instead of an actionable message.
+
+**Grammar enforcement is API-path-only.** The API path passes the per-call
+schema as `output_config.format`, which is constrained decoding: the model
+*cannot* emit a token sequence outside the grammar, which is what makes
+cross-parent highlight IDs decode-time-impossible. The CLI's `--json-schema` is
+implemented as a StructuredOutput *tool call*, i.e. schema validation with
+retry rather than decode-time constraint. So validation layer 1 of the three
+hard layers (see "Post-Response Validation") degrades from a guarantee to a
+post-hoc check on the headless path, while layers 2 and 3
+(`_adapt_curation_dict`'s Pydantic re-validation and `_validate_curation_ids`)
+still catch any violation that gets through. Practical consequence: the
+soft-drop recovery paths in layer 3 stop being pure defense-in-depth on this
+backend, and a schema-shaped failure is reported instead of being impossible.
+The same distinction applies to the judge's field-order chain-of-thought
+(`DimensionScore` puts `justification` before `score`): under tool-call
+structured output that ordering is a strong convention the model follows, not
+a decode-time guarantee.
+
+**Known limitations (tracked as follow-ups in `TODO.md`).** The headless child
+still resolves USER-scope settings, hooks, and the global `~/.claude/CLAUDE.md`.
+Project scope is already closed (the subprocess cwd is the temp dir, so no repo
+`CLAUDE.md` or project settings load) and MCP is closed by
+`--strict-mcp-config`, but user-scope context can still bleed into the call;
+`--safe-mode` / `--setting-sources` are the candidate fixes and need a live
+smoke run to confirm structured output still works under them. Separately,
+`@`-mention and slash-command expansion in prompt text is a surface the
+in-prompt trust-boundary defenses do not cover: if the CLI expands `@path` or
+`/command` text client-side in `-p` mode, a job description could reach a
+file-read or command path that the prompt-level rules never see.
 
 **Deny-list rationale.** `HEADLESS_DISALLOWED_TOOLS` names every agentic tool
 explicitly (Bash, Edit, Write, Read, Glob, Grep, WebFetch, WebSearch, Task,
@@ -1741,8 +1815,9 @@ internal tool the structured-output contract depends on.
 
 **Exception taxonomy.** Two new exceptions, both `APIError` children so every
 existing `except APIError` handler covers the headless backend without new
-clauses: `HeadlessCLIError` (missing `claude` binary, subprocess timeout,
-malformed stdout) and `HeadlessUsageLimitError`, which carries `reset_text`
+clauses: `HeadlessCLIError` (missing or unlaunchable `claude` binary,
+subprocess timeout, malformed stdout) and `HeadlessUsageLimitError`, which
+carries `reset_text`
 (the CLI-reported reset time, e.g. `3:45pm`). Usage-limit errors are never
 auto-retried: the limit resets on a clock, not on backoff.
 
@@ -1858,7 +1933,11 @@ the portfolio) plus soft Pydantic-time observability validators that log
 warnings without rejecting.
 
 **Technical details:**
-1. **Grammar-level** (constrained decoding) -- guarantees JSON structure matches schema
+1. **Grammar-level** (constrained decoding) -- guarantees JSON structure matches
+   schema. API backend only: the headless claude-code backend gets schema
+   validation with retry (a tool call), not decode-time constraint, so this
+   layer is post-hoc there and layers 2-3 carry the enforcement (see "Backend
+   Abstraction")
 2. **Pydantic re-validation** (SDK) -- enforces field-level constraints such as
    `min_length=1` on `SkillRanking.keywords`, `pattern` on `company_slug`,
    and `extra="forbid"` on all models. Pydantic-time **soft validators** also live

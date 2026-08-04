@@ -86,7 +86,10 @@ class DimensionScore(BaseModel):
     """Score for a single judge dimension.
 
     Field order matters: justification forces chain-of-thought before
-    scoring via constrained decoding.
+    scoring. On the API backend that ordering is enforced by constrained
+    decoding; on the headless claude-code backend structured output is a
+    tool call, so the ordering is a strong convention, not a decode-time
+    guarantee.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

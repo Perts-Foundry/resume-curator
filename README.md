@@ -46,8 +46,13 @@ resume is a chore, and who is comfortable running a command-line tool.
   ([install uv](https://docs.astral.sh/uv/getting-started/installation/)).
 - The [**Typst**](https://github.com/typst/typst#installation) CLI, for PDF
   compilation.
-- An [**Anthropic API key**](https://console.anthropic.com/) (only for `curate`
-  and the optional eval judge; `static` needs no key).
+- An [**Anthropic API key**](https://console.anthropic.com/), for the default
+  `api` backend only: `curate` and the optional eval judge need it, `static`
+  never does, and neither does `--backend claude-code`.
+- **Claude Code** (only for `--backend claude-code` / `--judge-backend
+  claude-code`): a `claude` binary on your `PATH` plus an existing login
+  (`claude /login`, or `claude setup-token` for non-interactive use). The tool
+  rides that login and never performs one itself.
 - A **portfolio source directory** that matches the schema in
   [`docs/portfolio-schema.md`](docs/portfolio-schema.md).
 
@@ -459,7 +464,7 @@ Settings resolve in priority order: **CLI arguments > environment variables >
 | `CURATOR_ALLOW_API_SPEND` | `false` | Must be `true` to authorize any API call. |
 | `CURATOR_PORTFOLIO_PATH` | `../professional-portfolio-source` | Portfolio source repo root. Required for `curate` and `static`. |
 | `CURATOR_OUTPUT_DIR` | `profiles` | Directory for per-job output. |
-| `CURATOR_MODEL` | `claude-sonnet-4-6` | Claude model for curation (alias by default; override with a snapshot ID for reproducibility). Per-run override: `curate --model`. |
+| `CURATOR_MODEL` | `claude-sonnet-4-6` | Claude model for curation (alias by default; override with a snapshot ID for reproducibility); when unset, the `claude-code` backend resolves its own Opus default instead. Per-run override: `curate --model`. |
 | `CURATOR_MAX_TOKENS` | `4096` | Maximum output tokens (256 to 8192). |
 | `CURATOR_EFFORT` | *(none)* | Response quality: low / medium / high / max. Per-run override: `curate --effort` (use `--effort off` to force-disable for Haiku). |
 | `CURATOR_CACHE_TTL` | `1h` | Prompt-cache TTL on the portfolio block: `5m` or `1h`. See [Architecture: Prompt Caching](docs/architecture.md). |

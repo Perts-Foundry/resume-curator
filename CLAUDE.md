@@ -403,7 +403,9 @@ resume-curator/
       __init__.py
       __main__.py                   # python -m curator
       cli.py                        # Typer CLI entry point, JD input handling
-      pipeline.py                   # Pipeline orchestration: run_pipeline (API path),
+      pipeline.py                   # Pipeline orchestration: run_pipeline (AI path;
+                                    #   _select_client picks api vs claude-code
+                                    #   transport from settings.backend),
                                     #   run_static_pipeline (zero-API path), shared
                                     #   _summarize_pipeline_result helper
       models.py                     # Pydantic models for structured output;
@@ -584,3 +586,7 @@ These rules apply to all code interacting with the Claude API. Consult
   Read-only from this tool's perspective. Default path:
   `../professional-portfolio-source` (the author's private portfolio repo);
   forks should override `CURATOR_PORTFOLIO_PATH` to point at their own.
+- **Claude Code CLI** (optional) — only for `--backend claude-code` /
+  `--judge-backend claude-code`: a `claude` binary on `PATH` plus an existing
+  login (`claude /login`, or `claude setup-token` non-interactively). The tool
+  never logs in on the operator's behalf.
