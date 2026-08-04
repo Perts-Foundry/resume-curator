@@ -60,12 +60,19 @@ if TYPE_CHECKING:
 class CurationResult:
     """Validated curation response with provenance and metadata.
 
-    Returned by ``CuratorClient.curate()`` (API path, ``source="api"``) and by
-    ``static_mode.build_static_result()`` (deterministic path, ``source="static"``).
+    Returned by ``CuratorClient.curate()`` (API path, ``source="api"``), by
+    ``headless.HeadlessCuratorClient.curate()`` (headless Claude Code path,
+    also ``source="api"``), and by ``static_mode.build_static_result()``
+    (deterministic path, ``source="static"``).
 
-    The ``model`` field reflects the model that actually served an API request;
-    for static runs it is the sentinel ``"n/a"``. The authoritative provenance
-    signal is ``source``.
+    Two orthogonal provenance signals: ``source`` says whether an AI produced
+    the curation (``"api"``) or it was synthesized deterministically
+    (``"static"``); ``backend`` says which transport carried an AI call
+    (``"api"`` for the Anthropic SDK, ``"claude-code"`` for the headless
+    subprocess, ``None`` when no AI call happened).
+
+    The ``model`` field reflects the model that actually served an AI request;
+    for static runs it is the sentinel ``"n/a"``.
 
     The optional ``cover_letter`` field is populated when the caller asks
     for one (``--cover-letter`` / ``with_cover_letter=True``). When absent,
@@ -85,6 +92,10 @@ class CurationResult:
     #: (scripts/rerender.py constructs CurationResult directly from a
     #: persisted curation YAML and has no TTL context).
     cache_ttl: Literal["5m", "1h"] | None = None
+    #: Transport that carried the AI call: "api" (Anthropic SDK) or
+    #: "claude-code" (headless subprocess). ``None`` on the static and
+    #: rerender paths, mirroring the ``cache_ttl`` precedent above.
+    backend: Literal["api", "claude-code"] | None = None
 
     @property
     def cache_outcome(self) -> Literal["hit", "create", "miss"] | None:
@@ -903,10 +914,11 @@ class CuratorClient:
                 cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0),
                 cover_letter=cover_letter,
                 cache_ttl=self._cache_ttl,
+                backend="api",
             )
 
         except (APIRefusalError, APIResponseError):
-            # Already our exceptions — re-raise without wrapping
+            # Already our exceptions; re-raise without wrapping
             raise
 
         except anthropic.AuthenticationError as e:
@@ -943,15 +955,15 @@ class CuratorClient:
             raise APIResponseError(msg) from e
 
         except anthropic.APITimeoutError as e:
-            # APITimeoutError is a subclass of APIConnectionError —
+            # APITimeoutError is a subclass of APIConnectionError, so it
             # must be caught first.
             logger.error("API timeout: {}", e)
-            msg = "Anthropic API request timed out — try again"
+            msg = "Anthropic API request timed out; try again"
             raise APIError(msg) from e
 
         except anthropic.APIConnectionError as e:
             logger.error("API connection error: {}", e)
-            msg = "Could not connect to Anthropic API — check network"
+            msg = "Could not connect to Anthropic API; check network"
             raise APIError(msg) from e
 
         except anthropic.APIError as e:
