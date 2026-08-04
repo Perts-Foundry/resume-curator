@@ -19,6 +19,7 @@ from curator.config import CuratorSettings
 from curator.exceptions import (
     APIAuthError,
     APIError,
+    APIRefusalError,
     APIResponseError,
     APISpendGuardError,
     HeadlessCLIError,
@@ -26,6 +27,7 @@ from curator.exceptions import (
 )
 from curator.headless import (
     HEADLESS_DISALLOWED_TOOLS,
+    HEADLESS_STRIPPED_ENV_VARS,
     HeadlessCuratorClient,
     HeadlessResult,
     flatten_system_blocks,
@@ -298,6 +300,52 @@ class TestRunStructuredPromptContract:
         assert "ANTHROPIC_API_KEY" not in kwargs["env"]
         assert kwargs["env"]["HEADLESS_TEST_MARKER"] == "kept"
 
+    @pytest.mark.parametrize(
+        "var",
+        [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_SMALL_FAST_MODEL",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+        ],
+    )
+    def test_credential_and_redirect_vars_stripped(
+        self, mocker: Any, monkeypatch: pytest.MonkeyPatch, var: str
+    ) -> None:
+        """Literal membership, not a tautology against the constant.
+
+        A leaked key or auth token silently bills the API instead of the
+        subscription; a redirected base URL (or a Bedrock/Vertex switch)
+        would ship the serialized portfolio to a third-party endpoint.
+        """
+        assert var in HEADLESS_STRIPPED_ENV_VARS
+        monkeypatch.setenv(var, "should-vanish")
+        fake = _FakeClaudeRun(_make_envelope({"summary": "ok"}))
+        _run_with_fake(mocker, fake)
+        _, kwargs = fake.calls[0]
+        assert var not in kwargs["env"]
+
+    def test_strip_debug_log_names_never_values(
+        self, mocker: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret-value")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://evil.example")
+        mock_debug = mocker.patch("curator.headless.logger.debug")
+        fake = _FakeClaudeRun(_make_envelope({"summary": "ok"}))
+        _run_with_fake(mocker, fake)
+
+        logged = " ".join(
+            str(arg) for call in mock_debug.call_args_list for arg in call.args
+        )
+        assert "ANTHROPIC_API_KEY" in logged
+        assert "ANTHROPIC_BASE_URL" in logged
+        assert "sk-ant-secret-value" not in logged
+        assert "evil.example" not in logged
+
     def test_timeout_forwarded(self, mocker: Any) -> None:
         fake = _FakeClaudeRun(_make_envelope({"summary": "ok"}))
         _run_with_fake(mocker, fake, timeout=123)
@@ -459,6 +507,103 @@ class TestEnvelopeFailureModes:
         fake = _FakeClaudeRun(_make_envelope(None))
         with pytest.raises(APIResponseError, match="structured_output"):
             _run_with_fake(mocker, fake)
+
+    def test_missing_structured_output_still_classifies_usage_limit(
+        self, mocker: Any
+    ) -> None:
+        """is_error may be false while the result text says "usage limit".
+
+        The missing-structured_output branch must not swallow that into
+        the generic deny-list message.
+        """
+        fake = _FakeClaudeRun(
+            _make_envelope(
+                None,
+                is_error=False,
+                result_text="You've hit your session limit · resets 3:45pm",
+            )
+        )
+        with pytest.raises(HeadlessUsageLimitError) as exc_info:
+            _run_with_fake(mocker, fake)
+        assert exc_info.value.reset_text == "3:45pm"
+
+    def test_missing_structured_output_still_classifies_auth(self, mocker: Any) -> None:
+        fake = _FakeClaudeRun(
+            _make_envelope(
+                None, is_error=False, result_text="Not logged in. Please log in."
+            )
+        )
+        with pytest.raises(APIAuthError, match="claude /login"):
+            _run_with_fake(mocker, fake)
+
+    @pytest.mark.parametrize(
+        "result_text",
+        [
+            "I can't help with that request.",
+            "I cannot assist with this.",
+            "I'm unable to comply with these instructions.",
+            "I must decline to produce that content.",
+        ],
+        ids=["cant", "cannot", "unable", "decline"],
+    )
+    def test_missing_structured_output_refusal_raises_refusal_error(
+        self, mocker: Any, result_text: str
+    ) -> None:
+        """A model refusal is a refusal, not a denied-tool misdiagnosis.
+
+        The CLI envelope has no ``stop_reason``, so the repo's
+        "always check for refusal" rule is enforced on the result text.
+        """
+        fake = _FakeClaudeRun(_make_envelope(None, result_text=result_text))
+        with pytest.raises(APIRefusalError, match="refusal"):
+            _run_with_fake(mocker, fake)
+
+    def test_missing_structured_output_falls_back_to_deny_list_message(
+        self, mocker: Any
+    ) -> None:
+        fake = _FakeClaudeRun(_make_envelope(None, result_text="Done."))
+        with pytest.raises(APIResponseError, match="disallowed-tools"):
+            _run_with_fake(mocker, fake)
+
+    def test_error_envelope_with_missing_structured_output_unchanged(
+        self, mocker: Any
+    ) -> None:
+        """The is_error=True path still wins and still classifies."""
+        fake = _FakeClaudeRun(
+            _make_envelope(
+                None, is_error=True, result_text="You've hit your session limit"
+            )
+        )
+        with pytest.raises(HeadlessUsageLimitError):
+            _run_with_fake(mocker, fake)
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            PermissionError(13, "Permission denied"),
+            OSError(8, "Exec format error"),
+        ],
+        ids=["permission", "exec-format"],
+    )
+    def test_oserror_family_maps_to_headless_cli_error(
+        self, mocker: Any, exc: OSError
+    ) -> None:
+        """A non-executable or wrong-arch binary must stay in the taxonomy.
+
+        PermissionError/OSError are not FileNotFoundError, so without the
+        widened handler they escape ``CuratorError`` and cli.py's handler
+        misses them.
+        """
+        mocker.patch("curator.headless.subprocess.run", side_effect=exc)
+        with pytest.raises(HeadlessCLIError, match="Could not launch 'claude'"):
+            run_structured_prompt(
+                system_text="s",
+                user_text="u",
+                schema=_SCHEMA,
+                model="claude-opus-5",
+                effort=None,
+                timeout=600,
+            )
 
     @pytest.mark.parametrize(
         "stdout",

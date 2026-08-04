@@ -37,6 +37,7 @@ from curator.config import spend_guard_message
 from curator.exceptions import (
     APIAuthError,
     APIError,
+    APIRefusalError,
     APIResponseError,
     APISpendGuardError,
     CurationValidationError,
@@ -78,6 +79,26 @@ HEADLESS_DISALLOWED_TOOLS: tuple[str, ...] = (
     "ExitPlanMode",
 )
 
+# Environment variables removed from the subprocess environment. Each one
+# either outranks the subscription login or redirects where the call goes:
+# a leaked key or auth token silently bills the Anthropic API instead of
+# the subscription this backend exists to use, and a redirected base URL
+# (or a Bedrock/Vertex switch) would ship the serialized portfolio to a
+# third-party endpoint. The model overrides are stripped because the model
+# is an explicit argv flag; an inherited env value must not shadow it.
+HEADLESS_STRIPPED_ENV_VARS: frozenset[str] = frozenset(
+    {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_SMALL_FAST_MODEL",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+    }
+)
+
 # Default subprocess timeout in seconds. The CLI has no --max-turns bound
 # (removed by 2.1.220), so the subprocess timeout is the runaway guard; an
 # observed successful curate run takes ~75s. Runtime value comes from
@@ -90,6 +111,14 @@ _USAGE_LIMIT_PATTERN = re.compile(r"hit your .*limit", re.IGNORECASE)
 _USAGE_RESET_PATTERN = re.compile(r"resets\s+(.+)$")
 _LOGIN_PATTERN = re.compile(
     r"log in|login|authenticate|API key|setup-token", re.IGNORECASE
+)
+# The CLI envelope has no ``stop_reason`` field, so a model refusal
+# arrives as prose in ``result`` with no ``structured_output``. These cues
+# stand in for the API path's ``stop_reason == "refusal"`` check.
+_REFUSAL_PATTERN = re.compile(
+    r"I (?:can(?:no|')t|cannot|won't|will not|am unable to|'m unable to)|"
+    r"I (?:must|have to) decline|unable to (?:help|assist|comply)",
+    re.IGNORECASE,
 )
 
 
@@ -133,12 +162,12 @@ class HeadlessResult:
     session_id: str | None
 
 
-def _translate_error_result(result_text: str) -> APIError:
-    """Map an ``is_error`` envelope's result text to the exception taxonomy.
+def _match_known_error(result_text: str) -> APIError | None:
+    """Classify envelope result text, or return None when nothing matches.
 
     Check order: usage-limit text first (it can mention "limit" without any
-    login phrasing), then login-ish text, then a generic response error.
-    Returned rather than raised so ``_parse_envelope`` owns the raise site.
+    login phrasing), then login-ish text. Returned rather than raised so
+    callers own the raise site and the fallback.
     """
     if _USAGE_LIMIT_PATTERN.search(result_text):
         reset_match = _USAGE_RESET_PATTERN.search(result_text)
@@ -155,6 +184,19 @@ def _translate_error_result(result_text: str) -> APIError:
             "non-interactive use), or switch to --backend api."
         )
         return APIAuthError(msg)
+    return None
+
+
+def _translate_error_result(result_text: str) -> APIError:
+    """Map an ``is_error`` envelope's result text to the exception taxonomy.
+
+    Falls back to a generic response error when no known failure mode
+    matches. Returned rather than raised so ``_parse_envelope`` owns the
+    raise site.
+    """
+    known = _match_known_error(result_text)
+    if known is not None:
+        return known
     return APIResponseError(f"claude -p reported an error: {result_text}")
 
 
@@ -197,6 +239,21 @@ def _parse_envelope(
 
     structured_output = envelope.get("structured_output")
     if not isinstance(structured_output, dict):
+        # A denied StructuredOutput tool is only one of the ways this
+        # branch is reached. A usage-limit or auth failure has been seen
+        # arriving with ``is_error`` true AND with it false, and a model
+        # refusal arrives as prose with a healthy envelope, so classify
+        # those first and keep the deny-list message as the fallback.
+        result_text = str(envelope.get("result", ""))
+        known = _match_known_error(result_text)
+        if known is not None:
+            raise known
+        if _REFUSAL_PATTERN.search(result_text):
+            msg = (
+                "claude -p returned a refusal instead of structured output: "
+                f"{result_text}"
+            )
+            raise APIRefusalError(msg)
         msg = (
             "claude -p succeeded but returned no structured_output. "
             "This usually means the CLI-internal StructuredOutput tool was "
@@ -267,11 +324,12 @@ def run_structured_prompt(
     compact JSON. The temp dir is also the subprocess cwd so no repo
     CLAUDE.md or project context bleeds into the call.
 
-    ``ANTHROPIC_API_KEY`` is stripped from the subprocess environment: it
-    outranks the subscription login, and the whole point of this backend
-    is to bill the subscription. No ``--bare`` (API-key-only, never reads
-    OAuth) and no ``--max-turns`` (does not exist in CLI 2.1.220); the
-    subprocess timeout is the runaway bound.
+    ``HEADLESS_STRIPPED_ENV_VARS`` is removed from the subprocess
+    environment: those variables outrank the subscription login or
+    redirect the call to a third-party endpoint, and the whole point of
+    this backend is to bill the subscription. No ``--bare`` (API-key-only,
+    never reads OAuth) and no ``--max-turns`` (does not exist in CLI
+    2.1.220); the subprocess timeout is the runaway bound.
 
     Args:
         system_text: Flattened system prompt (see ``flatten_system_blocks``).
@@ -292,6 +350,8 @@ def run_structured_prompt(
             or unparseable envelope.
         HeadlessUsageLimitError: Subscription usage limit reached.
         APIAuthError: Headless CLI is not logged in.
+        APIRefusalError: The model refused instead of producing
+            structured output.
         APIResponseError: Error envelope, non-success subtype, or a
             success envelope with no structured output.
     """
@@ -317,7 +377,15 @@ def run_structured_prompt(
         # nothing after the deny list could be swallowed by it).
         cmd.extend(["--disallowed-tools", *HEADLESS_DISALLOWED_TOOLS])
 
-        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        env = {
+            k: v for k, v in os.environ.items() if k not in HEADLESS_STRIPPED_ENV_VARS
+        }
+        stripped = sorted(HEADLESS_STRIPPED_ENV_VARS & os.environ.keys())
+        if stripped:
+            # Names only, never values: these carry keys and tokens.
+            logger.debug(
+                "Stripped from headless subprocess env: {}", ", ".join(stripped)
+            )
 
         logger.debug(
             "Headless claude call: model={}, effort={}, timeout={}s",
@@ -352,6 +420,16 @@ def run_structured_prompt(
                 "the run legitimately needs more time."
             )
             raise HeadlessCLIError(msg) from exc
+        except OSError as exc:
+            # A non-executable, wrong-arch, or otherwise unlaunchable
+            # 'claude' raises PermissionError/OSError, not FileNotFoundError;
+            # without this it escapes the CuratorError taxonomy and the CLI
+            # handler shows a traceback instead of an actionable message.
+            msg = (
+                f"Could not launch 'claude': {exc}. Check that Claude Code "
+                "is installed and executable, or switch to --backend api."
+            )
+            raise HeadlessCLIError(msg) from exc
         elapsed = time.perf_counter() - start
         logger.info(
             "Headless claude call finished in {:.1f}s (exit {})",
@@ -367,8 +445,9 @@ class HeadlessCuratorClient:
     Satisfies the ``CuratorClient`` contract (constructor, context manager,
     ``curate``) but transports the call through a ``claude -p`` subprocess
     billed against the operator's Claude subscription. No API key is
-    required or read; ``ANTHROPIC_API_KEY`` is actively stripped from the
-    subprocess environment.
+    required or read; ``HEADLESS_STRIPPED_ENV_VARS`` (the API key, auth
+    token, base URL, and provider switches) are actively stripped from
+    the subprocess environment.
 
     Sits behind the same ``allow_api_spend`` gate as the API client:
     subscription usage is a billable quota, and a second knob would double
