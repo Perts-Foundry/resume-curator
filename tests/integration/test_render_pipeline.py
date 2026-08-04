@@ -266,7 +266,7 @@ class TestRenderPipeline:
         )
 
         log = json.loads(result.curation_log_path.read_text())
-        assert log["format_version"] == "2.8"
+        assert log["format_version"] == "2.9"
         assert log["source"] == "api"
         assert log["model"] == "claude-sonnet-4-6-20260217"
         assert log["input_tokens"] == 5000

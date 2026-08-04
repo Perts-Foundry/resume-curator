@@ -182,7 +182,7 @@ reproducible publish output.
 #: ``_write_audit_artifacts``); the "2.x -> 2.y" convention there applies.
 #: Test pins keep the literal string deliberately, so a bump forces a
 #: conscious test update rather than silently passing.
-CURATION_LOG_FORMAT_VERSION: str = "2.8"
+CURATION_LOG_FORMAT_VERSION: str = "2.9"
 
 
 # ---------------------------------------------------------------------------
@@ -1200,7 +1200,10 @@ def _write_audit_artifacts(
     # injection scan: suspected flag, matched patterns, invisible-char
     # summary, and the operator's chosen action. Present on curate-path
     # runs (including clean scans); absent on static runs, which take
-    # no JD.
+    # no JD. 2.9 adds ``backend``, the transport that carried the AI
+    # call ("api" for the Anthropic SDK, "claude-code" for the headless
+    # Claude Code subprocess, null on static and rerender results),
+    # mirroring ``CurationResult.backend``.
     #
     # Version semantics: a minor bump (2.x -> 2.y) covers all additive
     # field surfaces shipped in the same PR. The number identifies the
@@ -1220,6 +1223,7 @@ def _write_audit_artifacts(
         "system_prompt_hash": SYSTEM_PROMPT_HASH,
         "cover_letter_prompt_hash": COVER_LETTER_PROMPT_HASH,
         "source": curation.source,
+        "backend": curation.backend,
         "model": curation.model,
         "input_tokens": curation.input_tokens,
         "output_tokens": curation.output_tokens,
