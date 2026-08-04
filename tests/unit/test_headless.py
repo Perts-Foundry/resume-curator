@@ -34,6 +34,8 @@ from curator.headless import (
     run_structured_prompt,
 )
 from curator.models import CoverLetterCuration, PortfolioData, ResumeCuration
+from curator.output_schema import build_curation_schema
+from curator.prompt import build_system_prompt, build_user_message
 from tests.helpers import make_curation_dict, valid_cover_letter
 from tests.unit.test_client import _curation_to_wire_dict
 
@@ -201,8 +203,6 @@ class TestFlattenSystemBlocks:
     def test_matches_real_system_prompt_shape(
         self, portfolio_data: PortfolioData
     ) -> None:
-        from curator.prompt import build_system_prompt
-
         blocks = build_system_prompt(portfolio_data)
         flat = flatten_system_blocks(blocks)
         assert flat == "\n\n".join(b["text"] for b in blocks)
@@ -235,6 +235,20 @@ class TestRunStructuredPromptContract:
         assert "*" not in cmd
         deny_start = cmd.index("--disallowed-tools") + 1
         assert tuple(cmd[deny_start:]) == HEADLESS_DISALLOWED_TOOLS
+        # Literal membership, not a tautology against the constant:
+        # comparing argv to HEADLESS_DISALLOWED_TOOLS alone still passes
+        # when a tool is dropped from the constant. The deny list is
+        # name-based, so a newly added CLI tool is NOT denied by default;
+        # re-check this list on every Claude Code upgrade.
+        assert {
+            "Bash",
+            "Write",
+            "Edit",
+            "Read",
+            "WebFetch",
+            "WebSearch",
+            "Task",
+        } <= set(HEADLESS_DISALLOWED_TOOLS)
 
     def test_model_passed_verbatim(self, mocker: Any) -> None:
         fake = _FakeClaudeRun(_make_envelope({"summary": "ok"}))
@@ -843,18 +857,121 @@ class TestHeadlessCurate:
     def test_curate_argv_uses_settings_model_and_timeout(
         self,
         mocker: Any,
-        headless_settings: CuratorSettings,
+        tmp_path: Path,
         portfolio_data: PortfolioData,
     ) -> None:
+        """Non-default model and timeout, so hardcoding cannot pass.
+
+        The shared fixture uses model == HEADLESS_DEFAULT_MODEL and
+        headless_timeout == the module default, which makes an
+        implementation that ignores settings indistinguishable.
+        """
+        settings = CuratorSettings(
+            anthropic_api_key=None,
+            backend="claude-code",
+            model="claude-sonnet-4-6",
+            headless_timeout=123,
+            allow_api_spend=True,
+            portfolio_path=tmp_path,
+            output_dir=tmp_path / "profiles",
+        )
         fake = _FakeClaudeRun(_make_envelope(_valid_wire_dict()))
         mocker.patch("curator.headless.subprocess.run", side_effect=fake)
 
-        client = HeadlessCuratorClient(headless_settings)
+        client = HeadlessCuratorClient(settings)
         client.curate(portfolio_data, "Senior role at Acme.")
 
         cmd, kwargs = fake.calls[0]
-        assert cmd[cmd.index("--model") + 1] == headless_settings.model
-        assert kwargs["timeout"] == headless_settings.headless_timeout
+        assert cmd[cmd.index("--model") + 1] == "claude-sonnet-4-6"
+        assert kwargs["timeout"] == 123
+
+    @pytest.mark.parametrize("effort", ["high", None], ids=["set", "none"])
+    def test_curate_forwards_settings_effort(
+        self,
+        mocker: Any,
+        tmp_path: Path,
+        portfolio_data: PortfolioData,
+        effort: str | None,
+    ) -> None:
+        """settings.effort must reach argv (a hardcoded None survives otherwise)."""
+        settings = CuratorSettings(
+            anthropic_api_key=None,
+            backend="claude-code",
+            model="claude-opus-5",
+            effort=effort,
+            allow_api_spend=True,
+            portfolio_path=tmp_path,
+            output_dir=tmp_path / "profiles",
+        )
+        fake = _FakeClaudeRun(_make_envelope(_valid_wire_dict()))
+        mocker.patch("curator.headless.subprocess.run", side_effect=fake)
+
+        HeadlessCuratorClient(settings).curate(portfolio_data, "Senior role at Acme.")
+
+        cmd, _ = fake.calls[0]
+        if effort is None:
+            assert "--effort" not in cmd
+        else:
+            assert cmd[cmd.index("--effort") + 1] == effort
+
+    @pytest.mark.parametrize("with_cover_letter", [False, True])
+    def test_curate_input_wiring(
+        self,
+        mocker: Any,
+        headless_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+        with_cover_letter: bool,
+    ) -> None:
+        """The curate prompts and schema actually reach the subprocess.
+
+        The happy-path test pins the output side only (the fake returns a
+        canned envelope regardless of inputs), so this pins the input
+        side: the system-prompt file content, the stdin user message, the
+        exact ``--json-schema`` payload (including ``with_cover_letter``
+        and ``max_pages``), and the trust boundary - the JD must never
+        appear in the system prompt.
+        """
+        structured: dict[str, Any] = (
+            {
+                "resume": _valid_wire_dict(),
+                "cover_letter": valid_cover_letter().model_dump(mode="json"),
+            }
+            if with_cover_letter
+            else _valid_wire_dict()
+        )
+        fake = _FakeClaudeRun(_make_envelope(structured))
+        mocker.patch("curator.headless.subprocess.run", side_effect=fake)
+
+        jd_text = "Senior platform role at Acme. Kubernetes required."
+        client = HeadlessCuratorClient(headless_settings)
+        client.curate(portfolio_data, jd_text, with_cover_letter=with_cover_letter)
+
+        cmd, kwargs = fake.calls[0]
+
+        expected_system = flatten_system_blocks(
+            build_system_prompt(
+                portfolio_data,
+                with_cover_letter=with_cover_letter,
+                cache_ttl=headless_settings.cache_ttl,
+            )
+        )
+        assert fake.system_prompt_contents[0] == expected_system
+
+        expected_user = build_user_message(
+            jd_text, with_cover_letter=with_cover_letter
+        )[0]["content"]
+        assert kwargs["input"] == expected_user
+
+        wire_schema = json.loads(cmd[cmd.index("--json-schema") + 1])
+        assert wire_schema == build_curation_schema(
+            portfolio_data,
+            with_cover_letter=with_cover_letter,
+            max_pages=headless_settings.max_pages,
+        )
+
+        # Trust boundary: the JD is user data and rides stdin only. A
+        # swapped system/user text would otherwise go unnoticed.
+        assert jd_text not in fake.system_prompt_contents[0]
 
 
 # ---------------------------------------------------------------------------
