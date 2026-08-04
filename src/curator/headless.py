@@ -237,7 +237,14 @@ def _parse_envelope(
         output_tokens=usage.get("output_tokens", 0),
         cache_creation_input_tokens=usage.get("cache_creation_input_tokens", 0),
         cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
-        total_cost_usd=total_cost_usd if isinstance(total_cost_usd, float) else None,
+        # json.loads parses a whole-number cost (e.g. ``2``) as int, so
+        # accept both numeric types; bool is excluded (it subclasses int).
+        total_cost_usd=(
+            float(total_cost_usd)
+            if isinstance(total_cost_usd, int | float)
+            and not isinstance(total_cost_usd, bool)
+            else None
+        ),
         session_id=session_id if isinstance(session_id, str) else None,
     )
 
