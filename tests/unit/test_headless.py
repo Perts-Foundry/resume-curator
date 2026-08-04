@@ -92,9 +92,16 @@ class _FakeClaudeRun:
     in flight, since the temp dir is gone by the time the test asserts.
     """
 
-    def __init__(self, envelope: dict[str, Any] | str, *, returncode: int = 0) -> None:
+    def __init__(
+        self,
+        envelope: dict[str, Any] | str,
+        *,
+        returncode: int = 0,
+        stderr: str = "",
+    ) -> None:
         self.envelope = envelope
         self.returncode = returncode
+        self.stderr = stderr
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
         self.system_prompt_contents: list[str] = []
 
@@ -111,7 +118,7 @@ class _FakeClaudeRun:
         return type(
             "CompletedProcess",
             (),
-            {"returncode": self.returncode, "stdout": stdout, "stderr": ""},
+            {"returncode": self.returncode, "stdout": stdout, "stderr": self.stderr},
         )()
 
 
@@ -427,6 +434,28 @@ class TestRunStructuredPromptContract:
         assert result.cache_read_input_tokens == 0
 
     @pytest.mark.parametrize(
+        "value",
+        ["1200", None, True, 12.5, {"nested": 1}],
+        ids=["string", "null", "bool", "float", "dict"],
+    )
+    def test_non_int_usage_values_default_to_zero(
+        self, mocker: Any, value: Any
+    ) -> None:
+        """A wrong-typed count must not reach CurationResult or the audit log.
+
+        The usage dict itself being wrong-typed was already covered; this
+        pins the per-VALUE case, where a stringified or null count would
+        otherwise flow straight through into token arithmetic downstream.
+        """
+        fake = _FakeClaudeRun(
+            _make_envelope({"summary": "ok"}, usage={"input_tokens": value})
+        )
+        result = _run_with_fake(mocker, fake)
+        assert result.input_tokens == 0
+        assert isinstance(result.input_tokens, int)
+        assert not isinstance(result.input_tokens, bool)
+
+    @pytest.mark.parametrize(
         ("total_cost_usd", "expected"),
         [
             (1.23, 1.23),
@@ -487,6 +516,90 @@ class TestEnvelopeFailureModes:
         with pytest.raises(HeadlessUsageLimitError) as exc_info:
             _run_with_fake(mocker, fake)
         assert exc_info.value.reset_text is None
+
+    @pytest.mark.parametrize(
+        "result_text",
+        [
+            "You've hit your session limit · resets 3:45pm",
+            "You've hit your weekly limit",
+            "You're out of usage credits",
+            "usage limit reached",
+            "Credit balance is too low",
+            "Credit balance too low",
+        ],
+        ids=[
+            "session-limit",
+            "weekly-limit",
+            "out-of-credits",
+            "limit-reached",
+            "balance-too-low",
+            "balance-too-low-terse",
+        ],
+    )
+    def test_usage_limit_phrasing_family(self, mocker: Any, result_text: str) -> None:
+        """Every phrasing of "stop, you are out of quota" maps to one error.
+
+        The CLI wording varies by limit type (session, weekly, credits,
+        empty balance); all of them are clock- or billing-bound, so all
+        must raise HeadlessUsageLimitError rather than the generic
+        response error a user cannot act on.
+        """
+        fake = _FakeClaudeRun(
+            _make_envelope(None, is_error=True, result_text=result_text)
+        )
+        with pytest.raises(HeadlessUsageLimitError):
+            _run_with_fake(mocker, fake)
+
+    @pytest.mark.parametrize(
+        "result_text",
+        [
+            "Not logged in. Please log in.",
+            "Invalid API key",
+            "401 Unauthorized",
+            "403 Forbidden",
+            "OAuth token expired",
+            "OAuth token has expired",
+            "bad credentials",
+            "authentication failed",
+        ],
+        ids=[
+            "not-logged-in",
+            "invalid-api-key",
+            "401",
+            "403",
+            "oauth-expired",
+            "oauth-has-expired",
+            "bad-credentials",
+            "auth-failed",
+        ],
+    )
+    def test_auth_phrasing_family(self, mocker: Any, result_text: str) -> None:
+        """Auth failures share one operator fix, so they share one error."""
+        fake = _FakeClaudeRun(
+            _make_envelope(None, is_error=True, result_text=result_text)
+        )
+        with pytest.raises(APIAuthError, match="claude /login"):
+            _run_with_fake(mocker, fake)
+
+    def test_usage_limit_wins_over_login_wording(self, mocker: Any) -> None:
+        """Documented check order: usage-limit text is tested first.
+
+        A limit message can also mention logging in; classifying it as an
+        auth error would send the operator to re-run 'claude /login',
+        which cannot fix a clock-bound limit.
+        """
+        fake = _FakeClaudeRun(
+            _make_envelope(
+                None,
+                is_error=True,
+                result_text=(
+                    "You've hit your session limit · resets 3:45pm. "
+                    "Please log in again later."
+                ),
+            )
+        )
+        with pytest.raises(HeadlessUsageLimitError):
+            _run_with_fake(mocker, fake)
 
     def test_not_logged_in_is_actionable_auth_error(self, mocker: Any) -> None:
         fake = _FakeClaudeRun(
@@ -629,6 +742,21 @@ class TestEnvelopeFailureModes:
         with pytest.raises(HeadlessCLIError):
             _run_with_fake(mocker, fake)
 
+    def test_unparseable_stdout_truncates_stderr(self, mocker: Any) -> None:
+        """Stderr is untrusted, unbounded CLI output: it must be clipped.
+
+        A crashing CLI can emit megabytes of stack trace; the error
+        message keeps the first 500 stripped characters only.
+        """
+        noise = "E" * 900
+        fake = _FakeClaudeRun("not json {", returncode=2, stderr=f"  {noise}  ")
+        with pytest.raises(HeadlessCLIError) as exc_info:
+            _run_with_fake(mocker, fake)
+        message = str(exc_info.value)
+        assert "exit 2" in message
+        assert "E" * 500 in message
+        assert "E" * 501 not in message
+
     def test_missing_binary_names_backend_api(self, mocker: Any) -> None:
         mocker.patch(
             "curator.headless.subprocess.run",
@@ -722,6 +850,33 @@ class TestHeadlessCurate:
         assert len(raw_files) == 1
         persisted = json.loads(raw_files[0].read_text(encoding="utf-8"))
         assert persisted == wire
+
+    def test_session_id_flows_into_error_and_recovery_filename(
+        self,
+        mocker: Any,
+        headless_settings: CuratorSettings,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        """The correlation id must be the real session id, not the fallback.
+
+        Without this, ``result.session_id or "headless"`` could always
+        take the fallback branch and every recovery file for every run
+        would collide on the same name.
+        """
+        wire = _valid_wire_dict()
+        wire["work_highlights_by_id"] = {"ghost-corp-role": ["ghost-highlight"]}
+        fake = _FakeClaudeRun(_make_envelope(wire, session_id="sess-corr-9f2"))
+        mocker.patch("curator.headless.subprocess.run", side_effect=fake)
+
+        client = HeadlessCuratorClient(headless_settings)
+        with pytest.raises(APIResponseError) as exc_info:
+            client.curate(portfolio_data, "Senior role at Acme.")
+
+        assert "sess-corr-9f2" in str(exc_info.value)
+        raw_files = list(headless_settings.output_dir.glob("curation_raw-*.json"))
+        assert len(raw_files) == 1
+        assert "sess-corr-9f2" in raw_files[0].name
+        assert "headless" not in raw_files[0].name
 
     def test_raw_persist_failure_degrades_to_hint(
         self,

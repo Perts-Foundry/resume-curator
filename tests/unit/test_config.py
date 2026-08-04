@@ -332,6 +332,19 @@ class TestHeadlessDefaultModel:
         settings = _settings(backend="claude-code")
         assert settings.judge_model == "claude-haiku-4-5"
 
+    def test_judge_backend_alone_leaves_model_at_api_default(self) -> None:
+        """The Opus default keys on `backend` only, never `judge_backend`.
+
+        Mixing backends is supported (a headless judge with an API
+        curate), so a headless judge must not silently re-point the
+        curate model. If the validator is ever widened to consider
+        judge_backend, this fails loudly rather than changing the model
+        an operator is billed for.
+        """
+        settings = _settings(judge_backend="claude-code")
+        assert settings.backend == "api"
+        assert settings.model == "claude-sonnet-4-6"
+
 
 class TestSpendGuardMessage:
     """Tests for the per-backend spend-guard message helper."""

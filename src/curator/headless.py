@@ -106,11 +106,26 @@ HEADLESS_STRIPPED_ENV_VARS: frozenset[str] = frozenset(
 _HEADLESS_TIMEOUT: int = 600
 
 # Usage-limit envelopes carry result text like
-# "You've hit your session limit · resets 3:45pm".
-_USAGE_LIMIT_PATTERN = re.compile(r"hit your .*limit", re.IGNORECASE)
+# "You've hit your session limit · resets 3:45pm", but the CLI has
+# several phrasings for the same condition (session/weekly limits,
+# exhausted credits, an empty credit balance). All of them are
+# clock-bound or billing-bound, so all map to HeadlessUsageLimitError.
+_USAGE_LIMIT_PATTERN = re.compile(
+    r"hit your .*limit"
+    r"|usage limit"
+    r"|out of usage credits"
+    r"|credit balance (?:is )?too low",
+    re.IGNORECASE,
+)
 _USAGE_RESET_PATTERN = re.compile(r"resets\s+(.+)$")
+# Auth failures likewise arrive in several phrasings: a login prompt, an
+# HTTP status line, or an expired/rejected token. All are fixed by the
+# same operator action, so all map to APIAuthError.
 _LOGIN_PATTERN = re.compile(
-    r"log in|login|authenticate|API key|setup-token", re.IGNORECASE
+    r"log in|login|authenticate|authentication failed"
+    r"|API key|setup-token|401 unauthorized|403 forbidden"
+    r"|oauth token|token (?:has )?expired|bad credentials",
+    re.IGNORECASE,
 )
 # The CLI envelope has no ``stop_reason`` field, so a model refusal
 # arrives as prose in ``result`` with no ``structured_output``. These cues
@@ -160,6 +175,20 @@ class HeadlessResult:
     cache_read_input_tokens: int
     total_cost_usd: float | None
     session_id: str | None
+
+
+def _usage_int(usage: dict[str, Any], key: str) -> int:
+    """Read one token count from the envelope's usage dict.
+
+    Wrong-typed values (a stringified count, null, a bool) are dropped to
+    0 rather than flowing into ``CurationResult`` and the audit log, where
+    a non-int would break arithmetic downstream. bool is excluded because
+    it subclasses int.
+    """
+    value = usage.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
 
 
 def _match_known_error(result_text: str) -> APIError | None:
@@ -264,6 +293,15 @@ def _parse_envelope(
     usage = envelope.get("usage")
     if not isinstance(usage, dict):
         usage = {}
+    token_counts = {
+        key: _usage_int(usage, key)
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+    }
     model_usage = envelope.get("modelUsage")
     if isinstance(model_usage, dict) and len(model_usage) == 1:
         model = next(iter(model_usage))
@@ -279,10 +317,10 @@ def _parse_envelope(
         "Headless response: model={}, tokens(in={}, out={}, cache_create={}, "
         "cache_read={}), notional_cost_usd={}, session_id={}",
         model,
-        usage.get("input_tokens", 0),
-        usage.get("output_tokens", 0),
-        usage.get("cache_creation_input_tokens", 0),
-        usage.get("cache_read_input_tokens", 0),
+        token_counts["input_tokens"],
+        token_counts["output_tokens"],
+        token_counts["cache_creation_input_tokens"],
+        token_counts["cache_read_input_tokens"],
         total_cost_usd,
         session_id,
     )
@@ -290,10 +328,10 @@ def _parse_envelope(
     return HeadlessResult(
         structured_output=structured_output,
         model=model,
-        input_tokens=usage.get("input_tokens", 0),
-        output_tokens=usage.get("output_tokens", 0),
-        cache_creation_input_tokens=usage.get("cache_creation_input_tokens", 0),
-        cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
+        input_tokens=token_counts["input_tokens"],
+        output_tokens=token_counts["output_tokens"],
+        cache_creation_input_tokens=token_counts["cache_creation_input_tokens"],
+        cache_read_input_tokens=token_counts["cache_read_input_tokens"],
         # json.loads parses a whole-number cost (e.g. ``2``) as int, so
         # accept both numeric types; bool is excluded (it subclasses int).
         total_cost_usd=(
