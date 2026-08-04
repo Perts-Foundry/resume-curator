@@ -177,6 +177,8 @@ argument and `--clipboard` are mutually exclusive.
 | `--cache-ttl {5m,1h}` | Prompt-cache TTL on the portfolio block (overrides `CURATOR_CACHE_TTL`). `1h` (default) favors multi-run sessions; pass `5m` for one-off runs to avoid the 2x write penalty. |
 | `--model ID` | Curate model for this run, e.g. `claude-haiku-4-5` (overrides `CURATOR_MODEL`). |
 | `--effort {low,medium,high,max,off}` | Effort level for this run (overrides `CURATOR_EFFORT`). Use `off` to force effort disabled, which is required for Haiku models (Haiku 4.5 rejects the effort parameter). |
+| `--backend {api,claude-code}` | Curation transport for this run (overrides `CURATOR_BACKEND`). `api` (default) calls the Anthropic API; `claude-code` runs a headless Claude Code subprocess billed against your Claude subscription. See [Backends](#backends). |
+| `--headless-timeout N` | Timeout in seconds (60 to 3600, default 600) for the headless `claude -p` subprocess (overrides `CURATOR_HEADLESS_TIMEOUT`). Only meaningful with the `claude-code` backend. |
 | `--publish DIR` | After rendering, copy the upload-ready files into `DIR/<profile>/`. See [`publish`](#curator-publish). Canonical form puts the JD first: `curator curate jd.txt --publish DIR`. |
 
 `--dry-run` and `--no-pdf` are mutually exclusive. Every option works with any
@@ -309,6 +311,7 @@ checks locally at zero API cost; **Tier 2** adds an LLM judge (paid).
 | `--judge` | Run Tier 2 LLM judge evaluation (requires an API key; ~$0.05 per eval). |
 | `--judge-model ID` | Judge model for this run, e.g. `claude-sonnet-4-6` (overrides `CURATOR_JUDGE_MODEL`). Requires `--judge`; rejected with `--golden` (golden baselines are calibrated against the default judge). |
 | `--judge-effort {low,medium,high,max,off}` | Judge effort for this run (overrides `CURATOR_JUDGE_EFFORT`). Use `off` to force it disabled; the default judge is Haiku, which rejects the effort parameter. Requires `--judge`; rejected with `--golden`. |
+| `--judge-backend {api,claude-code}` | Judge transport for this run (overrides `CURATOR_JUDGE_BACKEND`). `claude-code` runs the judge on your Claude subscription; see [Backends](#backends). Requires `--judge`; rejected with `--golden` (golden baselines are calibrated against the API judge, whose `temperature=0` has no headless analog). |
 | `--json` | Output results as JSON to stdout (machine-readable). |
 | `--pages N` | Override the inferred `max_pages` used for band selection (1 to 5). Rejected with `--golden` (each golden case owns its own page budget). |
 
@@ -390,6 +393,61 @@ python -m curator curate job.txt
 
 </details>
 
+## Backends
+
+The two paid calls (`curate` and `eval --judge`) each support two transports:
+
+- **`api`** (default): the Anthropic API via the SDK. Requires an API key and
+  bills per token. This is the scale path: prompt caching, pinned snapshots,
+  reproducible judge scoring.
+- **`claude-code`**: a headless Claude Code subprocess (`claude -p`) billed
+  against your Claude subscription at $0 marginal cost. Bring your own Claude
+  Code install and login: install Claude Code, log in once with `claude /login`
+  (or `claude setup-token` for non-interactive use), and the tool rides that
+  login. It never performs or offers claude.ai login itself, and no API key is
+  needed (an `ANTHROPIC_API_KEY` in your environment is deliberately ignored
+  on this backend).
+
+Both backends sit behind the same `CURATOR_ALLOW_API_SPEND=true` gate:
+subscription usage is a billable quota (it draws down your plan's rolling
+usage windows), even though no dollars change hands per run.
+
+Caveats on `claude-code`:
+
+- The headless default model is Opus (strongest model, since marginal cost is
+  $0). Opus runs draw on the subscription's **separate Opus usage cap**; pass
+  `--model claude-sonnet-4-6` to draw on the Sonnet pool instead. An explicit
+  `--model` or `CURATOR_MODEL` always wins on either backend.
+- `--cache-ttl` is a no-op: subscription auth auto-caches at a fixed 1h TTL
+  (the CLI warns if you pass the flag).
+- The judge's `temperature=0` has no headless analog, so headless judge scores
+  are not run-to-run reproducible. Golden judging (`--golden --judge`) is
+  therefore API-only and rejects a `claude-code` judge backend.
+- If you hit your plan's usage limit, the run fails with the reset time and is
+  never auto-retried.
+
+Every headless option, one concrete invocation each (all paid examples assume
+`CURATOR_ALLOW_API_SPEND=true` is already set, as shown in the first row):
+
+| Option | Example invocation |
+|--------|--------------------|
+| `--backend claude-code` (basic headless curate) | `CURATOR_ALLOW_API_SPEND=true uv run curator curate jd.txt --backend claude-code` |
+| `CURATOR_BACKEND` (env form) | `CURATOR_BACKEND=claude-code uv run curator curate jd.txt` |
+| `--model` override (spare the Opus cap) | `uv run curator curate jd.txt --backend claude-code --model claude-sonnet-4-6` |
+| `--effort` on headless | `uv run curator curate jd.txt --backend claude-code --effort high` |
+| `--headless-timeout` (flag form) | `uv run curator curate jd.txt --backend claude-code --headless-timeout 900` |
+| `CURATOR_HEADLESS_TIMEOUT` (env form) | `CURATOR_HEADLESS_TIMEOUT=900 uv run curator curate jd.txt --backend claude-code` |
+| `--judge-backend claude-code` (headless judge) | `uv run curator eval profiles/2026-03-20-acme-corp/ --judge --judge-backend claude-code` |
+| `--judge-model` override on headless | `uv run curator eval profiles/2026-03-20-acme-corp/ --judge --judge-backend claude-code --judge-model claude-sonnet-4-6` |
+| `CURATOR_JUDGE_BACKEND` (env form) | `CURATOR_JUDGE_BACKEND=claude-code uv run curator eval profiles/2026-03-20-acme-corp/ --judge` |
+| Cover letter combo | `uv run curator curate jd.txt --backend claude-code --cover-letter` |
+| Page-budget combo | `uv run curator curate jd.txt --backend claude-code --pages 1` |
+| Dry-run preview (free; shows the `$0 marginal (subscription usage; notional cost logged)` label) | `uv run curator curate jd.txt --dry-run --backend claude-code` |
+
+The audit log (`curation_log.json`) records which transport produced each
+profile (`backend: "api"` or `"claude-code"`), and the Tier 2 judge report
+does the same.
+
 ## Configuration
 
 Settings resolve in priority order: **CLI arguments > environment variables >
@@ -410,6 +468,9 @@ Settings resolve in priority order: **CLI arguments > environment variables >
 | `CURATOR_API_MAX_RETRIES` | `5` | Max retry attempts for Anthropic API calls (1 to 10; SDK built-in retries). |
 | `CURATOR_JUDGE_MODEL` | `claude-haiku-4-5` | Model for Tier 2 judge evaluation. Per-run override: `eval --judge-model` (requires `--judge`). |
 | `CURATOR_JUDGE_EFFORT` | *(none)* | Effort level for judge quality tuning. Leave unset for Haiku 4.5. Per-run override: `eval --judge-effort` (use `off` to force-disable). |
+| `CURATOR_BACKEND` | `api` | Curation transport: `api` or `claude-code` (headless Claude Code on your subscription; see [Backends](#backends)). Per-run override: `curate --backend`. |
+| `CURATOR_JUDGE_BACKEND` | `api` | Tier 2 judge transport: `api` or `claude-code`. Kept separate from `CURATOR_BACKEND` so curate and judge can mix. Per-run override: `eval --judge-backend`. |
+| `CURATOR_HEADLESS_TIMEOUT` | `600` | Timeout in seconds (60 to 3600) for headless `claude -p` subprocesses; the runaway guard on the `claude-code` backend. Per-run override: `curate --headless-timeout`. |
 | `CURATOR_SUMMARY_MANDATORY_MENTION` | *(author's identity by default)* | Phrase the AI must include verbatim in every generated summary. Forks should set their own, or an empty string to disable. |
 
 > [!WARNING]
@@ -427,6 +488,10 @@ This tool calls the Anthropic API, which bills per token. `curate` and
 `eval --judge` cost real money (a curate run is roughly $0.07 first / $0.02
 cached on Sonnet; a judge eval is approximately $0.05 on Haiku 4.5).
 `CURATOR_ALLOW_API_SPEND` must be `true` before any API call runs.
+
+On the `claude-code` backend (see [Backends](#backends)) the same calls cost
+$0 marginal but consume your Claude subscription's usage windows, so the same
+spend gate applies.
 
 **Free at all times:** `curator static`, `curator curate --dry-run`, and
 `curator eval` without `--judge`. Reach for `static` whenever you want a PDF and

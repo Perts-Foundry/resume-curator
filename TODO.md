@@ -730,15 +730,29 @@ expanding scope. Each is independently shippable.
   processing).
 - [ ] Token pre-counting via `client.messages.count_tokens()` to
   reject oversized inputs before batch requests.
+- [ ] Stream-json progress output for long headless runs: `claude -p
+  --output-format stream-json` would let `headless.py` surface
+  incremental progress instead of a silent subprocess for up to
+  `headless_timeout` seconds. Needs an envelope-parsing rework
+  (line-delimited events vs one JSON object), so measure demand first.
+- [ ] Envelope-contract check against future Claude Code CLI versions:
+  the headless backend's envelope handling (`is_error`, `subtype`,
+  `structured_output`, `usage` key casing) is verified against one CLI
+  version. Add a cheap version probe or a documented compatibility
+  check so CLI drift surfaces as an actionable error rather than a
+  puzzling `APIResponseError`.
 
 ### CLI / UX
 
-- [ ] Dry-run cost label is hardcoded `~$0.07 first / ~$0.02 cached
-  (Sonnet)` in `cli.py` `_display_dry_run_preview`. Now that
-  `curate --model` is a first-class flag, the parenthetical can mislead
-  for non-Sonnet models (Haiku is ~$0.07 cold / ~$0.01 warm). Make the
-  estimate model-aware or drop the model name. (Deferred from the
-  2026-06-04 per-run model/effort flags PR.)
+- [ ] Dry-run cost label for the API backend is hardcoded `~$0.07
+  first / ~$0.02 cached (Sonnet)` in `cli.py`
+  `_display_dry_run_preview`. The claude-code backend now gets its own
+  accurate `$0 marginal (subscription usage; notional cost logged)`
+  label, but the API estimate still misleads for non-Sonnet models
+  (Haiku is ~$0.07 cold / ~$0.01 warm) now that `curate --model` is a
+  first-class flag. Make the API estimate model-aware or drop the
+  model name. (Deferred from the 2026-06-04 per-run model/effort flags
+  PR; headless case handled in the 2026-08-03 backend PR.)
 
 ### Prompt iteration
 
