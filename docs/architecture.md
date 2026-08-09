@@ -1720,11 +1720,19 @@ the curate path and rejects an injected API client with `EvalError`.
 `--output-format json`, `--json-schema <compact dump>`,
 `--system-prompt-file <tempfile>`, `--model <verbatim>`, `--effort <level>`
 (emitted only when configured; the Haiku-defaulted judge never emits it),
-`--no-session-persistence`, `--strict-mcp-config`, then the variadic
-`--disallowed-tools` deny list last. The ~80KB system prompt travels via a
-temp file (avoids ARG_MAX and `/proc/*/cmdline` leakage); the user prompt
+`--safe-mode`, `--no-session-persistence`, `--strict-mcp-config`, then the
+variadic `--disallowed-tools` deny list last. The ~80KB system prompt travels
+via a temp file (avoids ARG_MAX and `/proc/*/cmdline` leakage); the user prompt
 arrives on stdin; the temp dir is also the subprocess cwd so no repo CLAUDE.md
-or project context bleeds into the call. `HEADLESS_STRIPPED_ENV_VARS` is
+or project context bleeds into the call. Before it reaches stdin the untrusted
+user text passes through `neutralize_at_mentions`, which escapes every
+boundary `@`-mention to the CLI's literal-`@` form (`\@`): the CLI expands an
+`@path` mention into that file's contents *client-side, before any tool runs*,
+so the deny list and `--safe-mode` do not stop it (confirmed on CLI 2.1.226,
+where a canary in `@/abs/path` inside `<job_description>` reached structured
+output with every tool denied). The boundary anchor leaves emails
+(`jobs@acme.com`, a non-space before `@`) untouched; escaping is inert to
+curation. `HEADLESS_STRIPPED_ENV_VARS` is
 removed from the subprocess environment and logged by name only (never by
 value): `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` outrank the
 subscription login and would silently bill the API this backend exists to
@@ -1793,25 +1801,47 @@ The same distinction applies to the judge's field-order chain-of-thought
 structured output that ordering is a strong convention the model follows, not
 a decode-time guarantee.
 
-**Known limitations (tracked as follow-ups in `TODO.md`).** The headless child
-still resolves USER-scope settings, hooks, and the global `~/.claude/CLAUDE.md`.
-Project scope is already closed (the subprocess cwd is the temp dir, so no repo
-`CLAUDE.md` or project settings load) and MCP is closed by
-`--strict-mcp-config`, but user-scope context can still bleed into the call;
-`--safe-mode` / `--setting-sources` are the candidate fixes and need a live
-smoke run to confirm structured output still works under them. Separately,
-`@`-mention and slash-command expansion in prompt text is a surface the
-in-prompt trust-boundary defenses do not cover: if the CLI expands `@path` or
-`/command` text client-side in `-p` mode, a job description could reach a
-file-read or command path that the prompt-level rules never see.
+**Context isolation.** `--safe-mode` disables the child's own customizations
+(USER- and project-scope settings, hooks, the global `~/.claude/CLAUDE.md`,
+skills, plugins, custom agents/commands, output styles). It closes the
+user-scope context bleed that the temp-dir cwd (project scope) and
+`--strict-mcp-config` (MCP) did not, and a live smoke run on CLI 2.1.226
+confirmed structured output still works under it. Project scope remains closed
+by the cwd; MCP by `--strict-mcp-config`.
+
+**`@`-mention and slash-command surface.** The CLI expands an `@path` mention
+in the prompt into that file's contents client-side, in `-p` mode, before any
+tool runs, so neither the deny list nor `--safe-mode` blocks it; it is a
+genuine headless-only exfiltration vector with no API-path analog. The JD is
+untrusted stdin, so `neutralize_at_mentions` escapes every boundary `@`-mention
+before the subprocess sees it (see the invocation contract above). A narrow
+`headless_file_mention` pattern in `JD_INJECTION_PATTERNS` also surfaces the
+filesystem-path shapes (`@/`, `@~`, `@../`) to the operator on both backends
+for visibility. Slash-command text (`/login`) is parsed only when it is the
+first non-whitespace of the prompt, which the `<job_description>` wrapper
+already prevents (the prompt starts with `<`); a defensive test pins that
+invariant. The `interview-prep` command restates the `@`-mention theme in its
+grep so the two pattern lists stay in sync.
 
 **Deny-list rationale.** `HEADLESS_DISALLOWED_TOOLS` names every agentic tool
 explicitly (Bash, Edit, Write, Read, Glob, Grep, WebFetch, WebSearch, Task,
-and the rest). It must never be the wildcard `"*"`: a wildcard also denies the
-CLI-internal StructuredOutput tool, and the failure is silent (the envelope
-still says `subtype: success`, just with no `structured_output`). The explicit
-list gives the same zero-agentic-tools posture without breaking the one
-internal tool the structured-output contract depends on.
+Agent, Skill, Workflow, ToolSearch, and the rest). It must never be the
+wildcard `"*"`: a wildcard also denies the CLI-internal StructuredOutput tool,
+and the failure is silent (the envelope still says `subtype: success`, just
+with no `structured_output`). The explicit list gives the same
+zero-agentic-tools posture without breaking the one internal tool the
+structured-output contract depends on. It is name-based and therefore fails
+open for any tool a future CLI adds; `--safe-mode` and the structured-output
+schema are the structural backstops, and the list is re-verified on each CLI
+upgrade (last verified 2.1.226, which added `Agent`/`Skill`/`Workflow`/
+`ToolSearch`).
+
+**Envelope-contract drift.** Envelope-shape failures (unparseable stdout, a
+non-object envelope) annotate the running `claude --version` in the raised
+`HeadlessCLIError`, so a CLI upgrade that changes the envelope surfaces as an
+actionable "which version produced this" hint rather than a bare parse error.
+The version probe never raises (a failure there must not mask the envelope
+failure it annotates).
 
 **Exception taxonomy.** Two new exceptions, both `APIError` children so every
 existing `except APIError` handler covers the headless backend without new

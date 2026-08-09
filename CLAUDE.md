@@ -428,8 +428,12 @@ resume-curator/
                                     #   HeadlessCuratorClient reuses client.py's
                                     #   validation ladder; shared
                                     #   run_structured_prompt engine also used by
-                                    #   the eval judge; explicit tool deny list;
-                                    #   strips ANTHROPIC_API_KEY; session_id
+                                    #   the eval judge; --safe-mode + explicit
+                                    #   tool deny list; neutralize_at_mentions
+                                    #   escapes JD @-mentions (headless-only
+                                    #   client-side file-expansion vector);
+                                    #   strips ANTHROPIC_API_KEY; envelope-failure
+                                    #   messages name the CLI version; session_id
                                     #   log-only
       jd_scan.py                    # Heuristic JD prompt-injection detector +
                                     #   strip mechanics (advisory, pre-API).

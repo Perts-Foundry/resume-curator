@@ -536,7 +536,7 @@ class TestWriteAuditArtifacts:
         # backend (2.9): the fixture is rerender-shaped (constructed
         # directly, no transport), so the key is present but null.
         assert log_data["backend"] is None
-        assert log_data["prompt_version"] == "2026-07-14"
+        assert log_data["prompt_version"] == "2026-08-09"
         # Combined hash retained for back-compat readers; split hashes
         # added in 2026-05-18 so the CI gate can target system-prompt
         # drift without firing on cover-letter-only edits.

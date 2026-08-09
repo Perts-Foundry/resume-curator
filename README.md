@@ -431,6 +431,19 @@ Caveats on `claude-code`:
 - If you hit your plan's usage limit, the run fails with the reset time and is
   never auto-retried.
 
+Hardening specific to `claude-code` (no effect on the `api` backend):
+
+- The subprocess runs with `--safe-mode` (the child ignores your user- and
+  project-scope settings, hooks, global `CLAUDE.md`, skills, plugins, and
+  custom commands/agents), an explicit tool deny list, and `--strict-mcp-config`,
+  and the temp dir is its cwd (no repo `CLAUDE.md` bleed). Your API key, auth
+  token, base URL, and provider switches are stripped from its environment.
+- The job description is escaped for `@`-mention neutralization before it
+  reaches the subprocess: an unescaped `@/path` in a JD would otherwise be
+  expanded by the CLI into that file's contents client-side. Emails and normal
+  text are unaffected; the JD injection scan (`--jd-scan`) also flags the
+  filesystem `@`-mention shapes on both backends.
+
 Every headless option, one concrete invocation each (all paid examples assume
 `CURATOR_ALLOW_API_SPEND=true` is already set, as shown in the first row):
 
