@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 
 # ---------------------------------------------------------------------------
-# Weak phrases (Appendix B) — passive/vague language to never use
+# Weak phrases (Appendix B): passive/vague language to never use
 # ---------------------------------------------------------------------------
 
 WEAK_PHRASES: frozenset[str] = frozenset(
@@ -38,7 +38,7 @@ WEAK_PHRASES: frozenset[str] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# AI red-flag words (Appendix C) — signal low-effort AI output
+# AI red-flag words (Appendix C): signal low-effort AI output
 # ---------------------------------------------------------------------------
 
 AI_RED_FLAG_WORDS: frozenset[str] = frozenset(
@@ -51,7 +51,7 @@ AI_RED_FLAG_WORDS: frozenset[str] = frozenset(
         "pivotal",
         "realm",
         "showcasing",
-        # "spearheaded" deliberately excluded — also in ACTION_VERBS.
+        # "spearheaded" deliberately excluded (also in ACTION_VERBS).
         # Contextual judgment ("inflating minor contributions") deferred
         # to Phase C LLM judge; deterministic eval can't distinguish.
         "instrumentalized",
@@ -77,7 +77,7 @@ AI_RED_FLAG_PHRASES: frozenset[str] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# Action verbs (Appendix A) — valid bullet-starting verbs
+# Action verbs (Appendix A): valid bullet-starting verbs
 # ---------------------------------------------------------------------------
 
 ACTION_VERBS: frozenset[str] = frozenset(
@@ -257,7 +257,7 @@ ACTION_VERBS: frozenset[str] = frozenset(
         "streamline",
         "champion",
         "drive",
-        # "found" excluded — ambiguous (past of "find" vs present of "found").
+        # "found" excluded (ambiguous: past of "find" vs present of "found").
         "initiate",
         "lead",
         "pioneer",
@@ -350,7 +350,7 @@ ACTION_VERBS: frozenset[str] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# Trivial and soft skills (§4.7) — should not appear in skills section
+# Trivial and soft skills (§4.7): should not appear in skills section
 # ---------------------------------------------------------------------------
 
 TRIVIAL_SKILLS: frozenset[str] = frozenset(
@@ -412,7 +412,7 @@ ACRONYM_EXPANSIONS: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Placeholder patterns (§10.2) — leftover AI artifacts
+# Placeholder patterns (§10.2): leftover AI artifacts
 # ---------------------------------------------------------------------------
 
 PLACEHOLDER_PATTERNS: frozenset[str] = frozenset(
@@ -524,13 +524,27 @@ JD_INJECTION_PATTERNS: tuple[tuple[str, str, str], ...] = (
         r"(the\s+)?(above|previous|prior|system|your)\b",
         "inverse-form override directive",
     ),
+    # Headless-specific surface, reported on both backends for visibility.
+    # In ``--backend claude-code`` an ``@`` at a whitespace/start boundary
+    # followed by a filesystem path (``@/etc/passwd``, ``@~/.ssh/id_rsa``,
+    # ``@../file``) is expanded client-side into that file's contents before
+    # any tool runs; the API path is inert to it. ``headless.py`` neutralizes
+    # these at the transport boundary regardless of the scan action, so this
+    # pattern is for operator visibility. Deliberately narrow (a leading path
+    # sigil is required) so it does not fire on social handles (``@acme``) or
+    # emails (``jobs@acme.com``, a non-space before ``@``).
+    (
+        "headless_file_mention",
+        r"(?<!\S)@(?:[/~]|\.\.?/)\S*",
+        "headless @-mention that would client-side-expand a filesystem path",
+    ),
 )
 
 #: Maximum characters of matched JD text surfaced per finding in the
 #: console table and the ``jd_injection_scan`` audit record.
 JD_SCAN_SNIPPET_MAX: int = 120
 
-# Summary word-count thresholds — shared by prompt.py (AI instruction) and
+# Summary word-count thresholds, shared by prompt.py (AI instruction) and
 # eval/content.py (scoring). Prompt target is tighter than eval PASS range
 # to give Claude a clear anchor inside the acceptable band.
 SUMMARY_WORD_TARGET_MIN: int = 50  # soft target for prompt guidance
@@ -843,7 +857,7 @@ def render_summary_length_guidance_for_prompt() -> str:
 
 def render_weak_phrases_for_prompt() -> str:
     """Format weak phrases as comma-separated quoted list for prompt text."""
-    # Canonical list for the prompt (subset — prompt uses specific phrasing)
+    # Canonical list for the prompt (subset; prompt uses specific phrasing)
     prompt_phrases = [
         '"Responsible for"',
         '"Helped"',

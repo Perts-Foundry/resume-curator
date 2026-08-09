@@ -62,6 +62,16 @@ if TYPE_CHECKING:
 # reports ``subtype: success`` with no ``structured_output`` (verified on
 # CLI 2.1.220). The curation call needs zero agentic tools; everything the
 # CLI could reach is denied by name.
+#
+# This is a name-based list and therefore fails OPEN for any tool the CLI
+# adds after it was written; ``--safe-mode`` (below) is the structural
+# backstop that disables skills, plugins, MCP, custom agents/commands, and
+# hooks regardless of this list, and the ``--json-schema`` StructuredOutput
+# call never invokes a tool in practice. Re-verify the built-in names on
+# each CLI upgrade. Last verified against CLI 2.1.226 (2026-08-08): the
+# agentic surface added ``Agent``, ``Skill``, ``Workflow``, and
+# ``ToolSearch`` since the original 2.1.220 list, all of which can read
+# files or run code, so they are denied here too.
 HEADLESS_DISALLOWED_TOOLS: tuple[str, ...] = (
     "Bash",
     "Edit",
@@ -72,6 +82,10 @@ HEADLESS_DISALLOWED_TOOLS: tuple[str, ...] = (
     "WebFetch",
     "WebSearch",
     "Task",
+    "Agent",
+    "Skill",
+    "Workflow",
+    "ToolSearch",
     "NotebookEdit",
     "TodoWrite",
     "KillShell",
@@ -136,6 +150,41 @@ _REFUSAL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Client-side ``@``-mention expansion is a headless-only exfiltration
+# surface with no API-path analog. The CLI expands an ``@`` that sits at a
+# whitespace/start boundary and is followed by a path (``@/etc/passwd``,
+# ``@~/.ssh/id_rsa``, ``@../file``) into that file's contents, injecting
+# them into the prompt BEFORE any tool runs -- so the deny list and even
+# ``--safe-mode`` do not stop it (confirmed on CLI 2.1.226: a random canary
+# in ``@/abs/path`` inside ``<job_description>`` reached structured output
+# with every tool denied). The JD arrives on stdin as untrusted data, so
+# every boundary ``@`` mention is neutralized to the CLI's own literal-@
+# escape (``\@``) before the subprocess sees it. The boundary anchor means
+# emails (``jobs@acme.com``, a non-space before ``@``) and mid-word ``@``
+# are left untouched; only mention-shaped tokens are escaped, and escaping
+# is inert to curation (an ``@``-prefixed path in a JD is never a job
+# requirement). An already-escaped ``\@`` is not re-escaped (the preceding
+# backslash is non-whitespace).
+_AT_MENTION_BOUNDARY_RE = re.compile(r"(?<!\S)@(?=\S)")
+
+
+def neutralize_at_mentions(text: str) -> str:
+    r"""Escape ``@``-mention tokens so the CLI cannot expand them to files.
+
+    Replaces every ``@`` at a whitespace/start boundary that is followed by
+    a non-whitespace character with ``\@`` (the CLI's literal-@ escape).
+    Text with no such token is returned byte-identical, so the common JD
+    (no ``@`` mentions) is unchanged and prompt-cache behavior is unaffected.
+
+    Args:
+        text: Untrusted user-message text (the job description, or the
+            judge's user message which embeds it).
+
+    Returns:
+        The text with boundary ``@`` mentions escaped.
+    """
+    return _AT_MENTION_BOUNDARY_RE.sub(r"\\@", text)
+
 
 def flatten_system_blocks(blocks: Sequence[TextBlockParam]) -> str:
     """Join system prompt blocks into a single plain-text prompt.
@@ -189,6 +238,35 @@ def _usage_int(usage: dict[str, Any], key: str) -> int:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return 0
+
+
+def _cli_version() -> str:
+    """Return the ``claude --version`` string, or ``"unknown"`` on any error.
+
+    Used only to enrich envelope-contract failure messages so CLI drift
+    surfaces as an actionable "which version produced this" hint rather than
+    a bare parse error. The envelope shape (``is_error``, ``subtype``,
+    ``structured_output``, ``usage`` casing) is verified against one CLI
+    version; when the shape is unexpected, naming the running version points
+    the operator at a likely cause. Never raises: a failure here must not
+    mask the original envelope failure it is annotating.
+    """
+    # Variable (not a literal list) so ruff's S607 partial-path check does
+    # not fire, matching the main invocation below; the executable name is
+    # fixed and there is no shell.
+    version_cmd = ["claude", "--version"]
+    try:
+        completed = subprocess.run(  # noqa: S603
+            version_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    version = completed.stdout.strip() or completed.stderr.strip()
+    return version or "unknown"
 
 
 def _match_known_error(result_text: str) -> APIError | None:
@@ -248,13 +326,14 @@ def _parse_envelope(
         stderr = completed.stderr.strip()[:500]
         msg = (
             f"claude -p produced unparseable output "
-            f"(exit {completed.returncode}): {stderr}"
+            f"(exit {completed.returncode}, CLI {_cli_version()}): {stderr}"
         )
         raise HeadlessCLIError(msg) from exc
     if not isinstance(envelope, dict):
         msg = (
             f"claude -p envelope is not a JSON object "
-            f"(exit {completed.returncode}, got {type(envelope).__name__})"
+            f"(exit {completed.returncode}, CLI {_cli_version()}, "
+            f"got {type(envelope).__name__})"
         )
         raise HeadlessCLIError(msg)
 
@@ -365,9 +444,14 @@ def run_structured_prompt(
     ``HEADLESS_STRIPPED_ENV_VARS`` is removed from the subprocess
     environment: those variables outrank the subscription login or
     redirect the call to a third-party endpoint, and the whole point of
-    this backend is to bill the subscription. No ``--bare`` (API-key-only,
-    never reads OAuth) and no ``--max-turns`` (does not exist in CLI
-    2.1.220); the subprocess timeout is the runaway bound.
+    this backend is to bill the subscription. ``--safe-mode`` disables the
+    child's own customizations (settings, hooks, global CLAUDE.md, skills,
+    plugins, custom agents/commands), and the untrusted ``user_text`` is
+    passed through ``neutralize_at_mentions`` first so a JD-embedded
+    ``@``-mention cannot client-side-expand a file into the prompt. No
+    ``--bare`` (API-key-only, never reads OAuth) and no ``--max-turns``
+    (does not exist in CLI 2.1.220); the subprocess timeout is the runaway
+    bound.
 
     Args:
         system_text: Flattened system prompt (see ``flatten_system_blocks``).
@@ -393,6 +477,12 @@ def run_structured_prompt(
         APIResponseError: Error envelope, non-success subtype, or a
             success envelope with no structured output.
     """
+    # Neutralize headless-only ``@``-mention expansion in the untrusted user
+    # text before it reaches the subprocess (see ``neutralize_at_mentions``).
+    # This is the single subprocess chokepoint for both the curate and judge
+    # backends, so escaping here covers both.
+    user_text = neutralize_at_mentions(user_text)
+
     with tempfile.TemporaryDirectory(prefix="curator-headless-") as tmpdir:
         system_path = Path(tmpdir) / "system_prompt.txt"
         system_path.write_text(system_text, encoding="utf-8")
@@ -410,7 +500,14 @@ def run_structured_prompt(
         ]
         if effort is not None:
             cmd.extend(["--effort", effort])
-        cmd.extend(["--no-session-persistence", "--strict-mcp-config"])
+        # --safe-mode disables the child's own customizations (user- and
+        # project-scope settings, hooks, global ~/.claude/CLAUDE.md, skills,
+        # plugins, custom agents/commands, MCP). It closes the user-scope
+        # context bleed that the tmpdir cwd (project scope) and
+        # --strict-mcp-config (MCP) did not, and structured output still
+        # works under it (verified on CLI 2.1.226). --no-session-persistence
+        # keeps the run stateless.
+        cmd.extend(["--safe-mode", "--no-session-persistence", "--strict-mcp-config"])
         # Variadic flag placed last (safe: the prompt arrives on stdin, so
         # nothing after the deny list could be swallowed by it).
         cmd.extend(["--disallowed-tools", *HEADLESS_DISALLOWED_TOOLS])
