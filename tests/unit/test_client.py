@@ -28,57 +28,7 @@ from curator.models import (
     ResumeCuration,
     ResumeCurationWithCoverLetter,
 )
-
-
-def _curation_to_wire_dict(obj: Any) -> dict[str, Any]:
-    """Convert a Pydantic curation (or wrapper) to the wire-shape dict.
-
-    Under the 2026-05-18 hybrid skill design the wire shape carries:
-      - ``work_highlights_by_id``: object keyed by parent work_id
-        (grammar-time cross-parent attribution enforcement).
-      - ``skills``: ordered array of portfolio skill group IDs only;
-        ``client._adapt_curation_dict`` fills each group's keywords
-        from portfolio data via JD-relevance scoring.
-      - ``company_name``: free text; adapter slugifies into
-        ``company_slug``. Emitting ``obj.company_slug`` round-trips
-        cleanly (slugify is idempotent on valid slugs).
-      - Optional ``work_highlight_weights`` (dict) and ``trim_priority``
-        (list): pass through from the model. The helper emits them
-        only when non-empty so default-empty fixtures keep their
-        compact shape; tests exercising the AI-hint path can populate
-        them directly.
-
-    Tests that need to round-trip specific keyword content should
-    control the JD text or assert on the adapter's filling behavior
-    directly rather than expecting the wire round trip to preserve
-    keyword choices.
-    """
-    if isinstance(obj, ResumeCurationWithCoverLetter):
-        return {
-            "resume": _curation_to_wire_dict(obj.resume),
-            "cover_letter": obj.cover_letter.model_dump(mode="json"),
-        }
-    if isinstance(obj, ResumeCuration):
-        wire: dict[str, Any] = {
-            "summary": obj.summary,
-            "suggested_label": obj.suggested_label,
-            "company_name": obj.company_slug,
-            "work_highlights_by_id": {
-                wh.work_id: list(wh.highlight_ids) for wh in obj.work_highlights
-            },
-            "skills": [sr.skill_id for sr in obj.skills],
-            "projects": list(obj.projects),
-        }
-        if obj.work_highlight_weights:
-            wire["work_highlight_weights"] = dict(obj.work_highlight_weights)
-        if obj.trim_priority:
-            wire["trim_priority"] = list(obj.trim_priority)
-        return wire
-    if isinstance(obj, dict):
-        return obj
-    msg = f"unsupported curation type for wire-dict conversion: {type(obj).__name__}"
-    raise TypeError(msg)
-
+from tests.helpers import curation_to_wire_dict as _curation_to_wire_dict
 
 # ---------------------------------------------------------------------------
 # Fixtures

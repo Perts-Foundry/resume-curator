@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from curator.config import CuratorSettings
 from curator.pipeline import (
     PipelineResult,
     _select_client,
@@ -14,9 +16,12 @@ from curator.pipeline import (
     run_pipeline,
     run_static_pipeline,
 )
+from tests.helpers import FakeClaudeRun, make_headless_envelope, valid_wire_dict
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from curator.models import PortfolioData
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +357,44 @@ class TestBackendSelection:
         mock_client.curate.assert_called_once()
         mock_client_cls.assert_not_called()
         assert result.curation is mock_result
+
+
+class TestHeadlessBackendEndToEnd:
+    """End-to-end claude-code path: real HeadlessCuratorClient + real render.
+
+    The prior --backend tests all short-circuit at --dry-run, so no client
+    is ever constructed. This exercises curate -> pipeline -> the real
+    HeadlessCuratorClient (subprocess faked) -> the real renderer, and pins
+    that ``curation_log.json`` records ``backend == "claude-code"``.
+    """
+
+    def test_claude_code_backend_flows_into_curation_log(
+        self,
+        mocker: Any,
+        tmp_path: Path,
+        portfolio_data: PortfolioData,
+    ) -> None:
+        settings = CuratorSettings(
+            anthropic_api_key=None,
+            backend="claude-code",
+            model="claude-opus-5",
+            allow_api_spend=True,
+            portfolio_path=tmp_path,
+            output_dir=tmp_path / "profiles",
+            max_pages=1,
+        )
+        fake = FakeClaudeRun(make_headless_envelope(valid_wire_dict()))
+        mocker.patch("curator.headless.subprocess.run", side_effect=fake)
+        mocker.patch("curator.pipeline.load_portfolio", return_value=portfolio_data)
+
+        # skip_pdf still writes curated.yaml + curation_log.json (no Typst).
+        result = run_pipeline(settings, "Senior platform role at Acme.", skip_pdf=True)
+
+        assert result.curation.backend == "claude-code"
+        assert len(fake.calls) == 1
+        log = json.loads(result.render_output.curation_log_path.read_text())
+        assert log["backend"] == "claude-code"
+        assert log["source"] == "api"
 
 
 # ---------------------------------------------------------------------------

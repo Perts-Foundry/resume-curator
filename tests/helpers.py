@@ -2,11 +2,114 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from curator.eval.report import EvalMetricResult
     from curator.models import CoverLetterCuration
+
+# ---------------------------------------------------------------------------
+# Headless Claude Code CLI mock
+# ---------------------------------------------------------------------------
+# Canonical fake for the ``claude -p --output-format json`` envelope and the
+# ``subprocess.run`` boundary. Lives here (not in a test module) because it is
+# the shared mock of an external contract used by both tests/unit/test_headless
+# and tests/unit/test_eval_judge; cross-module private imports break the suite
+# convention.
+
+#: Version string the fake reports for the ``claude --version`` probe that
+#: ``headless._cli_version`` runs to annotate envelope-failure messages.
+FAKE_CLI_VERSION = "2.1.226 (Claude Code)"
+
+DEFAULT_HEADLESS_USAGE: dict[str, int] = {
+    "input_tokens": 1200,
+    "output_tokens": 640,
+    "cache_creation_input_tokens": 900,
+    "cache_read_input_tokens": 300,
+}
+
+#: A served-model key for the envelope's ``modelUsage`` map.
+FAKE_SERVED_MODEL = "claude-opus-5-20260115"
+
+
+def make_headless_envelope(
+    structured_output: dict[str, Any] | None,
+    *,
+    subtype: str = "success",
+    is_error: bool = False,
+    result_text: str = "",
+    usage: dict[str, int] | None = None,
+    model_usage: dict[str, Any] | None = None,
+    total_cost_usd: float | None = 1.23,
+    session_id: str | None = "sess-test-abc",
+) -> dict[str, Any]:
+    """Build a ``claude -p --output-format json`` result envelope."""
+    envelope: dict[str, Any] = {
+        "type": "result",
+        "subtype": subtype,
+        "is_error": is_error,
+        "result": result_text,
+        "usage": dict(DEFAULT_HEADLESS_USAGE) if usage is None else usage,
+        "modelUsage": {FAKE_SERVED_MODEL: {}} if model_usage is None else model_usage,
+        "total_cost_usd": total_cost_usd,
+        "session_id": session_id,
+    }
+    if structured_output is not None:
+        envelope["structured_output"] = structured_output
+    return envelope
+
+
+class FakeClaudeRun:
+    """Fake ``subprocess.run`` recording ``(cmd, kwargs)`` per model call.
+
+    Also snapshots the ``--system-prompt-file`` content while the call is in
+    flight, since the temp dir is gone by the time the test asserts.
+
+    The ``claude --version`` probe that ``headless._cli_version`` runs to
+    enrich envelope-failure messages is answered transparently with
+    :data:`FAKE_CLI_VERSION` and is NOT recorded in ``calls``, so ``calls``
+    stays a record of model invocations only and single-subprocess-per-curate
+    invariants keep their meaning.
+    """
+
+    def __init__(
+        self,
+        envelope: dict[str, Any] | str,
+        *,
+        returncode: int = 0,
+        stderr: str = "",
+    ) -> None:
+        self.envelope = envelope
+        self.returncode = returncode
+        self.stderr = stderr
+        self.calls: list[tuple[list[str], dict[str, Any]]] = []
+        self.system_prompt_contents: list[str] = []
+
+    @staticmethod
+    def _completed(*, returncode: int, stdout: str, stderr: str) -> Any:
+        return type(
+            "CompletedProcess",
+            (),
+            {"returncode": returncode, "stdout": stdout, "stderr": stderr},
+        )()
+
+    def __call__(self, cmd: list[str], **kwargs: Any) -> Any:
+        if cmd[:2] == ["claude", "--version"]:
+            return self._completed(returncode=0, stdout=FAKE_CLI_VERSION, stderr="")
+        self.calls.append((cmd, kwargs))
+        if "--system-prompt-file" in cmd:
+            path = Path(cmd[cmd.index("--system-prompt-file") + 1])
+            self.system_prompt_contents.append(path.read_text(encoding="utf-8"))
+        stdout = (
+            self.envelope
+            if isinstance(self.envelope, str)
+            else json.dumps(self.envelope)
+        )
+        return self._completed(
+            returncode=self.returncode, stdout=stdout, stderr=self.stderr
+        )
 
 
 def valid_cover_letter_kwargs() -> dict[str, Any]:
@@ -155,6 +258,75 @@ def make_curation_dict(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+def curation_to_wire_dict(obj: Any) -> dict[str, Any]:
+    """Convert a Pydantic curation (or wrapper) to the wire-shape dict.
+
+    Mirrors what the model emits under the 2026-05-18 hybrid skill design:
+    ``work_highlights_by_id`` keyed by parent work_id, ``skills`` as an
+    ordered array of portfolio group IDs (the adapter fills keywords), and a
+    free-text ``company_name`` the adapter slugifies. Optional
+    ``work_highlight_weights`` / ``trim_priority`` are emitted only when
+    non-empty so default fixtures keep a compact shape.
+
+    Shared here (not in a test module) because it is the canonical builder
+    of the external wire contract, used by test_client, test_headless, and
+    the pipeline integration tests.
+    """
+    from curator.models import ResumeCuration, ResumeCurationWithCoverLetter
+
+    if isinstance(obj, ResumeCurationWithCoverLetter):
+        return {
+            "resume": curation_to_wire_dict(obj.resume),
+            "cover_letter": obj.cover_letter.model_dump(mode="json"),
+        }
+    if isinstance(obj, ResumeCuration):
+        wire: dict[str, Any] = {
+            "summary": obj.summary,
+            "suggested_label": obj.suggested_label,
+            "company_name": obj.company_slug,
+            "work_highlights_by_id": {
+                wh.work_id: list(wh.highlight_ids) for wh in obj.work_highlights
+            },
+            "skills": [sr.skill_id for sr in obj.skills],
+            "projects": list(obj.projects),
+        }
+        if obj.work_highlight_weights:
+            wire["work_highlight_weights"] = dict(obj.work_highlight_weights)
+        if obj.trim_priority:
+            wire["trim_priority"] = list(obj.trim_priority)
+        return wire
+    if isinstance(obj, dict):
+        return obj
+    msg = f"unsupported curation type for wire-dict conversion: {type(obj).__name__}"
+    raise TypeError(msg)
+
+
+def valid_wire_dict() -> dict[str, Any]:
+    """Wire-shape curation dict whose IDs match the ``portfolio_data`` fixture.
+
+    The IDs (``acme-senior-engineer`` / ``acme-deployed-k8s`` / ``cloud-aws``
+    / ``my-project``) are the ones the shared ``portfolio_data`` fixture in
+    tests/unit/conftest.py exposes, so the result validates through the full
+    adapter + ID-validation ladder.
+    """
+    from curator.models import ResumeCuration
+
+    curation = ResumeCuration.model_validate(
+        make_curation_dict(
+            company_slug="acme-corp",
+            work_highlights=[
+                {
+                    "work_id": "acme-senior-engineer",
+                    "highlight_ids": ["acme-deployed-k8s"],
+                },
+            ],
+            skills=[{"skill_id": "cloud-aws", "keywords": ["EKS"]}],
+            projects=["my-project"],
+        )
+    )
+    return curation_to_wire_dict(curation)
 
 
 def find_metric(results: list[EvalMetricResult], name: str) -> EvalMetricResult:

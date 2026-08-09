@@ -37,11 +37,17 @@ from curator.exceptions import (
     APISpendGuardError,
     EvalError,
 )
-from tests.unit.test_headless import (
-    _DEFAULT_USAGE,
-    _SERVED_MODEL,
-    _FakeClaudeRun,
-    _make_envelope,
+from tests.helpers import (
+    DEFAULT_HEADLESS_USAGE as _DEFAULT_USAGE,
+)
+from tests.helpers import (
+    FAKE_SERVED_MODEL as _SERVED_MODEL,
+)
+from tests.helpers import (
+    FakeClaudeRun as _FakeClaudeRun,
+)
+from tests.helpers import (
+    make_headless_envelope as _make_envelope,
 )
 
 # ---------------------------------------------------------------------------
