@@ -344,16 +344,20 @@ on `summary` length, etc.) plus observability gaps.
   usage-log move.
 - [ ] `test_build_system_prompt_is_byte_stable_across_retries` cache-
   preservation invariant.
-- [ ] Move `_FakeClaudeRun` / `_make_envelope` from
-  `tests/unit/test_headless.py` into `tests/helpers.py`. They are now
-  the canonical mock of an external contract (the Claude Code CLI
-  envelope) used by two test modules, and cross-module private imports
-  break the suite convention.
-- [ ] End-to-end claude-code integration test (curate -> pipeline ->
+- [x] Move `_FakeClaudeRun` / `_make_envelope` from
+  `tests/unit/test_headless.py` into `tests/helpers.py` (2026-08-08,
+  headless-hardening PR). Landed as `FakeClaudeRun` /
+  `make_headless_envelope` in `tests/helpers.py`; also promoted
+  `curation_to_wire_dict` / `valid_wire_dict` there, removing the
+  `test_headless -> test_client` and `test_eval_judge -> test_headless`
+  cross-module private imports. The fake also answers the new
+  `claude --version` probe without recording it in `.calls`.
+- [x] End-to-end claude-code integration test (curate -> pipeline ->
   `HeadlessCuratorClient` with a faked subprocess -> renderer)
-  asserting `curation_log.json["backend"] == "claude-code"`. The
-  current `--backend` CLI tests all use `--dry-run`, so no client is
-  ever constructed on that path.
+  asserting `curation_log.json["backend"] == "claude-code"` (2026-08-08).
+  Landed as `TestHeadlessBackendEndToEnd` in `tests/unit/test_pipeline.py`
+  (runs the real client + real renderer with `skip_pdf=True` so the log
+  is written without Typst).
 
 ---
 
@@ -745,40 +749,45 @@ expanding scope. Each is independently shippable.
   incremental progress instead of a silent subprocess for up to
   `headless_timeout` seconds. Needs an envelope-parsing rework
   (line-delimited events vs one JSON object), so measure demand first.
-- [ ] Envelope-contract check against future Claude Code CLI versions:
+- [~] Envelope-contract check against future Claude Code CLI versions:
   the headless backend's envelope handling (`is_error`, `subtype`,
   `structured_output`, `usage` key casing) is verified against one CLI
-  version. Add a cheap version probe or a documented compatibility
-  check so CLI drift surfaces as an actionable error rather than a
-  puzzling `APIResponseError`.
-- [ ] Harden the headless invocation against user-scope context bleed:
-  the child still resolves USER-scope settings, hooks, and the global
-  `~/.claude/CLAUDE.md` (project scope is already closed by the tmpdir
-  cwd, MCP by `--strict-mcp-config`). Evaluate `--safe-mode` or
-  `--setting-sources`, plus `--disable-slash-commands`. Needs a live
-  smoke run to validate that structured output still works under them.
-- [ ] Re-check `HEADLESS_DISALLOWED_TOOLS` on every Claude Code CLI
-  upgrade. It is a name-based deny list, so it fails open for any tool
-  the CLI adds after it was written; a wildcard is not an option
-  (it also denies the internal StructuredOutput tool).
+  version. **Partly done (2026-08-08)**: envelope-shape failures
+  (unparseable stdout, non-object envelope) now name `claude --version`
+  in the `HeadlessCLIError`, so drift surfaces actionably. A positive
+  compatibility probe (assert the success-envelope shape against a known
+  version, or a pinned envelope schema) is still open.
+- [x] Harden the headless invocation against user-scope context bleed
+  (2026-08-08). Added `--safe-mode`, which disables the child's USER-
+  and project-scope settings, hooks, global `~/.claude/CLAUDE.md`,
+  skills, plugins, and custom agents/commands. A live smoke run on CLI
+  2.1.226 confirmed structured output still works under it. Chose
+  `--safe-mode` over `--setting-sources`/`--disable-slash-commands`
+  because it is the single flag that closes the whole customization
+  surface (and `--disable-slash-commands` does not neutralize builtin
+  `/login`, which the `<job_description>` wrapper already blocks by
+  keeping the JD out of prompt-start position).
+- [~] Re-check `HEADLESS_DISALLOWED_TOOLS` on every Claude Code CLI
+  upgrade (recurring). Re-verified against CLI 2.1.226 (2026-08-08) and
+  added `Agent`, `Skill`, `Workflow`, `ToolSearch`. Still a name-based
+  deny list that fails open for tools added later; `--safe-mode` and the
+  structured-output schema are the structural backstops. A wildcard is
+  not an option (it also denies the internal StructuredOutput tool).
 - [ ] Consider a retry posture for transient headless CLI failures
   (subprocess launch races, malformed stdout). Usage limits must stay
   never-retried: they reset on a clock, not on backoff.
 
 ### CLI / UX
 
-- [ ] Dry-run cost label for the API backend is hardcoded `~$0.07
+- [x] Dry-run cost label for the API backend was hardcoded `~$0.07
   first / ~$0.02 cached (Sonnet)` in `cli.py`
-  `_display_dry_run_preview`. The claude-code backend now gets its own
-  accurate `$0 marginal (subscription usage; notional cost logged)`
-  label, but the API estimate still misleads for non-Sonnet models
-  (Haiku is ~$0.07 cold / ~$0.01 warm) now that `curate --model` is a
-  first-class flag. Make the API estimate model-aware or drop the
-  model name. (Deferred from the 2026-06-04 per-run model/effort flags
-  PR; headless case handled in the 2026-08-03 backend PR.)
-- [ ] Dry-run preview still prints a "Max tokens" row on the
-  claude-code backend, where there is no analog (the CLI takes no
-  max-tokens flag). Suppress the row, or label it API-only.
+  `_display_dry_run_preview` (2026-08-08). Dropped the hardcoded model
+  name now that `curate --model` is a first-class flag; the API label
+  is now `~$0.02-0.07 first call / ~$0.01-0.02 cached (varies by
+  model)`. The claude-code label was already backend-accurate.
+- [x] Dry-run preview printed a "Max tokens" row on the claude-code
+  backend, where there is no analog (the CLI takes no max-tokens flag)
+  (2026-08-08). The row is now suppressed when `backend == "claude-code"`.
 
 ### Prompt iteration
 
@@ -812,14 +821,22 @@ expanding scope. Each is independently shippable.
   dumped values before wrapping in section tags, or scan serialized
   section output for reserved delimiters and raise
   `PortfolioValidationError`.
-- [ ] Investigate whether `@path` mentions and `/slash-command` text
-  inside a job description expand client-side in `claude -p` mode. If
-  they do, a JD could reach a file read or a command the in-prompt
-  defenses never see. Fix is backend-independent: add an
-  `@`-reference pattern to `JD_INJECTION_PATTERNS` in `rules.py` so the
-  gate fires on both backends, and update the interview-prep command's
-  canonical pattern list in the same PR (same-PR sync is already the
-  documented rule for that list).
+- [x] Investigate whether `@path` mentions and `/slash-command` text
+  inside a job description expand client-side in `claude -p` mode
+  (2026-08-08). **Confirmed on CLI 2.1.226**: an unescaped `@/abs/path`
+  or `@~/home/path` in the JD is expanded by the CLI into that file's
+  contents client-side, before any tool runs, so the deny list and
+  `--safe-mode` do NOT stop it (a random canary in `@/abs/path` inside
+  `<job_description>` reached structured output with every tool denied).
+  Slash-commands parse only at prompt-start, which the `<job_description>`
+  wrapper already prevents. Fixes landed: (1) `neutralize_at_mentions`
+  in `headless.py` escapes every boundary `@`-mention on the untrusted
+  stdin (the actual security boundary, unconditional, not defeatable by
+  a `--jd-scan proceed` policy); (2) a narrow `headless_file_mention`
+  pattern added to `JD_INJECTION_PATTERNS` in `rules.py` for operator
+  visibility on both backends (matches only the `@/` / `@~` / `@../`
+  filesystem shapes, not emails or handles); (3) the interview-prep
+  command's canonical pattern list + grep updated in the same PR.
 
 ### Static-mode
 
