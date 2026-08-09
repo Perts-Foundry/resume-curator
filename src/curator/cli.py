@@ -83,14 +83,14 @@ def _redacting_filter(record: Record) -> bool:
     """Scrub API keys and secret-like patterns from log messages.
 
     Used as a sink ``filter`` so it runs for ALL callers of the global
-    ``logger`` — not just a patched instance. Loguru calls filters AFTER
+    ``logger`` (not just a patched instance). Loguru calls filters AFTER
     message formatting (args already substituted), so this catches secrets
     passed as format arguments::
 
         logger.info("Key: {}", api_key)  # filter sees "Key: sk-ant-..."
 
     Returns:
-        Always ``True`` — this is a mutating filter, not a gatekeeping one.
+        Always ``True``; this is a mutating filter, not a gatekeeping one.
     """
     msg: str = record["message"]
     msg = _API_KEY_PATTERN.sub("[REDACTED_API_KEY]", msg)
@@ -160,7 +160,7 @@ def configure_logging(*, verbose: bool = False, _testing: bool = False) -> None:
         else "<level>{level:<8}</level> | <level>{message}</level>"
     )
 
-    # Sink 1: User-facing on stderr — always active.
+    # Sink 1: User-facing on stderr, always active.
     # diagnose=False on both sinks: Loguru's diagnose feature dumps local
     # variable values in tracebacks, which can leak secrets (API keys, PII)
     # regardless of the redaction filter (filter only covers record["message"],
@@ -174,7 +174,7 @@ def configure_logging(*, verbose: bool = False, _testing: bool = False) -> None:
         filter=_redacting_filter,
     )
 
-    # Sink 2: Structured debug file — ALWAYS active at DEBUG level.
+    # Sink 2: Structured debug file, ALWAYS active at DEBUG level.
     # diagnose=False: secrets must never land in persistent storage.
     if not _testing:
         try:
@@ -250,7 +250,7 @@ def _display_dry_run_preview(
 
     effort_str = settings.effort or "default"
 
-    table = Table(title="Dry run — no API call made", show_header=False)
+    table = Table(title="Dry run (no API call made)", show_header=False)
     table.add_column("Setting", style="cyan")
     table.add_column("Value")
 
@@ -268,7 +268,10 @@ def _display_dry_run_preview(
     table.add_row("Job description", f"{len(jd_text):,} chars")
     table.add_row("Backend", settings.backend)
     table.add_row("Model", settings.model)
-    table.add_row("Max tokens", f"{settings.max_tokens:,}")
+    # max_tokens is an API-only knob; the claude-code CLI takes no
+    # max-tokens flag, so the row has no analog on that backend.
+    if settings.backend != "claude-code":
+        table.add_row("Max tokens", f"{settings.max_tokens:,}")
     table.add_row("Effort", effort_str)
     table.add_row(
         "Target pages",
@@ -280,7 +283,12 @@ def _display_dry_run_preview(
             "$0 marginal (subscription usage; notional cost logged)",
         )
     else:
-        table.add_row("Estimated cost", "~$0.07 first / ~$0.02 cached (Sonnet)")
+        # Order-of-magnitude only; the model name is not hardcoded because
+        # --model is a first-class flag now (Haiku, Opus, and Sonnet differ).
+        table.add_row(
+            "Estimated cost",
+            "~$0.02-0.07 first call / ~$0.01-0.02 cached (varies by model)",
+        )
 
     console.print()
     console.print(table)
@@ -630,7 +638,7 @@ def _warn_if_effort_on_haiku(model: str, effort: str | None, *, kind: str) -> No
     Args:
         model: The resolved model id (curate ``model`` or judge ``judge_model``).
         effort: The resolved effort level, or None when unset.
-        kind: ``"curate"`` or ``"judge"`` — selects the flag named in the hint.
+        kind: ``"curate"`` or ``"judge"``; selects the flag named in the hint.
     """
     if effort is not None and "haiku" in model.lower():
         disable_flag = "--judge-effort off" if kind == "judge" else "--effort off"
@@ -1370,7 +1378,7 @@ def eval_cmd(
         raise typer.Exit(code=1)
 
     # Build judge-settings overrides (single application point: the profile
-    # path only — golden rejects these flags above). "off" force-disables.
+    # path only; golden rejects these flags above). "off" force-disables.
     judge_overrides: dict[str, Any] = {}
     if judge_model is not None:
         judge_overrides["judge_model"] = judge_model
@@ -1566,7 +1574,7 @@ def _run_golden_eval(
 
     try:
         with tempfile.TemporaryDirectory(prefix="golden-", dir=cache_base) as tmp_root:
-            results_table = Table(title=f"Golden Regression — {len(cases)} cases")
+            results_table = Table(title=f"Golden Regression ({len(cases)} cases)")
             results_table.add_column("Case", style="cyan")
             results_table.add_column("Role")
             results_table.add_column("Score", justify="right")
@@ -1586,7 +1594,7 @@ def _run_golden_eval(
                         render_golden_pdf(profile_path)
                     except FileNotFoundError:
                         console.print(
-                            "[yellow]Typst not installed — "
+                            "[yellow]Typst not installed: "
                             "PDF metrics will return WARN[/]"
                         )
                         typst_available = False
@@ -1952,7 +1960,7 @@ def _display_eval_report(
     # Category summary table.
     cat_table = Table(
         title=(
-            f"Eval Report — {title} "
+            f"Eval Report: {title} "
             f"(score: {report.aggregate_score:.0f}, "
             f"status: {report.status.name})"
         ),
@@ -1976,7 +1984,7 @@ def _display_eval_report(
         )
     console.print(cat_table)
 
-    # Metric detail table — FAIL/WARN only by default.
+    # Metric detail table: FAIL/WARN only by default.
     show_pass = logger.level("DEBUG").no <= 10  # Verbose mode.
     detail_metrics = [
         m for m in report.metrics if show_pass or m.status != EvalMetricStatus.PASS

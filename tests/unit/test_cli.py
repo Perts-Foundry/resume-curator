@@ -1897,10 +1897,19 @@ class TestCurateBackendFlag:
         assert "claude-code" in text
         assert "$0 marginal (subscription usage; notional cost logged)" in text
 
-    def test_dry_run_preview_api_cost_label_unchanged(self) -> None:
+    def test_dry_run_preview_suppresses_max_tokens_on_claude_code(self) -> None:
+        # The claude-code CLI takes no max-tokens flag, so the row has no
+        # analog on that backend and must not appear.
+        text = self._render_preview("claude-code")
+        assert "Max tokens" not in text
+
+    def test_dry_run_preview_api_cost_label_model_agnostic(self) -> None:
         text = self._render_preview("api")
         assert "Backend" in text
-        assert "~$0.07 first / ~$0.02 cached (Sonnet)" in text
+        # The API label no longer hardcodes a model name (--model is a
+        # first-class flag now), but still keeps the Max tokens row.
+        assert "varies by model" in text
+        assert "Max tokens" in text
 
 
 class TestEvalJudgeBackendFlag:
